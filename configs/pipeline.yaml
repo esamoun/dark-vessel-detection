@@ -1,0 +1,21 @@
+# Pipeline configuration. A run is defined here, not in notebook cell order.
+
+area:
+  name: danish-waters
+  crs: EPSG:25832          # ETRS89 / UTM 32N
+
+imagery:
+  collection: COPERNICUS/S1_GRD
+  polarisations: [VV, VH]
+  resolution_m: 10
+
+tiling:
+  size_px: 512
+  overlap_px: 64
+
+detector:
+  checkpoint_every_epoch: true   # free-tier sessions are interrupted, not finished
+
+fusion:
+  interpolate_ais_to_acquisition: true
+  match_tolerance_m: null        # set from position uncertainty; see docs/decisions.md

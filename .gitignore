@@ -1,0 +1,58 @@
+# Data and outputs — never committed
+data/
+outputs/
+checkpoints/
+*.tif
+*.tiff
+*.img
+*.SAFE/
+*.zip
+*.nc
+*.h5
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Geospatial sidecars
+*.aux.xml
+*.tif.ovr
+*.qmd
+*.cpg
+*.shx
+*.dbf
+
+# Keep small reference vectors deliberately, add them with `git add -f`
+
+# Python
+__pycache__/
+*.py[cod]
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.python-version
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Credentials — Earth Engine service accounts, API keys
+.env
+*.json.key
+service-account*.json
+.config/earthengine/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,27 @@
+# Local environment: code, geometry checks, QGIS-adjacent inspection.
+# Training happens on free-tier cloud GPUs, not here — see docs/decisions.md.
+name: darkvessel
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - gdal
+  - rasterio
+  - geopandas
+  - shapely
+  - pyproj
+  - fiona
+  - numpy
+  - pandas
+  - matplotlib
+  - jupyterlab
+  - pyyaml
+  - tqdm
+  - pytest
+  - ruff
+  - pip
+  - pip:
+      - earthengine-api
+      - torch
+      - torchvision
+      - -e .

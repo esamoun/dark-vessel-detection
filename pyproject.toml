@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "darkvessel"
+version = "0.1.0"
+description = "Detecting undeclared vessels by fusing Sentinel-1 SAR with AIS over Danish waters"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Eithan Samoun" }]
+
+dependencies = [
+    "numpy",
+    "pandas",
+    "rasterio",
+    "geopandas",
+    "shapely",
+    "pyproj",
+    "earthengine-api",
+    "torch",
+    "torchvision",
+    "pyyaml",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+darkvessel = "darkvessel.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
