@@ -20,6 +20,11 @@ import pandas as pd
 
 MATCHED = "matched"
 DARK = "dark"
+# No declarations were supplied, so nothing was compared against anything. Distinct from `dark`,
+# which says a search happened and came back empty: a run with no AIS that marked its detections
+# dark would produce a layer that reads, to anyone opening it, as a sea full of undeclared
+# vessels. That is the most confident wrong answer this chain could give.
+UNSEARCHED = "unsearched"
 
 
 def classify(
@@ -32,12 +37,18 @@ def classify(
 
     The tolerance travels with the result rather than staying in a config file: "dark" is a
     claim about what was searched, and it means nothing without the radius that produced it.
+
+    `ais` of None is not an empty AIS slice. An empty slice is a search that returned nothing,
+    and its detections are honestly dark; None is no search at all, and its detections are
+    `unsearched`, carrying no radius because no radius was applied.
     """
+    searched = ais is not None
+
     classified = detections.copy()
-    classified["status"] = DARK
+    classified["status"] = DARK if searched else UNSEARCHED
     classified["mmsi"] = pd.Series(pd.NA, index=classified.index, dtype="string")
     classified["match_distance_m"] = np.nan
-    classified["tolerance_m"] = float(tolerance_m)
+    classified["tolerance_m"] = float(tolerance_m) if searched else np.nan
     classified["acquired_at"] = acquired_at
 
     declared = _positions_at_acquisition(ais, acquired_at, classified.crs)

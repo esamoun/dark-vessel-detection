@@ -1,0 +1,56 @@
+# A real Sentinel-1 acquisition over the Kattegat, and the chain run across it.
+# Paths are relative to this file. `configs/pipeline.yaml` is the synthetic demo; this is the
+# one that needs Earth Engine credentials and a network.
+
+area:
+  name: anholt-kattegat
+  crs: EPSG:25832          # ETRS89 / UTM 32N
+  # The Anholt offshore wind farm and the water around it: about 15 km on a side, mostly open
+  # sea. The wind farm is deliberate — its turbines are bright point scatterers that a threshold
+  # on amplitude reports as vessels, so the false-positive problem this project has to solve is
+  # visible in the very first real output rather than discovered later.
+  bounds:
+    west: 11.15
+    south: 56.58
+    east: 11.40
+    north: 56.71
+
+imagery:
+  collection: COPERNICUS/S1_GRD
+  polarisations: [VV, VH]
+  resolution_m: 10
+  # Searched, not required to contain a scene: revisit over the Kattegat is a few days, so a
+  # fortnight holds several. The earliest in the window is taken, so the run is repeatable.
+  window:
+    start: 2026-07-01T00:00:00+00:00
+    end: 2026-07-15T00:00:00+00:00
+
+# 512 px is the figure that follows from a detector's memory, and this is a scene large enough
+# for it to mean something: 1485 x 1497 px, so four tiles per axis and sixteen in all, with real
+# seams between them. `configs/pipeline.yaml` runs 144/32 because its scene is 256 px.
+tiling:
+  size_px: 512
+  overlap_px: 64
+
+fusion:
+  interpolate_ais_to_acquisition: false
+  match_tolerance_m: 200
+
+earthengine:
+  # The Cloud project `ee.Initialize` authenticates against. Left empty, Earth Engine falls back
+  # to whatever the local credentials default to, which is fine on one machine and unreproducible
+  # on any other. Set it to yours before the first export.
+  project: null
+
+export:
+  out: ../data/real/anholt.tif
+
+run:
+  scene: ../data/real/anholt.tif
+  # No AIS for this run. Real declarations over Danish waters arrive with the level that ingests
+  # them; until then nothing has been searched, and the output says so rather than calling every
+  # detection dark.
+  ais: null
+  output: ../outputs/anholt.gpkg
+  detector: bright-pixel   # still the stand-in: this run tests the chain, not the detector
+  threshold: -12.0         # S1 GRD comes back in dB, not the 0..1 of the synthetic scene

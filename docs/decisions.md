@@ -242,3 +242,55 @@ class of gap as the `.gitignore` in docs/failures.md, where every check ran agai
 other than what was shipped. `test_the_shipped_config_still_cuts_the_synthetic_scene_across_a_target`
 closes it: it asserts that, at the tiling that file declares, more than one tile sees the
 fixture's boundary target.
+
+---
+
+## 2026-08-13 — A real scene arrives clipped, in one response, and its georeferencing is never recomputed
+
+**Decision.** `darkvessel export` asks Earth Engine for one acquisition, already clipped to the
+area of interest and reprojected into the working CRS, and takes back a single GeoTIFF. The file
+is opened for update only to add the metadata the pixels do not carry — acquisition time, scene
+id, polarisations, orbit pass. The transform and CRS Earth Engine wrote are left untouched.
+
+**Why not export to Drive.** A batch export has no size limit and would take a whole swath, but
+it splits a run in two: launch a task, wait, download, then run the chain. The direct download
+answers in one call, which keeps "a run is one command against one config file" true, and it is
+capped at 32 MB — which is the point. A Sentinel-1 GRD product is two orders of magnitude past
+that, so no full product can arrive by this path even by mistake. The area shipped in
+`configs/anholt.yaml` is about 15 km square: 18 MB in two polarisations, 1485 x 1497 px, which at
+512/64 is sixteen tiles with real seams between them rather than a single tile pretending. Drive
+remains the escape hatch for a whole swath, and is not built until something needs one.
+
+**Why the transform is taken as it stands.** Rebuilding one from the bounding box and the pixel
+size looks entirely reasonable and is the same class of fault as the tiling and CRS ones: it
+never crashes, it just puts every detection somewhere else. The one thing this module must not
+have is an opinion about where the pixels are.
+
+**Why the request is refused before it is sent.** An area past the limit is refused locally, with
+the arithmetic shown, rather than by Earth Engine after the wait — and its message would not say
+which of the three numbers to change. A test reads `configs/anholt.yaml` and runs it through the
+command's own parsing, so a mistyped key in the one config that needs credentials is caught in a
+second rather than by someone who has already authenticated.
+
+**What is not tested, stated rather than implied.** Whether Earth Engine's filters select what
+this code believes they select is a claim about a live API and cannot be made here. The client is
+kept to filtering, reading metadata and fetching bytes — it decides nothing — so that what is
+untestable is also as small as possible. It is verified once, by hand, on the first real export.
+
+---
+
+## 2026-08-13 — A run with nothing to match against reports `unsearched`, not `dark`
+
+**Decision.** `ais: null` is a valid run. Its detections come back with status `unsearched` and
+no tolerance, rather than `dark` at the configured radius.
+
+**Why.** The first real scene runs before real AIS exists — ingesting Danish archives is the
+next level. `classify` previously marked every detection dark when handed no declarations, which
+is the most confident wrong answer this chain is capable of producing: a GeoPackage of a thousand
+"dark vessels" over the Kattegat, opening in QGIS looking exactly like a finding. "Dark" is a
+claim about what was searched, and with no AIS supplied nothing was.
+
+**The distinction that matters.** An empty AIS slice is not the same as no AIS slice. An empty
+slice is a search that ran and returned nothing, and its detections are honestly dark. `None` is
+no search at all. The config spells the absence out as `ais: null` rather than allowing it by
+omission, so a run cannot arrive here by forgetting a key.

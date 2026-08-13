@@ -142,6 +142,32 @@ darkvessel run --config configs/pipeline.yaml
   3 matched, 1 dark at a tolerance of 200 m
 ```
 
+### On a real Sentinel-1 scene
+
+This one needs Earth Engine credentials, and is the only part of the repository that does.
+
+```bash
+pip install -e ".[gee]"
+earthengine authenticate          # once; set your project in configs/anholt.yaml
+darkvessel export --config configs/anholt.yaml
+darkvessel run --config configs/anholt.yaml
+```
+
+`export` asks Earth Engine for one acquisition over the Anholt wind farm, already clipped to the
+area and reprojected into the working CRS, and writes a single GeoTIFF carrying its acquisition
+time, scene id, polarisations and orbit pass. Clipping and reprojection happen on Google's
+machines: no GRD product reaches the local disk, and the 32 MB a direct download returns is two
+orders of magnitude smaller than one. About 15 km square at 10 m is 1485 x 1497 px — sixteen
+tiles with real seams between them, rather than the four the synthetic scene has.
+
+That run has no AIS to match against; real Danish declarations arrive with Level 3. Its
+detections come back marked `unsearched` rather than `dark`, because nothing was searched:
+
+```
+… detections in EPSG:25832 -> outputs/anholt.gpkg
+  no AIS supplied: nothing was searched, so no detection here is a dark vessel
+```
+
 `outputs/detections.gpkg` opens directly in QGIS, in EPSG:25832. Each detection carries its
 `status` (`matched` or `dark`), the `mmsi` that explains it if one does, the distance to that
 declared position, and the `tolerance_m` the decision was made at — the radius is part of the
@@ -154,9 +180,14 @@ exactly where the tiles that config cuts the scene into meet, so the shipped run
 rather than only the tests.
 
 ```bash
-make test    # the seam: georeferencing, tiling and matching, offline and deterministic
+make test    # the seam: georeferencing, tiling, matching and export, offline and deterministic
 make lint
 ```
+
+The export is tested with Earth Engine faked — the catalogue is a parameter, the same seam that
+lets the pipeline run without a detector. What that cannot check is whether Earth Engine's own
+filters select what this code believes they select; that is verified by hand on the first real
+export and recorded here rather than asserted in a test that could not fail.
 
 Both run on every push and pull request, from
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — the same two commands, not a second
