@@ -8,6 +8,7 @@ Choosing it is a property of the run; the pipeline itself never knows which one 
 """
 
 import argparse
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ import yaml
 from pyproj import CRS
 
 from darkvessel.data.ais import load_ais
+from darkvessel.data.gee_export import Bounds, DateWindow, earth_engine, export_scene
 from darkvessel.data.scene import Scene
 from darkvessel.data.synthetic import write_synthetic_inputs
 from darkvessel.data.tiling import Tiling
@@ -37,10 +39,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     synthesise.add_argument("--out", type=Path, required=True)
 
+    export = commands.add_parser(
+        "export", help="fetch a real Sentinel-1 scene from Earth Engine (needs credentials)"
+    )
+    export.add_argument("--config", type=Path, required=True)
+
     args = parser.parse_args(argv)
 
     if args.command == "synthesise":
         return _synthesise(args.out)
+    if args.command == "export":
+        return _export(args.config)
     return _run(args.config)
 
 
@@ -59,7 +68,11 @@ def _run(config_path: Path) -> int:
 
     scene = Scene.from_geotiff((relative_to / run_config["scene"]).resolve())
     _check_working_crs(scene.crs, config["area"]["crs"])
-    ais = load_ais((relative_to / run_config["ais"]).resolve(), crs=scene.crs)
+    # `ais: null` is a run with nothing to match against — a real scene before the level that
+    # ingests real declarations. It is spelled out in the config rather than allowed by omission,
+    # and what comes out is marked `unsearched`, never `dark`.
+    declared = run_config["ais"]
+    ais = None if declared is None else load_ais((relative_to / declared).resolve(), crs=scene.crs)
     tolerance_m = float(config["fusion"]["match_tolerance_m"])
 
     detections = run_pipeline(
@@ -74,12 +87,62 @@ def _run(config_path: Path) -> int:
     write_detections(detections, output)
 
     counts = detections["status"].value_counts()
-    print(
-        f"{len(detections)} detections in {scene.crs} -> {output}\n"
+    verdict = (
         f"  {counts.get(MATCHED, 0)} matched, {counts.get(DARK, 0)} dark "
         f"at a tolerance of {tolerance_m:g} m"
+        if ais is not None
+        else "  no AIS supplied: nothing was searched, so no detection here is a dark vessel"
+    )
+    print(f"{len(detections)} detections in {scene.crs} -> {output}\n{verdict}")
+    return 0
+
+
+def export_request_from(config: dict[str, Any], relative_to: Path) -> dict[str, Any]:
+    """Everything `export_scene` needs, read out of a config file.
+
+    Separate from the command that runs it so that a config can be checked without credentials.
+    Every other config fault in this package surfaces in a test run; without this split, a
+    mistyped key in the one config that needs Earth Engine would surface only to someone who had
+    already authenticated and waited.
+    """
+    imagery = config["imagery"]
+    return {
+        "area": Bounds(**config["area"]["bounds"]),
+        "window": DateWindow(**_window_from(imagery["window"])),
+        "polarisations": tuple(imagery["polarisations"]),
+        "crs": config["area"]["crs"],
+        "resolution_m": float(imagery["resolution_m"]),
+        "path": (relative_to / config["export"]["out"]).resolve(),
+    }
+
+
+def _export(config_path: Path) -> int:
+    """Fetch the scene the config names. The one command in this package that needs a network."""
+    config = yaml.safe_load(config_path.read_text())
+    request = export_request_from(config, config_path.parent)
+
+    scene = export_scene(
+        catalogue=earth_engine(project=config.get("earthengine", {}).get("project")),
+        **request,
+    )
+
+    print(
+        f"wrote {request['path']}\n"
+        f"  {scene.id}\n"
+        f"  acquired {scene.acquired_at.isoformat()}, {scene.orbit_pass.lower()} pass, "
+        f"polarisations {', '.join(scene.polarisations)}"
     )
     return 0
+
+
+def _window_from(window_config: dict[str, Any]) -> dict[str, datetime]:
+    """Read the search window as written in the config.
+
+    Zones are not supplied here if the config omitted them: a timestamp without one is read as
+    local time, which shifts the window by an hour or two and can drop the acquisition at either
+    end of it. `DateWindow` refuses such a window rather than have this guess at a zone.
+    """
+    return {end: datetime.fromisoformat(str(window_config[end])) for end in ("start", "end")}
 
 
 def _check_working_crs(scene_crs: str, working_crs: str) -> None:

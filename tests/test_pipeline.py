@@ -239,6 +239,21 @@ def test_a_declared_position_beyond_the_tolerance_leaves_the_detection_dark() ->
     assert beyond["status"].iloc[0] == "dark"
 
 
+def test_a_run_with_no_declarations_to_search_calls_nothing_dark() -> None:
+    # "Dark" is a claim about what was searched, and with no AIS supplied nothing was. A layer
+    # that said dark anyway would open in QGIS looking exactly like a sea full of undeclared
+    # vessels — the most confident wrong answer this chain is capable of producing.
+    scene = synthetic_scene(targets=[(20, 30)])
+
+    detections = detect(scene, ais=None)
+
+    assert detections["status"].iloc[0] == "unsearched"
+    assert pd.isna(detections["mmsi"].iloc[0])
+    # No radius either: a tolerance next to a detection nothing was compared against reads as a
+    # search that happened and came back empty.
+    assert pd.isna(detections["tolerance_m"].iloc[0])
+
+
 def test_one_declared_position_cannot_explain_two_detections() -> None:
     # Two targets 60 m apart: pixel (20, 30) -> (500305, 6149795), (20, 36) -> (500365, 6149795).
     scene = synthetic_scene(targets=[(20, 30), (20, 36)])
