@@ -41,16 +41,19 @@ ORBIT_PASS_TAG = "ORBIT_PASS"
 
 COLLECTION = "COPERNICUS/S1_GRD"
 
-# A ceiling this package sets on a single direct download, not a limit quoted from Earth Engine:
-# the real cap is a server-side detail that would go stale in this comment. Calibrated against a
-# measurement instead — the area in `configs/anholt.yaml` estimates at 38 MB here and came back
-# fine — and set well above it, while staying two orders of magnitude below a whole GRD product.
-# That is what the guard is for: catching an area that would pull a product, not shaving megabytes.
-MAX_REQUEST_BYTES = 64 * 1024 * 1024
-# Measured on the first real export rather than assumed: Earth Engine returned S1 GRD bands as
-# float64, twice the width this once guessed. Guessing it low is the failure mode that matters —
-# the guard then waves through exactly the request it exists to stop.
-BYTES_PER_SAMPLE = 8
+# Earth Engine's own limit on a single direct download, quoted from its refusal rather than
+# guessed at: "Total request size (57353670 bytes) must be less than or equal to 50331648 bytes."
+# This was 64 MB for as long as no request came near it, on the reasoning that the real cap is a
+# server-side detail that would go stale in a comment — which was true, and left the guard unable
+# to do the one thing it exists for. The second study area is what found it, at 57 MB.
+MAX_REQUEST_BYTES = 48 * 1024 * 1024
+# Nine, not eight, and the ninth byte is the reason the guard let that request through. Earth
+# Engine returns S1 GRD bands as float64 — eight bytes, itself a measurement rather than a guess,
+# after this was once set at four — and counts a byte of validity mask alongside each sample. The
+# refusal is what says so and says it exactly: the scene that came back is 1845 x 1727 px, and
+# 1845 x 1727 x 2 bands x 18 bytes is 57 353 670, which is the number in the message to the byte.
+# The band count is in the caller's hands, so this is per sample rather than per pixel.
+BYTES_PER_SAMPLE = 9
 
 
 @dataclass(frozen=True)
@@ -253,23 +256,32 @@ def _refuse_a_request_too_large_to_answer(
     Earth Engine refuses an oversized request too, after the wait, and its message does not say
     which number to change: the area, the resolution, or the number of polarisations.
 
-    The size is an estimate. Earth Engine reprojects onto its own grid, so the pixel count it
-    settles on differs from this by a few per cent — the shipped area works out at 1485 x 1497
-    here and came back 1582 x 1498. That is fine for a guard whose job is to catch an area off by
-    two orders of magnitude, and it is why the ceiling is not set anywhere near a real limit.
+    All four corners are transformed, not two. A rectangle in degrees is not a rectangle in a
+    projected CRS — its edges bow, and its bounding box is wider than the box between two
+    opposite corners. Taking two corners understated the first study area by 6.5% and understated
+    every area in the one direction that matters, which is why the guard once waved through a
+    request Earth Engine then refused. On the two areas this project has exported, the four
+    corners land within 0.1% of the grid Earth Engine settled on.
     """
     from pyproj import Transformer
 
     to_working = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
-    west, south = to_working.transform(area.west, area.south)
-    east, north = to_working.transform(area.east, area.north)
+    corners = [
+        to_working.transform(longitude, latitude)
+        for longitude in (area.west, area.east)
+        for latitude in (area.south, area.north)
+    ]
+    eastings = [easting for easting, _ in corners]
+    northings = [northing for _, northing in corners]
 
-    pixels = ((east - west) / resolution_m) * ((north - south) / resolution_m)
+    pixels = ((max(eastings) - min(eastings)) / resolution_m) * (
+        (max(northings) - min(northings)) / resolution_m
+    )
     size = pixels * len(polarisations) * BYTES_PER_SAMPLE
     if size > MAX_REQUEST_BYTES:
         raise ValueError(
             f"{area.as_rectangle()} at {resolution_m:g} m in {len(polarisations)} polarisations is "
-            f"about {size / 1e6:.0f} MB, past the {MAX_REQUEST_BYTES / 1e6:.0f} MB ceiling this "
-            "export puts on a single response; shrink the area, drop a polarisation, or export to "
-            "Drive instead — see docs/decisions.md"
+            f"about {size / 1e6:.0f} MB, past the {MAX_REQUEST_BYTES / 1e6:.0f} MB Earth Engine "
+            "answers in a single response; shrink the area, drop a polarisation, coarsen the "
+            "resolution, or export to Drive — see docs/decisions.md"
         )

@@ -530,3 +530,134 @@ supplied. This says declarations were supplied and none of them was here, which 
 claim and a true one — the reasoning that makes an empty slice honestly dark still holds. What
 was missing was not correctness but legibility: a reader has the radius and now has what the
 radius was applied to, and 115 dark against 0 declarations is unmistakable at a glance.
+
+---
+
+## 2026-08-14 — The study area is measured, and it moves onto the shipping lane
+
+**Partly supersedes** *Study area: Danish waters*, in the part that chose Anholt for its wind
+farm. Everything else in that entry stands, and the false-positive evidence the wind farm
+produced is kept.
+
+**Decision.** The study area moves from the Anholt box (11.15–11.40 E, 56.58–56.71 N) to
+11.00–11.30 E, 57.55–57.70 N — 17.4 x 17.3 km of open water in the northern Kattegat, on the
+approach to Skagen. The rectangle is chosen by `darkvessel survey`, which streams one day of
+Danish AIS and ranks every rectangle of that size in the Kattegat.
+
+**Why the old one had to go.** Anholt was chosen because turbines are bright point scatterers, so
+the detector's false-positive problem would be visible in the very first real output. That
+worked. It also put the box in quiet water off the Kattegat lane, and every acquisition over it
+found the same thing: of 30 acquisitions between 21 June and 28 July 2026, 19 had no declared
+vessel in the frame at all, and across the other 11 the largest vessel ever present was 15 m —
+a pixel and a half at 10 m, and never a target this chain could match. The fusion level was
+complete, tested and correct, and had nothing to fuse.
+
+**What the ranking counts, and the three measures it had to beat.** Not reports: a ship alongside
+a quay reports for twelve hours and one crossing at 14 knots is gone in twenty minutes, so report
+counts measure dwell and transmit rate and a harbour wins. Not vessels over a day: that measures
+throughput, and a rectangle one ship crosses at dawn scores like a lane, while an acquisition
+arrives at a moment nobody chose. Not everything afloat: a rectangle chosen for how many 15 m
+pleasure craft cross it is chosen on evidence the radar cannot see either way — which is exactly
+how Anholt was chosen. What is counted is **distinct vessels of at least 100 m, under way,
+standing inside the rectangle during a half hour** — the same half hour `darkvessel ais` fetches
+— averaged over every half hour of the day including the empty ones.
+
+The `under way` filter is load-bearing rather than tidy. Ranked on presence alone the winners are
+the Frederikshavn approach and the Skagen anchorage, where twenty ships of 200 m sit waiting: all
+large, all declared, all beside land, and no lane running through any of it.
+
+**What the measurement said.** Over 2026-08-09, 29 718 190 position reports:
+
+| Rectangle | Vessels ≥ 100 m under way, over the day | Mean in a half hour | Fewest | Empty half hours |
+| --- | --- | --- | --- | --- |
+| **11.00–11.30 E, 57.55–57.70 N** | **91** | **4.75** | **2** | **0** |
+| 11.45–11.75 E, 57.25–57.40 N | 88 | 4.54 | 2 | 0 |
+| 10.95–11.25 E, 57.55–57.70 N | 91 | 4.50 | 2 | 0 |
+| 11.40–11.70 E, 57.25–57.40 N | 88 | 4.44 | 2 | 0 |
+| 11.50–11.80 E, 57.25–57.40 N | 88 | 4.42 | 2 | 0 |
+| 11.35–11.65 E, 57.25–57.40 N | 86 | 4.15 | 2 | 0 |
+| 11.10–11.40 E, 57.50–57.65 N | 93 | 5.42 | 1 | 0 |
+| 11.15–11.45 E, 57.50–57.65 N | 92 | 5.42 | 1 | 0 |
+| 11.20–11.50 E, 57.50–57.65 N | 92 | 5.19 | 1 | 0 |
+| 10.75–11.05 E, 57.65–57.80 N | 91 | 5.04 | 1 | 0 |
+
+Ranked on the worst half hour before the mean: a rectangle that is empty at some point in the day
+is a rectangle an acquisition can catch empty, and no average makes that acceptable. Three
+rectangles score better on the mean and are passed over for it. Against Anholt's
+largest-ever-15 m, this box holds five or six commercial ships at an arbitrary instant.
+
+`darkvessel survey --config configs/survey.yaml` prints this table; the config carries the day,
+the region, the box, the step, the window and both thresholds, so the ranking above is what that
+one command reproduces rather than a number copied out of a notebook.
+
+**What the choice gives up, in three parts.**
+
+*The wind farm.* There are no turbines in the new box, so the detector's false-positive problem is
+no longer standing in the frame of every run. It does not stop being a problem, and the evidence
+already gathered over Anholt does not stop being evidence — but from here on the false positives
+in a scene are sidelobes and sea clutter rather than a documented 111-turbine lattice.
+
+*A polarisation.* Earth Engine answers a single download up to 48 MiB, and this rectangle at 10 m
+came back from its grid at 57 MB in VV and VH. Something had to give. The area is the one thing
+here that was measured and argued for; 20 m pixels would put a 100 m hull at five pixels and
+halve the point of using SAR. So VV only, at 22 MB on disk. Nothing today reads VH — the chain
+takes band 1 — but cross-polarised backscatter separates a hull from the sea better than VV does,
+and a detector trained on both will need either a smaller rectangle or an export to Drive.
+
+*Land, which is what was not given up.* The busiest cells in the Kattegat by any count are
+coastal, and land is bright: a second false-positive problem on top of the one already documented.
+Measured rather than eyeballed, because "there is no land in this box" is exactly the kind of
+claim that is obvious and wrong. The top twenty rectangles the survey returned were reduced over
+`NOAA/NGDC/ETOPO1` band `bedrock` in Earth Engine, at a scale of 1000 m, taking the mean and the
+maximum elevation inside each — a one-arc-minute relief model is coarse against a 17 km box and
+far finer than the question, which is whether any part of the coast is inside the rectangle at
+all. Every one of the twenty is entirely at sea: the chosen box has a mean depth of 39 m and its
+shallowest point is 31 m below the surface. The Øresund rectangles, which score comparably on
+traffic, come back with a mean elevation *above* sea level and a 56 m hill inside them.
+
+That check is a hand measurement against a live API and is not in the repository, for the reason
+`gee_export.py` gives for the filters it does not test: what cannot be asserted offline is kept
+small and written down rather than pretended at. What is written down is the dataset, the band,
+the reducer and the scale, which is what someone needs to repeat it.
+
+**Why one day, and why that is enough.** A lane is a feature of the traffic separation scheme, not
+of the weather: the Kattegat routes carry the same ships in the same places every day. A day ranks
+rectangles and is cheap enough that anyone can repeat the measurement. What a day cannot settle is
+whether a particular acquisition catches anything, and that question has its own command.
+
+---
+
+## 2026-08-14 — The export ceiling is Earth Engine's own, and a sample costs nine bytes
+
+**Supersedes** the size-guard reasoning in *A real scene arrives clipped, in one response, and its
+georeferencing is never recomputed*. Everything else in that entry stands.
+
+**Decision.** `MAX_REQUEST_BYTES` is 48 MiB, quoted from Earth Engine's own refusal.
+`BYTES_PER_SAMPLE` is 9. The pixel count is estimated from all four corners of the area rather
+than two.
+
+**Why.** The ceiling was 64 MB, set on the argument that the real cap is a server-side detail that
+would go stale in a comment, and calibrated against one area that came back fine. That argument is
+sound and the number it produced was wrong in the only direction that matters. The first request
+to approach it — this study area, in two polarisations — went out, waited, and came back with
+`Total request size (57353670 bytes) must be less than or equal to 50331648 bytes`, which is the
+entire failure the guard exists to prevent, performed by the guard.
+
+**What the refusal was worth.** It states the limit exactly, so the ceiling is now a measurement.
+It also states the size Earth Engine computed, and that number turned out to explain the second
+error: the scene that eventually came back is 1845 x 1727 px, and 1845 x 1727 x 2 bands x 18 bytes
+is 57 353 670 to the byte. Nine bytes per sample, not eight — float64, plus a byte of validity
+mask alongside each. The estimate had been low by an eighth for every request this project has
+ever made, and nothing had come close enough to the ceiling for it to show.
+
+**The other eighth was the two corners.** A rectangle in degrees is not a rectangle in a projected
+CRS: its edges bow, and the bounding box Earth Engine works to is wider than the box between two
+opposite corners. Taking two corners understated the first study area by 6.5%. With four corners
+and nine bytes, the estimate lands within 0.1% of the grid Earth Engine settled on for both areas
+this project has exported, and a test pins it against all three observations — the area that came
+back, the area that was refused, and the same area in one polarisation that came back.
+
+**Why not a safety margin instead.** A fudge factor was the first fix written here, and it would
+have held. It would also have left two wrong models in the code with a constant on top hiding
+both, and the next area that failed would have failed for a third reason nobody could separate
+from the first two. The margin came out once the arithmetic explained the measurement.

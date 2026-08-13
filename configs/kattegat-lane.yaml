@@ -1,0 +1,97 @@
+# A real Sentinel-1 acquisition over the northern Kattegat, and the chain run across it.
+# Paths are relative to this file. `configs/pipeline.yaml` is the synthetic demo; this is the
+# one that needs Earth Engine credentials and a network.
+
+area:
+  name: kattegat-lane
+  crs: EPSG:25832          # ETRS89 / UTM 32N
+  # The northern Kattegat on the approach to Skagen: 17.4 x 17.3 km of open water, carrying the
+  # traffic between the Baltic and the Skagerrak. Chosen by measurement rather than off a map —
+  # `darkvessel survey --config configs/survey.yaml` ranks every rectangle of this size in the
+  # Kattegat by how many vessels of 100 m or more, under way, stand inside it at a given moment,
+  # and this one comes first: 91 such vessels over 2026-08-09, 4.75 in an average half hour, and
+  # never fewer than two in any half hour of the day.
+  #
+  # It supersedes the Anholt box, which was chosen for its wind farm and turned out to sit off
+  # the lane: 30 acquisitions, 19 with no declared vessel in frame at all, and the largest ship
+  # ever present 15 m long. What this gives up is the turbines — see docs/decisions.md.
+  bounds:
+    west: 11.00
+    south: 57.55
+    east: 11.30
+    north: 57.70
+
+imagery:
+  collection: COPERNICUS/S1_GRD
+  # VV only, and this is what the move to a bigger box costs. Earth Engine answers a single
+  # download up to 48 MiB; this rectangle at 10 m came back from its grid at 57 MB in two
+  # polarisations and was refused. Something had to give — the area, the resolution or a
+  # polarisation — and the area is the one thing here that was measured and argued for, while
+  # 20 m pixels would put a 100 m hull at five pixels and halve the point of using SAR at all.
+  #
+  # What it gives up: the chain reads band 1 and nothing today touches VH, but cross-polarised
+  # backscatter separates a ship from the sea better than VV does, and a detector trained to use
+  # both will want it. When one exists, this box needs either a smaller rectangle or an export to
+  # Drive. Recorded here rather than discovered then.
+  polarisations: [VV]
+  resolution_m: 10
+  # Searched, not required to contain a scene. One acquisition covers this box on this day —
+  # 2026-08-09T05:31:24, descending — and it is the only one of the day whose footprint contains
+  # the whole rectangle rather than clipping a corner of it. Six vessels stood inside the
+  # rectangle at that instant, five of them 100 m or more and the largest 274 m.
+  window:
+    start: 2026-08-09T00:00:00+00:00
+    end: 2026-08-09T12:00:00+00:00
+
+# 512 px is the figure that follows from a detector's memory, and this is a scene large enough
+# for it to mean something: about 1740 x 1730 px as exported, four tiles per axis and sixteen in
+# all, with real seams. `configs/pipeline.yaml` runs 144/32 because its scene is 256 px.
+tiling:
+  size_px: 512
+  overlap_px: 64
+
+fusion:
+  match_tolerance_m: 200
+  interpolation_max_gap_s: 600
+
+# The declarations to match against, from the Danish Maritime Authority's daily archive for the
+# day the scene was acquired. `darkvessel ais --config configs/kattegat-lane.yaml` fetches them;
+# the acquisition itself is read off the scene, so a slice and the scene cannot name two moments.
+ais:
+  # Either side of the acquisition. A vessel is placed by interpolating between the two reports
+  # bracketing it, so this only has to hold a bracket: a class A vessel under way reports every
+  # few seconds and one at anchor every three minutes. A quarter of an hour is generous.
+  #
+  # It is also the half hour `configs/survey.yaml` measures over, so the survey's count is the
+  # number of declarations a run here actually has to match against rather than a statistic
+  # about some other span.
+  window_s: 900
+  # How far outside the study area a report is still taken. A vessel imaged just inside the edge
+  # of the scene reported minutes earlier from just outside it, and cutting that report away
+  # leaves it with nothing to interpolate between. 5 km is what a vessel at 20 knots covers in
+  # the eight minutes either side of the widest bracket this run interpolates across.
+  margin_m: 5000
+  # Above this, one report cannot have followed another and one of them is noise. A ceiling on
+  # the physically possible rather than on the usual: the fastest thing in these waters is a
+  # 40-knot ferry, and a rule that removed it would be removing evidence.
+  max_speed_kn: 60
+  out: ../data/real/kattegat-lane-ais.csv
+
+earthengine:
+  # The Cloud project `ee.Initialize` authenticates against. Left empty, Earth Engine falls back
+  # to whatever the local credentials default to, which is fine on one machine and unreproducible
+  # on any other. Set it to yours before the first export.
+  project: "carbon-cacao-488416-s6"
+
+export:
+  out: ../data/real/kattegat-lane.tif
+
+run:
+  scene: ../data/real/kattegat-lane.tif
+  # Written by `darkvessel ais`, from the archive for the day of the acquisition above. Run that
+  # first: without the file this run has nothing to search, and a run with nothing to search says
+  # `unsearched` rather than calling every detection dark.
+  ais: ../data/real/kattegat-lane-ais.csv
+  output: ../outputs/kattegat-lane.gpkg
+  detector: bright-pixel   # still the stand-in: this run tests the chain, not the detector
+  threshold: 0.0         # S1 GRD comes back in dB, not the 0..1 of the synthetic scene

@@ -1,0 +1,69 @@
+# Where to put the study area, measured rather than picked off a map.
+#
+# `darkvessel survey --config configs/survey.yaml` streams one day of Danish AIS and ranks every
+# rectangle of the study area's size that fits inside the region below. This is the measurement
+# the current `configs/kattegat-lane.yaml` bounds came out of; re-running it reproduces the
+# argument rather than the rectangle, which is the point of keeping it in the repository.
+#
+# Nothing is written. What this decides is a rectangle someone reads the case for and then writes
+# into an area config by hand.
+
+survey:
+  # The day measured. One archive, streamed once and discarded — 662 MB across the wire.
+  #
+  # Why one day and not a fortnight. What is being chosen is a lane, and a lane is a feature of
+  # the traffic separation scheme rather than of the weather: the Kattegat routes carry the same
+  # ships in the same places every day. A day is enough to rank rectangles and cheap enough that
+  # the measurement can be repeated by anyone; what a day cannot settle is whether a particular
+  # acquisition catches anything, and that is what `darkvessel ais` answers directly.
+  day: 2026-08-09
+
+  # The Kattegat, from the Skagerrak entrance down to the northern Øresund. Wide enough to hold
+  # every rectangle worth considering and narrow enough that a day of it fits in memory once the
+  # reports have been collapsed to one row per vessel, cell and window.
+  region:
+    west: 10.0
+    south: 55.8
+    east: 12.8
+    north: 57.8
+
+  # The rectangle being searched for: the size of the study area a config would then declare.
+  # 0.30 x 0.15 degrees is 17.4 x 17.3 km at this latitude — a third more pixels at 10 m than the
+  # 15 km box this project started on.
+  #
+  # A rectangle this size does not fit in two polarisations. Earth Engine answers a single
+  # download up to 48 MiB, and this box came back from its grid at 57 MB in VV and VH; what is
+  # shipped is VV only, which the guard estimates at 29 MB and which arrived as a 22 MB file.
+  # That trade is stated in `configs/kattegat-lane.yaml`. Any new rectangle is checked against
+  # the guard in `gee_export.py` rather than against this comment — it holds Earth Engine's own
+  # ceiling and the arithmetic behind it. See docs/decisions.md.
+  box:
+    lon_deg: 0.30
+    lat_deg: 0.15
+
+  # How far apart candidate rectangles are placed, and therefore the cell size the counts are
+  # accumulated on. The box has to be a whole number of these across. 0.05 degrees is about 3 km:
+  # fine enough that a lane cannot fall between two candidate positions, coarse enough that the
+  # survey is one pass rather than a search.
+  stride_deg: 0.05
+
+  # How long each stand-in acquisition is. `ais.window_s` in the area configs is 900 s either
+  # side, so a slice is half an hour wide and this is the same half hour: the number reported is
+  # then the number of declarations a run would actually have to match against, not a statistic
+  # about some other span.
+  window_s: 1800
+
+  # The shortest vessel this counts as traffic. Sentinel-1 GRD is 10 m pixels, so a 100 m hull is
+  # ten pixels across and a 15 m pleasure craft is one and a half. Every declared vessel that
+  # crossed the old Anholt box over five weeks was under 15 m, which is why that box could be
+  # busy on paper and empty to the radar.
+  min_length_m: 100
+
+  # At or above this, a vessel is traffic rather than something moored or at anchor. The busiest
+  # rectangles in the northern Kattegat by presence alone are the Frederikshavn approach and the
+  # Skagen anchorage, where twenty ships of 200 m sit waiting — large, declared, and beside land.
+  # 3 knots is below any transit speed and above the drift of a ship at anchor.
+  under_way_kn: 3
+
+  # How many of the ranked rectangles to print. The tail is all near-duplicates of the head.
+  report: 20

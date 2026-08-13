@@ -104,12 +104,21 @@ def synthetic_scene(targets: list[tuple[int, int]], size: int = 64) -> Scene:
     )
 
 
-def ais_slice(reports: list[tuple[str, datetime, float, float]]) -> gpd.GeoDataFrame:
-    """Declared positions, as (mmsi, timestamp, x, y) in the working CRS."""
+def ais_slice(
+    reports: list[tuple[str, datetime, float, float]],
+    lengths: dict[str, float] | None = None,
+) -> gpd.GeoDataFrame:
+    """Declared positions, as (mmsi, timestamp, x, y) in the working CRS.
+
+    A vessel absent from `lengths` never declared a size, which is most of the archive and the
+    default here for that reason.
+    """
+    declared = lengths or {}
     return gpd.GeoDataFrame(
         {
             "mmsi": [mmsi for mmsi, _, _, _ in reports],
             "timestamp": pd.to_datetime([when for _, when, _, _ in reports], utc=True),
+            "length_m": [declared.get(mmsi, float("nan")) for mmsi, _, _, _ in reports],
         },
         geometry=[Point(x, y) for _, _, x, y in reports],
         crs=WORKING_CRS,
@@ -234,6 +243,28 @@ def test_a_vessel_that_declared_itself_is_matched_and_one_that_did_not_is_dark()
     assert undeclared["status"] == "dark"
     assert pd.isna(undeclared["mmsi"])
     assert undeclared["tolerance_m"] == pytest.approx(200.0)
+
+
+def test_a_matched_detection_carries_the_size_the_vessel_declared() -> None:
+    """What explained the detection, and whether the radar could plausibly have seen it.
+
+    A 228 m tanker is twenty pixels at 10 m and a 15 m sailing boat is a pixel and a half. Which
+    of the two matched is the difference between a chain that works and a chain that agreed with
+    a threshold on sea clutter, and a reader with only the layer cannot tell them apart unless
+    the size is in the row — the same argument that puts the tolerance there.
+    """
+    # Two targets: pixel (20, 30) -> (639305, 6281795), pixel (40, 10) -> (639105, 6281595).
+    scene = synthetic_scene(targets=[(20, 30), (40, 10)])
+    ais = ais_slice(
+        [("219000001", ACQUIRED_AT, 639_345.0, 6_281_795.0)],
+        lengths={"219000001": 228.0},
+    )
+
+    detections = detect(scene, ais)
+
+    assert detection_at(detections, 639_305.0, 6_281_795.0)["length_m"] == pytest.approx(228.0)
+    # Nothing explained the other one, so there is no vessel whose size it could carry.
+    assert pd.isna(detection_at(detections, 639_105.0, 6_281_595.0)["length_m"])
 
 
 def test_a_vessel_whose_track_reaches_the_target_by_the_acquisition_is_not_dark() -> None:
@@ -499,11 +530,20 @@ def test_every_shipped_config_names_the_fusion_settings_a_run_needs(shipped: Pat
     """The same gap `export_request_from` exists to close, on the settings fusion reads.
 
     Every test above writes its own config, so the shipped files are the ones nothing in the
-    suite executes. `configs/anholt.yaml` is worse than that: running it needs Earth Engine
+    suite executes. `configs/kattegat-lane.yaml` is worse than that: running it needs Earth Engine
     credentials, so a missing key there surfaces only to someone who has already authenticated
     and waited. Both go through the command's own parsing here instead.
+
+    Every file in `configs/` is covered, and the ones that are not runs have to say what they are
+    instead. Filtering them out silently would let a run config that had lost its `run:` key drop
+    out of this test without anything noticing.
     """
-    settings = fusion_settings_from(yaml.safe_load(shipped.read_text()))
+    config = yaml.safe_load(shipped.read_text())
+    if "run" not in config:
+        assert "survey" in config, f"{shipped.name} describes neither a run nor a survey"
+        return
+
+    settings = fusion_settings_from(config)
 
     assert settings["tolerance_m"] > 0.0
     assert settings["max_gap"] > timedelta(0)

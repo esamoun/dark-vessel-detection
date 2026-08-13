@@ -21,6 +21,7 @@ from darkvessel.data.area import Bounds
 from darkvessel.data.dma import danish_maritime_authority
 from darkvessel.data.gee_export import DateWindow, earth_engine, export_scene
 from darkvessel.data.scene import Scene
+from darkvessel.data.survey import survey as survey_traffic
 from darkvessel.data.synthetic import write_synthetic_inputs
 from darkvessel.data.tiling import Tiling
 from darkvessel.detect.detector import Detector
@@ -53,6 +54,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     ais.add_argument("--config", type=Path, required=True)
 
+    survey_command = commands.add_parser(
+        "survey", help="measure where the traffic is, to choose a study area (needs a network)"
+    )
+    survey_command.add_argument("--config", type=Path, required=True)
+
     args = parser.parse_args(argv)
 
     if args.command == "synthesise":
@@ -61,6 +67,8 @@ def main(argv: list[str] | None = None) -> int:
         return _export(args.config)
     if args.command == "ais":
         return _ais(args.config)
+    if args.command == "survey":
+        return _survey(args.config)
     return _run(args.config)
 
 
@@ -156,8 +164,8 @@ def fusion_settings_from(config: dict[str, Any]) -> dict[str, Any]:
 
     Separate from the command for the same reason as `export_request_from`: every test in this
     package writes its own config, so the shipped ones are the files nothing in the suite runs,
-    and `configs/anholt.yaml` needs Earth Engine credentials before it can fail at all. Both go
-    through this function in a test instead.
+    and `configs/kattegat-lane.yaml` needs Earth Engine credentials before it can fail at all.
+    Both go through this function in a test instead.
     """
     fusion = config["fusion"]
     return {
@@ -214,6 +222,51 @@ def _ais(config_path: Path) -> int:
     for line in cleaning.lines():
         print(f"  {line}")
     print(f"wrote {path}")
+    return 0
+
+
+def survey_request_from(config: dict[str, Any]) -> dict[str, Any]:
+    """What `survey` takes from a config file.
+
+    Separate from the command for the reason `ais_request_from` is: this is the third stage that
+    needs a network, and a mistyped key would otherwise surface to someone who had already waited
+    for a day of Danish AIS.
+
+    Nothing is written, so unlike the others there is no path to resolve. A survey answers a
+    question rather than producing an input: what it decides is the rectangle someone then writes
+    into an area config by hand, having read the argument for it.
+
+    `report` is how many of the ranked rectangles the command prints, and it comes back here
+    rather than being read in the command — like the path `_ais` pops off its own request. Every
+    key of a shipped config goes through a function a test can call, or it becomes the one key
+    nothing in the suite ever parses.
+    """
+    settings = config["survey"]
+    return {
+        "day": settings["day"],
+        "region": Bounds(**settings["region"]),
+        "box": (float(settings["box"]["lon_deg"]), float(settings["box"]["lat_deg"])),
+        "stride": float(settings["stride_deg"]),
+        "window": timedelta(seconds=float(settings["window_s"])),
+        "min_length_m": float(settings["min_length_m"]),
+        "under_way_kn": float(settings["under_way_kn"]),
+        "report": int(settings["report"]),
+    }
+
+
+def _survey(config_path: Path) -> int:
+    """Measure where the traffic is, and rank every rectangle the study area could be."""
+    config = yaml.safe_load(config_path.read_text())
+    request = survey_request_from(config)
+    report = request.pop("report")
+
+    print(
+        f"vessels of {request['min_length_m']:g} m or more, under way, in "
+        f"{request['box'][0]:g} x {request['box'][1]:g} degree rectangles over "
+        f"{request['day'].isoformat()}"
+    )
+    for candidate in survey_traffic(archive=danish_maritime_authority(), **request)[:report]:
+        print(f"  {candidate.line()}")
     return 0
 
 

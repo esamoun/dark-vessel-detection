@@ -126,3 +126,92 @@ here is a detection published as a dark vessel.
 **What was done instead.** Each report is compared against the median position of its own track in
 the window. A median moves for no single report, which is the property the rule needed and neither
 of the obvious versions had.
+
+---
+
+## 2026-08-14 — The export size guard was a number nobody had measured, and it let the request through
+
+**What happened.** The study area moved onto the shipping lane and grew by a third. The guard in
+`gee_export.py` estimated the request at 48 MB against a 64 MB ceiling and let it go. Earth Engine
+took it, and answered: `Total request size (57353670 bytes) must be less than or equal to
+50331648 bytes`.
+
+**Why it survived.** The ceiling was reasoned about rather than measured, and the reasoning was
+good: the real cap is a server-side detail that would go stale in a comment, so the guard was
+calibrated against a request that had worked and set well above it. Every part of that is
+defensible and none of it is a measurement of the limit. The guard's whole purpose is to refuse
+locally what Earth Engine would refuse after the wait, and the first request that tested it was
+the first request to come near the ceiling — which is to say the guard had never been exercised
+by anything except tests it agreed with.
+
+**And the estimate was low twice over, in the same direction.** 57 353 670 against an estimate of
+48 000 000 is not a rounding difference. Two independent faults, each about an eighth:
+
+- *Nine bytes per sample, not eight.* Earth Engine counts a byte of validity mask alongside each
+  float64. The refusal proves it: the scene is 1845 x 1727 px, and 1845 x 1727 x 2 x 18 is
+  57 353 670 exactly.
+- *Two corners of a rectangle that is not one.* A lat/lon rectangle's edges bow in a projected
+  CRS, so its bounding box is wider than the box between two opposite corners. That understated
+  the first study area by 6.5% — invisible, because that request was nowhere near the ceiling.
+
+**What it would have cost.** Nothing irreversible: a wait and an error message. The reason it is
+recorded is what it says about the class of guard it belongs to. A refusal that has never fired
+against the real thing is a claim, not a check, and this one had a test suite agreeing with it.
+
+**What was done instead.** The ceiling is Earth Engine's, quoted from the refusal. The sample size
+is nine bytes, derived from the same message. The estimate transforms four corners. A test pins
+the guard against all three real observations — the area that came back, the area that was
+refused, and the area in one polarisation that came back — so the next change to any of those
+three numbers has to stay consistent with what actually happened.
+
+**What was rejected.** A safety margin. It would have worked, and it would have left two wrong
+models in the code with a constant on top hiding both of them.
+
+---
+
+## 2026-08-14 — Four declared ships came back as fourteen dark vessels, and every one of them was where the radar put it
+
+**What happened.** The first run over the new study area: 16 detections, `2 matched, 14 dark at a
+tolerance of 200 m, against 12 declared positions`. Six bright objects in the scene, six large
+vessels declared inside the frame. Two matched. The other four came back dark.
+
+They are not dark. The 14 dark detections belong to four vessels, and every one of them sits
+between 341 m and 632 m from a declared vessel of 140 m or more. The offsets are not scattered.
+The first two rows below are the two matched detections rather than dark ones, and they are here
+because they are the contrast that makes the rest readable:
+
+| MMSI | Length | Speed | Course | Offset | Bearing of the offset |
+| --- | --- | --- | --- | --- | --- |
+| 538002621 | 228 m | 0.0 kn | — | 41 m | 248° |
+| 219025245 | 24 m | 2.6 kn | 285° | 116 m | 001° |
+| 255805577 | 140 m | 13.4 kn | 317° | 475 m | 000° |
+| 636026410 | 274 m | 12.8 kn | 137° | 480 m | 176° |
+| 667002360 | 244 m | 11.6 kn | 316° | 493 m | 353° |
+| 636021202 | 233 m | 13.1 kn | 135° | 514 m | 175° |
+
+The displacement is north or south whatever the ship's course, and which of the two depends on
+whether the ship is closing on the sensor or opening from it. The vessel making 0.0 knots is not
+displaced at all, and the one making 2.6 knots is displaced by 116 m. This is the SAR azimuth
+shift: a moving target is imaged displaced along the azimuth direction by `(R / V) * v_radial`,
+and the numbers above imply an `R / V` of about 115 s, which is Sentinel-1's.
+
+**Why this is the interesting kind of wrong.** Nothing crashed. The two vessels that matched are
+the two that were barely moving, and they matched at 41 m and 116 m — well inside the tolerance,
+so the chain looks calibrated. The four that did not are the four doing 12 knots, and a layer of
+"dark vessels" over a shipping lane is precisely the finding this project exists to produce. It
+would have read as a result.
+
+**Why it could not have been found before.** The old study area had no moving ships in it. Every
+declared vessel that ever crossed it was a pleasure craft the radar could not see, so the one
+term that dominates the error budget here never entered it. The move onto the lane is what
+surfaced this, which is the argument for the move restated as a finding.
+
+**What was done.** Recorded, and nothing else. The tolerance stays at 200 m and stays labelled
+provisional. Widening it to 600 m would make these four match and would be wrong twice: it would
+match them for the wrong reason, and it would hand every genuinely undeclared vessel a 600 m
+radius in which to find an explanation. The answer is to predict the shift from each vessel's own
+declared course and speed and compare against the position the radar would have imaged it at —
+which is a level of its own, and now has its measurements.
+
+**What this run does establish.** The study area works. Six commercial ships in one frame, wakes
+visible on four of them, against an area where the largest vessel ever seen was 15 m.

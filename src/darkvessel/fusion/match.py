@@ -54,6 +54,10 @@ def classify(
     classified = detections.copy()
     classified["status"] = DARK if searched else UNSEARCHED
     classified["mmsi"] = pd.Series(pd.NA, index=classified.index, dtype="string")
+    # How big the vessel that explained this detection said it was. Blank on a dark detection,
+    # because nothing explained it and there is no vessel to have a size — and blank on a match
+    # against a vessel that never declared one.
+    classified["length_m"] = np.nan
     classified["match_distance_m"] = np.nan
     classified["tolerance_m"] = float(tolerance_m) if searched else np.nan
     # How many declarations the radius was applied to. `dark` is a claim about a search, and a
@@ -71,6 +75,7 @@ def classify(
     ):
         classified.loc[detection_idx, "status"] = MATCHED
         classified.loc[detection_idx, "mmsi"] = declared.loc[declared_idx, "mmsi"]
+        classified.loc[detection_idx, "length_m"] = declared.loc[declared_idx, "length_m"]
         classified.loc[detection_idx, "match_distance_m"] = distance_m
         classified.loc[detection_idx, "position_basis"] = declared.loc[
             declared_idx, "position_basis"
@@ -95,7 +100,9 @@ def _positions_at_acquisition(
     """
     if ais is None or ais.empty:
         return gpd.GeoDataFrame(
-            {"mmsi": [], "position_basis": [], "position_age_s": []}, geometry=[], crs=crs
+            {"mmsi": [], "length_m": [], "position_basis": [], "position_age_s": []},
+            geometry=[],
+            crs=crs,
         )
 
     if ais.crs != crs:
