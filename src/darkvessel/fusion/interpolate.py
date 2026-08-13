@@ -47,9 +47,10 @@ def positions_at(
             inherit it. `configs/*.yaml` set it; the reasoning is in docs/decisions.md.
 
     Returns:
-        One row per MMSI, in `ais`'s CRS, carrying `position_basis` — `interpolated` or
-        `reported` — and `position_age_s`, the seconds between the acquisition and the nearest
-        real report behind the position. Vessels are ordered by MMSI, so a run is reproducible.
+        One row per MMSI, in `ais`'s CRS, carrying `length_m` as the vessel declared it,
+        `position_basis` — `interpolated` or `reported` — and `position_age_s`, the seconds
+        between the acquisition and the nearest real report behind the position. Vessels are
+        ordered by MMSI, so a run is reproducible.
     """
     _refuse_unplaceable(ais)
 
@@ -60,9 +61,11 @@ def positions_at(
     ]
     # Columns named rather than inferred from the rows, so that a slice a filter emptied comes
     # back as an empty answer of the right shape instead of a frame with nothing in it at all.
-    frame = pd.DataFrame(placed, columns=["mmsi", "position_basis", "position_age_s", "geometry"])
+    frame = pd.DataFrame(
+        placed, columns=["mmsi", "length_m", "position_basis", "position_age_s", "geometry"]
+    )
     return gpd.GeoDataFrame(
-        frame.astype({"mmsi": "string", "position_age_s": "float64"}),
+        frame.astype({"mmsi": "string", "length_m": "float64", "position_age_s": "float64"}),
         geometry=gpd.GeoSeries(frame["geometry"].to_list(), index=frame.index, crs=ais.crs),
         crs=ais.crs,
     )
@@ -97,7 +100,29 @@ def _place(
     acquisition: pd.Timestamp,
     max_gap: timedelta,
 ) -> dict:
-    """Where this vessel was when the radar looked, and on what evidence."""
+    """Where this vessel was when the radar looked, how big it is, and on what evidence.
+
+    The size does not come out of `_position` with the rest. A position is chosen from two
+    particular reports — the pair bracketing the acquisition, or the nearest one — and the length
+    is a property of the vessel that any of its reports may happen to carry; taking it from
+    whichever report the bracket picked is how a ship comes back with no size because the two
+    rows either side of the acquisition were the ones the receiver had no static data for. The
+    maximum over the track survives a vessel that declared its length once, and comes back NaN
+    for one that never declared it at all — unknown, rather than a ship of no size.
+    """
+    return {
+        **_position(mmsi, track, acquisition, max_gap),
+        "length_m": float(track["length_m"].max()),
+    }
+
+
+def _position(
+    mmsi: str,
+    track: gpd.GeoDataFrame,
+    acquisition: pd.Timestamp,
+    max_gap: timedelta,
+) -> dict:
+    """Which two reports place this vessel at the acquisition, and what they make of it."""
     before = track[track["timestamp"] <= acquisition]
     after = track[track["timestamp"] >= acquisition]
     if before.empty or after.empty:

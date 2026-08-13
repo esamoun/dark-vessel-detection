@@ -10,9 +10,16 @@ declaring itself in AIS; the remaining one does not, and must come back dark. A 
 itself far outside the scene must match nothing.
 
 Where it sits is chosen, not left to a round number. The scene covers 2.56 km of open water in
-the Kattegat, inside the area `configs/anholt.yaml` fetches a real acquisition over. The first
-thing anyone does with the output is drag it onto a basemap, and a demonstration of a maritime
-pipeline whose detections land in a field in Jutland answers a question nobody asked.
+the Kattegat, off Anholt. The first thing anyone does with the output is drag it onto a basemap,
+and a demonstration of a maritime pipeline whose detections land in a field in Jutland answers a
+question nobody asked.
+
+It is no longer inside the rectangle `configs/kattegat-lane.yaml` fetches a real acquisition
+over, and deliberately has not been moved to follow it. What this fixture has to be is at sea and
+recognisably so; being inside the study area was a convenience of the moment the two were chosen
+together, and the study area is a thing that moves — the ground coordinates asserted against here
+are worked out by hand from the transform, so following it costs a uniform shift of every literal
+in two test files for nothing the fixture needs.
 
 The fourth target stands where the tiles the shipped config cuts this scene into meet, and it is
 the whole reason the scene is larger than one tile. Several tiles see it and exactly one may
@@ -84,6 +91,17 @@ DECLARATIONS = [
     ("219000005", MOVING_TARGET, timedelta(minutes=2), 600.0, 0.0),
 ]
 
+# How big each vessel says it is, as the archive carries it. A vessel missing from here never
+# declared a size, which is a large part of any real slice and is why one is left out: a fixture
+# in which every vessel has a length cannot tell a chain that handles an unknown one from a chain
+# that turns it into zero.
+DECLARED_LENGTHS = {
+    "219000001": 228.0,
+    "219000002": 154.0,
+    "219000003": 92.0,
+    "219000004": 199.0,
+}
+
 
 def write_synthetic_inputs(directory: Path) -> tuple[Path, Path]:
     """Write `scene.tif` and `ais.csv` into `directory`. Returns both paths."""
@@ -122,8 +140,16 @@ def _write_ais(path: Path) -> None:
 
     with path.open("w", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["mmsi", "timestamp", "lon", "lat"])
+        writer.writerow(["mmsi", "timestamp", "length_m", "lon", "lat"])
         for mmsi, (row, col), age, east_m, north_m in DECLARATIONS:
             x, y = TRANSFORM * (col + 0.5, row + 0.5)
             lon, lat = to_wgs84.transform(x + east_m, y + north_m)
-            writer.writerow([mmsi, (ACQUIRED_AT + age).isoformat(), f"{lon:.8f}", f"{lat:.8f}"])
+            writer.writerow(
+                [
+                    mmsi,
+                    (ACQUIRED_AT + age).isoformat(),
+                    DECLARED_LENGTHS.get(mmsi, ""),
+                    f"{lon:.8f}",
+                    f"{lat:.8f}",
+                ]
+            )

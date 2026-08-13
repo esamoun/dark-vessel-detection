@@ -26,12 +26,22 @@ ACQUIRED_AT = datetime(2026, 3, 14, 5, 30, tzinfo=UTC)
 MAX_GAP = timedelta(minutes=10)
 
 
-def reports(track: list[tuple[str, timedelta, float, float]]) -> gpd.GeoDataFrame:
-    """Position reports, as (mmsi, offset from the acquisition, x, y) in the working CRS."""
+def reports(
+    track: list[tuple[str, timedelta, float, float]],
+    lengths: dict[str, float] | None = None,
+) -> gpd.GeoDataFrame:
+    """Position reports, as (mmsi, offset from the acquisition, x, y) in the working CRS.
+
+    The ingestion has already spread each vessel's declared length across its own reports by the
+    time a track reaches here, so the column is per report and constant along a track. A vessel
+    absent from `lengths` never said how big it is, which is most of them.
+    """
+    declared = lengths or {}
     return gpd.GeoDataFrame(
         {
             "mmsi": [mmsi for mmsi, _, _, _ in track],
             "timestamp": pd.to_datetime([ACQUIRED_AT + age for _, age, _, _ in track], utc=True),
+            "length_m": [declared.get(mmsi, float("nan")) for mmsi, _, _, _ in track],
         },
         geometry=[Point(x, y) for _, _, x, y in track],
         crs=WORKING_CRS,
@@ -217,5 +227,31 @@ def test_no_reports_at_all_places_no_vessels() -> None:
     placed = positions_at(reports([]), ACQUIRED_AT, MAX_GAP)
 
     assert placed.empty
+    # Of the right shape, so a run over an empty search still writes the columns a reader expects.
+    assert set(placed.columns) >= {"mmsi", "length_m", "position_basis", "position_age_s"}
+
+
+def test_the_vessel_placed_is_the_size_the_vessel_declared() -> None:
+    """A placed position is one row per vessel, which is where a vessel's own size belongs.
+
+    Length decides whether a verdict means anything: at 10 m pixels a 15 m sailing boat is a
+    pixel and a half, so a detection it failed to explain says nothing about the vessel and a
+    great deal about the detector. Carried here rather than looked up again downstream, because
+    this is the one place where reports have already been collapsed to vessels.
+    """
+    track = reports(
+        [
+            ("219000001", timedelta(minutes=-1), 639_000.0, 6_281_000.0),
+            ("219000001", timedelta(minutes=1), 639_400.0, 6_281_000.0),
+            ("219000002", timedelta(minutes=-1), 645_000.0, 6_281_000.0),
+        ],
+        lengths={"219000001": 228.0},
+    )
+
+    placed = positions_at(track, ACQUIRED_AT, MAX_GAP)
+
+    assert position_of(placed, "219000001")["length_m"] == pytest.approx(228.0)
+    # The other vessel never declared a size. Unknown, not zero — and still in the search.
+    assert pd.isna(position_of(placed, "219000002")["length_m"])
     assert placed.crs == WORKING_CRS
     assert set(placed.columns) >= {"mmsi", "position_basis", "position_age_s", "geometry"}

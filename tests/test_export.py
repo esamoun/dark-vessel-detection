@@ -41,10 +41,10 @@ from darkvessel.data.scene import Scene
 WORKING_CRS = "EPSG:25832"
 POLARISATIONS = ("VV", "VH")
 
-SHIPPED_EXPORT_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "anholt.yaml"
+SHIPPED_EXPORT_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "kattegat-lane.yaml"
 
 # The Anholt wind farm and the water around it: about 15 km on a side.
-ANHOLT = Bounds(west=11.15, south=56.58, east=11.40, north=56.71)
+AREA = Bounds(west=11.15, south=56.58, east=11.40, north=56.71)
 WINDOW = DateWindow(
     start=datetime(2026, 3, 1, tzinfo=UTC),
     end=datetime(2026, 3, 15, tzinfo=UTC),
@@ -115,7 +115,7 @@ class FakeCatalogue(Catalogue):
         return geotiff_bytes()
 
 
-def export(catalogue: Catalogue, path: Path, area: Bounds = ANHOLT) -> SceneRef:
+def export(catalogue: Catalogue, path: Path, area: Bounds = AREA) -> SceneRef:
     return export_scene(
         catalogue=catalogue,
         area=area,
@@ -135,7 +135,7 @@ def test_the_exported_scene_carries_the_acquisition_time_the_catalogue_reported(
     # track at the fusion stage, and nothing downstream can detect it.
     acquired_at = datetime(2026, 3, 8, 5, 27, 43, tzinfo=UTC)
     catalogue = FakeCatalogue(scenes=[scene_ref("S1A_IW_GRDH_20260308", acquired_at)])
-    path = tmp_path / "anholt.tif"
+    path = tmp_path / "kattegat-lane.tif"
 
     exported = export(catalogue, path)
 
@@ -147,7 +147,7 @@ def test_the_exported_scene_records_which_polarisations_it_was_built_from(tmp_pa
     # Which polarisations went in decides what the amplitude in the file even means. Left out of
     # the file, it survives only in whatever command someone happened to run.
     catalogue = FakeCatalogue(scenes=[scene_ref("S1A_IW_GRDH_20260308", WINDOW.start)])
-    path = tmp_path / "anholt.tif"
+    path = tmp_path / "kattegat-lane.tif"
 
     export(catalogue, path)
 
@@ -165,7 +165,7 @@ def test_the_georeferencing_earth_engine_produced_is_left_exactly_as_it_arrived(
     # adds metadata to the fetched file; a transform rebuilt from a bounding box and a pixel size
     # would look entirely reasonable and put every detection somewhere else.
     catalogue = FakeCatalogue(scenes=[scene_ref("S1A_IW_GRDH_20260308", WINDOW.start)])
-    path = tmp_path / "anholt.tif"
+    path = tmp_path / "kattegat-lane.tif"
 
     export(catalogue, path)
 
@@ -182,7 +182,7 @@ def test_the_earliest_acquisition_in_the_window_is_the_one_taken(tmp_path: Path)
     later = scene_ref("S1A_IW_GRDH_20260310", WINDOW.start + timedelta(days=9))
     catalogue = FakeCatalogue(scenes=[later, first])
 
-    exported = export(catalogue, tmp_path / "anholt.tif")
+    exported = export(catalogue, tmp_path / "kattegat-lane.tif")
 
     assert exported.id == first.id
     assert [fetched.id for fetched, _ in catalogue.fetches] == [first.id]
@@ -196,7 +196,7 @@ def test_a_window_with_no_acquisition_is_an_error_naming_what_was_searched(
     catalogue = FakeCatalogue(scenes=[])
 
     with pytest.raises(ValueError, match="no COPERNICUS/S1_GRD acquisition covers"):
-        export(catalogue, tmp_path / "anholt.tif")
+        export(catalogue, tmp_path / "kattegat-lane.tif")
 
     assert catalogue.fetches == []
 
@@ -210,11 +210,60 @@ def test_an_area_too_large_to_come_back_in_one_response_is_refused_before_it_is_
     too_large = Bounds(west=11.0, south=56.0, east=13.0, north=58.0)
     catalogue = FakeCatalogue(scenes=[scene_ref("S1A_IW_GRDH_20260308", WINDOW.start)])
 
-    with pytest.raises(ValueError, match="ceiling this export puts on a single response"):
-        export(catalogue, tmp_path / "anholt.tif", area=too_large)
+    with pytest.raises(ValueError, match="Earth Engine answers in a single response"):
+        export(catalogue, tmp_path / "kattegat-lane.tif", area=too_large)
 
     assert catalogue.searches == []
     assert catalogue.fetches == []
+
+
+@pytest.mark.parametrize(
+    ("area", "polarisations", "refused"),
+    [
+        # The first study area, in two polarisations. Earth Engine answered it: 1582 x 1498 px,
+        # 33 MB on disk.
+        (Bounds(west=11.15, south=56.58, east=11.40, north=56.71), ("VV", "VH"), False),
+        # The second study area, in two polarisations. Earth Engine refused it, and said what it
+        # was refusing: "Total request size (57353670 bytes) must be less than or equal to
+        # 50331648 bytes." The guard had waved it through at an estimated 48 MB against a
+        # 64 MB ceiling that was never a measurement of anything.
+        (Bounds(west=11.00, south=57.55, east=11.30, north=57.70), ("VV", "VH"), True),
+        # The same area in one polarisation, which is what is shipped and what came back.
+        (Bounds(west=11.00, south=57.55, east=11.30, north=57.70), ("VV",), False),
+    ],
+)
+def test_the_guard_agrees_with_what_earth_engine_actually_answered(
+    tmp_path: Path,
+    area: Bounds,
+    polarisations: tuple[str, ...],
+    refused: bool,
+) -> None:
+    """Three real requests, and the guard has to sort them the way Earth Engine did.
+
+    A guard whose ceiling nobody ever reached is a guard nobody has tested. This one was set at
+    a number chosen for feeling safe, and the first request that approached it went out, waited,
+    and came back refused — which is the entire failure the guard exists to prevent. The ceiling
+    is now Earth Engine's own, quoted from that refusal, and these are the observations it has to
+    stay consistent with: two areas that came back and one that did not.
+    """
+    catalogue = FakeCatalogue(scenes=[scene_ref("S1A_IW_GRDH_20260308", WINDOW.start)])
+    request = {
+        "catalogue": catalogue,
+        "area": area,
+        "window": WINDOW,
+        "polarisations": polarisations,
+        "crs": WORKING_CRS,
+        "resolution_m": 10.0,
+        "path": tmp_path / "scene.tif",
+    }
+
+    if refused:
+        with pytest.raises(ValueError, match="Earth Engine answers in a single response"):
+            export_scene(**request)
+        assert catalogue.fetches == []
+    else:
+        export_scene(**request)
+        assert len(catalogue.fetches) == 1
 
 
 @pytest.mark.skipif(
@@ -232,7 +281,7 @@ def test_a_missing_gee_extra_is_answered_with_the_command_that_installs_it() -> 
 def test_the_shipped_export_config_describes_a_request_that_can_be_answered(
     tmp_path: Path,
 ) -> None:
-    """`configs/anholt.yaml`, run through the command's own parsing, minus Earth Engine.
+    """`configs/kattegat-lane.yaml`, run through the command's own parsing, minus Earth Engine.
 
     This is the one config in the package that needs credentials, so it is the one whose faults
     would otherwise be found by a person who had already authenticated and waited. Everything up
@@ -244,7 +293,7 @@ def test_the_shipped_export_config_describes_a_request_that_can_be_answered(
     catalogue = FakeCatalogue(scenes=[scene_ref("S1A_IW_GRDH_20260703", WINDOW.start)])
 
     request = export_request_from(config, SHIPPED_EXPORT_CONFIG.parent)
-    export_scene(catalogue=catalogue, **{**request, "path": tmp_path / "anholt.tif"})
+    export_scene(catalogue=catalogue, **{**request, "path": tmp_path / "kattegat-lane.tif"})
 
     assert len(catalogue.fetches) == 1
     # The scene the export writes is the scene the run reads: one config, one file, no third
