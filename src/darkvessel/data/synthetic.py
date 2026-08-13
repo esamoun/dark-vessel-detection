@@ -9,6 +9,11 @@ The scene is a dark sea with faint speckle and four bright targets. Two of them 
 declaring itself nearby in AIS; the third does not, and must come back dark. A vessel declaring
 itself far outside the scene must match nothing.
 
+Where it sits is chosen, not left to a round number. The scene covers 2.56 km of open water in
+the Kattegat, inside the area `configs/anholt.yaml` fetches a real acquisition over. The first
+thing anyone does with the output is drag it onto a basemap, and a demonstration of a maritime
+pipeline whose detections land in a field in Jutland answers a question nobody asked.
+
 The fourth target stands where the tiles the shipped config cuts this scene into meet, and it is
 the whole reason the scene is larger than one tile. Several tiles see it and exactly one may
 report it. It declares itself, so both ways of getting the reconciliation wrong show up in the
@@ -28,8 +33,8 @@ from pyproj import Transformer
 CRS = "EPSG:25832"
 SIZE_PX = 256
 PIXEL_M = 10.0
-ORIGIN_X = 500_000.0
-ORIGIN_Y = 6_150_000.0
+ORIGIN_X = 639_000.0
+ORIGIN_Y = 6_282_000.0
 TRANSFORM = Affine(PIXEL_M, 0.0, ORIGIN_X, 0.0, -PIXEL_M, ORIGIN_Y)
 
 ACQUIRED_AT = datetime(2026, 3, 14, 5, 30, tzinfo=UTC)
@@ -39,8 +44,8 @@ SPECKLE_SEED = 20260314
 SPECKLE_MAX = 0.2
 
 # (row, col) of each target centre. Ground coordinates, for reference and for the test to assert
-# against: (60, 80) -> 500805, 6149395 | (120, 200) -> 502005, 6148795 | (30, 220) -> 502205,
-# 6149695 | (128, 128) -> 501285, 6148715. Each is `origin + (index + 0.5) * pixel size`,
+# against: (60, 80) -> 639805, 6281395 | (120, 200) -> 641005, 6280795 | (30, 220) -> 641205,
+# 6281695 | (128, 128) -> 640285, 6280715. Each is `origin + (index + 0.5) * pixel size`,
 # northing decreasing.
 #
 # The last one is placed, not chosen: at the tile size and overlap `configs/pipeline.yaml` sets,

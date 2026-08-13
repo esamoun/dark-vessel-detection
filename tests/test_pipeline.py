@@ -43,8 +43,8 @@ from darkvessel.pipeline import run
 
 # The scene the tests are built on: 10 m pixels, north-up, in the working CRS. Every expected
 # ground coordinate in this file derives from these three numbers and nothing else.
-ORIGIN_X = 500_000.0
-ORIGIN_Y = 6_150_000.0
+ORIGIN_X = 639_000.0
+ORIGIN_Y = 6_282_000.0
 PIXEL_M = 10.0
 
 WORKING_CRS = "EPSG:25832"
@@ -150,9 +150,9 @@ def test_detection_lands_at_its_true_ground_coordinate() -> None:
     assert len(detections) == 1
     assert detections.crs == WORKING_CRS
     point = detections.geometry.iloc[0]
-    # Centre of pixel (row 20, col 30): 500000 + 30.5 * 10, 6150000 - 20.5 * 10.
-    assert point.x == pytest.approx(500_305.0)
-    assert point.y == pytest.approx(6_149_795.0)
+    # Centre of pixel (row 20, col 30): 639000 + 30.5 * 10, 6282000 - 20.5 * 10.
+    assert point.x == pytest.approx(639_305.0)
+    assert point.y == pytest.approx(6_281_795.0)
 
 
 def test_a_target_on_a_tile_boundary_is_reported_exactly_once() -> None:
@@ -164,8 +164,8 @@ def test_a_target_on_a_tile_boundary_is_reported_exactly_once() -> None:
     detections = detect(scene, tiling=FOUR_TILES)
 
     assert len(detections) == 1
-    # Centre of pixel (32, 32): 500000 + 32.5 * 10, 6150000 - 32.5 * 10.
-    detection_at(detections, 500_325.0, 6_149_675.0)
+    # Centre of pixel (32, 32): 639000 + 32.5 * 10, 6282000 - 32.5 * 10.
+    detection_at(detections, 639_325.0, 6_281_675.0)
 
 
 def test_no_part_of_a_scene_larger_than_one_tile_goes_unread() -> None:
@@ -176,11 +176,11 @@ def test_no_part_of_a_scene_larger_than_one_tile_goes_unread() -> None:
 
     assert len(detections) == 5
     for x, y in [
-        (500_105.0, 6_149_895.0),
-        (500_505.0, 6_149_895.0),
-        (500_105.0, 6_149_495.0),
-        (500_505.0, 6_149_495.0),
-        (500_325.0, 6_149_675.0),
+        (639_105.0, 6_281_895.0),
+        (639_505.0, 6_281_895.0),
+        (639_105.0, 6_281_495.0),
+        (639_505.0, 6_281_495.0),
+        (639_325.0, 6_281_675.0),
     ]:
         detection_at(detections, x, y)
 
@@ -200,14 +200,14 @@ def test_the_tiling_a_run_uses_does_not_change_what_it_finds() -> None:
 
 
 def test_a_vessel_that_declared_itself_is_matched_and_one_that_did_not_is_dark() -> None:
-    # Two targets: pixel (20, 30) -> (500305, 6149795), pixel (40, 10) -> (500105, 6149595).
+    # Two targets: pixel (20, 30) -> (639305, 6281795), pixel (40, 10) -> (639105, 6281595).
     scene = synthetic_scene(targets=[(20, 30), (40, 10)])
     ais = ais_slice(
         [
             # Two hours stale and 1305 m west — the wrong report to match against.
-            ("219000001", ACQUIRED_AT - timedelta(hours=2), 499_000.0, 6_149_795.0),
+            ("219000001", ACQUIRED_AT - timedelta(hours=2), 638_000.0, 6_281_795.0),
             # Three minutes old and 40 m east of the target — the right one.
-            ("219000001", ACQUIRED_AT - timedelta(minutes=3), 500_345.0, 6_149_795.0),
+            ("219000001", ACQUIRED_AT - timedelta(minutes=3), 639_345.0, 6_281_795.0),
         ]
     )
 
@@ -215,13 +215,13 @@ def test_a_vessel_that_declared_itself_is_matched_and_one_that_did_not_is_dark()
 
     assert len(detections) == 2
 
-    declared = detection_at(detections, 500_305.0, 6_149_795.0)
+    declared = detection_at(detections, 639_305.0, 6_281_795.0)
     assert declared["status"] == "matched"
     assert declared["mmsi"] == "219000001"
     assert declared["match_distance_m"] == pytest.approx(40.0)
     assert declared["tolerance_m"] == pytest.approx(200.0)
 
-    undeclared = detection_at(detections, 500_105.0, 6_149_595.0)
+    undeclared = detection_at(detections, 639_105.0, 6_281_595.0)
     assert undeclared["status"] == "dark"
     assert pd.isna(undeclared["mmsi"])
     assert undeclared["tolerance_m"] == pytest.approx(200.0)
@@ -229,8 +229,8 @@ def test_a_vessel_that_declared_itself_is_matched_and_one_that_did_not_is_dark()
 
 def test_a_declared_position_beyond_the_tolerance_leaves_the_detection_dark() -> None:
     scene = synthetic_scene(targets=[(20, 30)])
-    # 250 m east of the target at (500305, 6149795).
-    ais = ais_slice([("219000001", ACQUIRED_AT, 500_555.0, 6_149_795.0)])
+    # 250 m east of the target at (639305, 6281795).
+    ais = ais_slice([("219000001", ACQUIRED_AT, 639_555.0, 6_281_795.0)])
 
     within = detect(scene, ais, tolerance_m=300.0)
     beyond = detect(scene, ais, tolerance_m=200.0)
@@ -255,15 +255,15 @@ def test_a_run_with_no_declarations_to_search_calls_nothing_dark() -> None:
 
 
 def test_one_declared_position_cannot_explain_two_detections() -> None:
-    # Two targets 60 m apart: pixel (20, 30) -> (500305, 6149795), (20, 36) -> (500365, 6149795).
+    # Two targets 60 m apart: pixel (20, 30) -> (639305, 6281795), (20, 36) -> (639365, 6281795).
     scene = synthetic_scene(targets=[(20, 30), (20, 36)])
     # One vessel between them: 20 m from the first, 40 m from the second, both inside tolerance.
-    ais = ais_slice([("219000001", ACQUIRED_AT, 500_325.0, 6_149_795.0)])
+    ais = ais_slice([("219000001", ACQUIRED_AT, 639_325.0, 6_281_795.0)])
 
     detections = detect(scene, ais)
 
-    nearer = detection_at(detections, 500_305.0, 6_149_795.0)
-    farther = detection_at(detections, 500_365.0, 6_149_795.0)
+    nearer = detection_at(detections, 639_305.0, 6_281_795.0)
+    farther = detection_at(detections, 639_365.0, 6_281_795.0)
     assert nearer["status"] == "matched"
     assert nearer["mmsi"] == "219000001"
     # Two hulls that close together are two vessels, and only one of them declared itself.
@@ -279,10 +279,10 @@ def test_a_single_command_turns_a_config_into_a_georeferenced_layer(tmp_path: Pa
 
     # Ground coordinates of the four synthetic targets, worked out from the transform that
     # `write_synthetic_inputs` documents.
-    declared_a = detection_at(written, 500_805.0, 6_149_395.0)
-    declared_b = detection_at(written, 502_005.0, 6_148_795.0)
-    undeclared = detection_at(written, 502_205.0, 6_149_695.0)
-    on_the_seam = detection_at(written, 501_285.0, 6_148_715.0)
+    declared_a = detection_at(written, 639_805.0, 6_281_395.0)
+    declared_b = detection_at(written, 641_005.0, 6_280_795.0)
+    undeclared = detection_at(written, 641_205.0, 6_281_695.0)
+    on_the_seam = detection_at(written, 640_285.0, 6_280_715.0)
 
     assert declared_a["status"] == "matched"
     assert declared_a["mmsi"] == "219000001"
