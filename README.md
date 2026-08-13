@@ -4,12 +4,12 @@
 
 [![CI](https://github.com/esamoun/dark-vessel-detection/actions/workflows/ci.yml/badge.svg)](https://github.com/esamoun/dark-vessel-detection/actions/workflows/ci.yml)
 
-> **Status — work in progress.** The chain runs end to end today, on a synthetic scene, with a
-> threshold on bright pixels standing in for the detector: one command in, a georeferenced
-> GeoPackage of matched and dark detections out. It tiles a scene larger than one tile and
-> reports a vessel sitting on a tile boundary exactly once. Nothing inside it is good yet — that
-> is the point of building it in this order. See [Approach](#approach) for what is real and what
-> is a placeholder.
+> **Status — work in progress.** The chain runs end to end today, on a real Sentinel-1 scene, with
+> a threshold on bright pixels standing in for the detector: one command in, a georeferenced
+> GeoPackage out that opens in QGIS where it should. It tiles a scene larger than one tile and
+> reports a target sitting on a tile boundary exactly once. What it finds so far is mostly a wind
+> farm — the detector is the placeholder, and that is the point of building it in this order. See
+> [Approach](#approach) for what is real and what is not.
 
 ---
 
@@ -31,7 +31,7 @@ The pipeline is built in four levels, each one shippable on its own.
 | Level | What it does | Status |
 | --- | --- | --- |
 | **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | in progress |
-| **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | tiling and output done; awaiting a real scene |
+| **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene; awaiting the trained detector |
 | **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | planned |
 | **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | planned |
 
@@ -165,9 +165,27 @@ That run has no AIS to match against; real Danish declarations arrive with Level
 detections come back marked `unsearched` rather than `dark`, because nothing was searched:
 
 ```
-… detections in EPSG:25832 -> outputs/anholt.gpkg
+115 detections in EPSG:25832 -> outputs/anholt.gpkg
   no AIS supplied: nothing was searched, so no detection here is a dark vessel
 ```
+
+#### What the first real run showed — checked on a basemap, 2026-08-13
+
+Scene `S1C_IW_GRDH_1SDV_20260702T170036_…`, acquired 2026-07-02 17:00:36 UTC, ascending, VV+VH,
+1582 x 1498 px over the Anholt area. `outputs/anholt.gpkg` was opened in QGIS over an
+OpenStreetMap basemap: the detections fall at sea east of Grenaa, in the water the config asks
+for, with no offset visible against the coastline.
+
+They are not vessels. Nearest-neighbour distances are bimodal with nothing at all between 100 m
+and 500 m: 93 of the 115 sit within 100 m of another — one bright object reported twice by a
+threshold that splits it — and merging those leaves **60 objects spaced 680 m apart** (p10 554,
+p90 957). Ships do not arrange themselves on a 680 m lattice. That is the Anholt wind farm, whose
+turbines are bright point scatterers, and it is the false-positive problem this project has to
+solve rather than a fault in the chain. Separating fixed structures from vessels is Level 3.
+
+Two things this run caught, both recorded in [`docs/failures.md`](docs/failures.md): the chain was
+reading the product's nodata fill as the brightest targets in the scene, and the export's size
+guard had been sized from an assumed dtype rather than a measured one.
 
 `outputs/detections.gpkg` opens directly in QGIS, in EPSG:25832. Each detection carries its
 `status` (`matched` or `dark`), the `mmsi` that explains it if one does, the distance to that
