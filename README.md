@@ -2,6 +2,8 @@
 
 **Detecting undeclared vessels by fusing Sentinel-1 SAR imagery with AIS records over Danish waters.**
 
+[![CI](https://github.com/esamoun/dark-vessel-detection/actions/workflows/ci.yml/badge.svg)](https://github.com/esamoun/dark-vessel-detection/actions/workflows/ci.yml)
+
 > **Status — work in progress.** The chain runs end to end today, on a synthetic scene, with a
 > threshold on bright pixels standing in for the detector: one command in, a georeferenced
 > GeoPackage of matched and dark detections out. Nothing inside it is good yet — that is the
@@ -144,6 +146,9 @@ the output, and which detector to inject; the pipeline itself never knows which 
 make test    # the seam test: georeferencing and matching, offline and deterministic
 make lint
 ```
+
+Both run on every push and pull request — the same two commands, from
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml), on Python 3.11 and 3.13.
 
 ## Licence
 
