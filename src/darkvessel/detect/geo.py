@@ -4,8 +4,9 @@ Converts detections from image pixels to projected coordinates, and writes geore
 output that opens directly in QGIS. Silent errors here produce plausible detections in the wrong
 place, which is worse than a crash. Geometry-critical: covered by tests.
 
-One tile means one coordinate system for now. The tile-local to scene-pixel step arrives with
-tiling, which is what makes it necessary.
+Detections arrive here already in scene coordinates: the tile-local step, and the reconciliation
+of what overlapping tiles saw twice, are done by the time this module sees them. One transform
+places the whole scene, so there is exactly one conversion and it happens here.
 """
 
 from collections.abc import Sequence

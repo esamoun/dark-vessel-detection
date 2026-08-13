@@ -17,6 +17,7 @@ from pyproj import CRS
 from darkvessel.data.ais import load_ais
 from darkvessel.data.scene import Scene
 from darkvessel.data.synthetic import write_synthetic_inputs
+from darkvessel.data.tiling import Tiling
 from darkvessel.detect.detector import Detector
 from darkvessel.detect.geo import write_detections
 from darkvessel.detect.threshold import BrightPixelDetector
@@ -65,6 +66,7 @@ def _run(config_path: Path) -> int:
         scene=scene,
         ais=ais,
         detector=_detector_from(run_config),
+        tiling=_tiling_from(config["tiling"]),
         tolerance_m=tolerance_m,
     )
 
@@ -93,6 +95,19 @@ def _check_working_crs(scene_crs: str, working_crs: str) -> None:
             f"scene is in {scene_crs} but the run declares a working CRS of {working_crs}; "
             "reproject the scene, or correct area.crs in the config"
         )
+
+
+def _tiling_from(tiling_config: dict[str, Any]) -> Tiling:
+    """Build the tiling named by the config.
+
+    How a scene is cut up is a property of the run — the detector it is cut for, and the memory
+    that detector runs in — so it is chosen here rather than fixed in the pipeline. What the two
+    numbers have to satisfy, and why, is in `tiling.py`.
+    """
+    return Tiling(
+        size_px=int(tiling_config["size_px"]),
+        overlap_px=int(tiling_config["overlap_px"]),
+    )
 
 
 def _detector_from(run_config: dict[str, Any]) -> Detector:

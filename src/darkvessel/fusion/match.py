@@ -82,8 +82,10 @@ def _closest_pairs(
     """Pair detections with declared positions, closest first, each used at most once.
 
     One declared position cannot explain two detections: two hulls that close together are two
-    vessels, and only one of them declared itself. Quadratic in the number of detections, which
-    is fine for a single tile and is not what will be run over a scene.
+    vessels, and only one of them declared itself. Quadratic in the number of detections and of
+    declarations, which is fine for the tens of each a synthetic scene produces. A real scene
+    against a day of Danish AIS is a different size of problem and wants a spatial index; that
+    belongs with the level that first runs one, not before.
     """
     if declared.empty:
         return
