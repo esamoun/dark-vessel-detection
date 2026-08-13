@@ -28,8 +28,8 @@ from affine import Affine
 from rasterio.io import MemoryFile
 
 from darkvessel.cli import export_request_from
+from darkvessel.data.area import Bounds
 from darkvessel.data.gee_export import (
-    Bounds,
     Catalogue,
     DateWindow,
     SceneRef,

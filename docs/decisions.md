@@ -419,3 +419,114 @@ before the acquisition and 600 m east of it two minutes after. Neither report is
 tolerance of where the radar imaged it; the interpolated position lands on it. Every vessel in the
 fixture had until now been standing still, and a fixture whose vessels do not move cannot tell a
 chain that interpolates from one that does not.
+
+---
+
+## 2026-08-13 — A day of Danish AIS is streamed and filtered, never stored
+
+**Decision.** `darkvessel ais` inflates the daily archive off the network a chunk at a time,
+filters each chunk to the study area and the window, and discards it. Nothing is written to disk
+except the few hundred reports that survive. `zipfile` is not used.
+
+**Why.** The archive for the acquisition this project runs on is 662 MB compressed and 3.3 GB of
+CSV. It holds 26 366 160 position reports for the day, of which 415 stand inside a 25 km box in
+the half hour around the acquisition. `zipfile` reads the central directory at the end of a file and
+therefore needs somewhere seekable, which means the whole 662 MB on disk before the first row can
+be parsed. A daily archive holds exactly one member, and the local header at the front of the
+stream says everything needed to inflate it, so the response is decompressed as it arrives.
+
+This is the same constraint the Sentinel-1 export is built around, arriving from the other side
+of the chain: the development machine has 8 GB and limited disk, and both halves of the fusion
+level are two orders of magnitude larger than what they contribute to the answer. The whole day
+crosses the network in under 40 seconds and never exists anywhere at once.
+
+**What is not used, deliberately.** The uncompressed size in the local header. A zip written in
+streaming mode records zero there and puts the true size in a descriptor after the data.
+Inflation stops when the deflate stream says it has ended, which is true either way.
+
+**The one check that is worth its cost.** The member's name has to name the day the URL asked
+for. A server that answers every path with the same file, or a naming convention that changes
+under us, otherwise produces an archive whose reports all fall outside the window — an empty
+slice, which is a search that ran and found nothing, and every detection in the scene is then
+honestly and wrongly dark.
+
+**Where the archive lives.** `dma.dk` sends a reader to `aisdata.ais.dk`, which is a directory
+listing in front of an S3 bucket; the files are fetched from the bucket endpoint itself,
+`http://aisdata.ais.dk.s3.eu-central-1.amazonaws.com`, which is the string `ARCHIVE_HOST` holds.
+Not `web.ais.dk/aisdata`, which is what every published example points at and what the Danish
+Maritime Authority's own older pages linked to: its certificate expired in June 2025 and the host
+now resets the connection after the request. A URL that has moved once will move again, so it is
+a named constant rather than a string in a function.
+
+---
+
+## 2026-08-13 — What cleaning removes from raw AIS, and why the two errors are not symmetric
+
+**Decision.** Five rules, applied in that order, each counting what it removed: reports that are
+not a vessel, reports without a nine-digit identifier, exact duplicates, two positions for one
+vessel at one instant, and positions the rest of the vessel's own track cannot reach. The counts
+are printed by the command and are part of what the slice claims.
+
+**Why every rule is counted.** A slice is a claim about which vessels declared themselves, and it
+is only as good as what was thrown away on the way to it. The first real run removed 237 of 415
+reports — 57% — almost all of them exact duplicates. A cleaning step nobody can audit is a filter
+that quietly decides what the answer is.
+
+**The asymmetry that decides how wide each rule is.** A declaration wrongly removed is a
+detection published as a dark vessel: a finding this project would be reporting, and the exact
+fault the fusion level exists to remove. A declaration wrongly kept is a match that explains
+nothing — quieter, and recoverable by anyone reading the row. So the filters are wide wherever
+they can be, and removal is confined to reports that cannot be part of any track.
+
+**Base stations and aids to navigation are not vessels.** The archive carries every transmitter in
+Danish waters: of the first 1.18 million rows, 83 192 were base stations and 26 896 aids to
+navigation. Both are real transmitters at real positions and neither is a ship, so neither can
+turn a detection into a declared one — a buoy explaining a radar target would read in the output
+exactly like a vessel that declared itself. Fixed structures standing in a radar scene are the
+detector's problem, and this project already knows it has one: the wind farm is in the frame on
+purpose.
+
+**Two positions at one instant are a contradiction, not a duplicate.** An exact repeat is the
+archive saying the same thing twice and one copy is kept. Two different positions for the same
+vessel at the same second are a pair in which at most one is true, and nothing available here
+says which; keeping either is a coin toss that the output then presents as an observation. Both
+go, and the vessel keeps whatever else it reported, so it stays in the search.
+
+**An outlier is judged against the median of its own track, not against the report before it.**
+Two obvious rules fail, and both fail quietly. Walking a track forward and dropping whatever the
+last kept report cannot reach anchors the whole track on its first position, so one bad report at
+the start takes the vessel's whole slice with it. Judging each report against its immediate
+neighbours cannot tell a spurious report from a good one whose only neighbour is spurious: three
+reports with a jump in the middle are each unreachable from the one beside them, and the rule
+removes all three — two of which were the evidence. That was caught by a test, after the
+neighbour rule had been written and looked right. The median moves for no single report.
+
+**The reach is per report, and the first version of it was dead code.** That version allowed
+every report what a vessel at `ais.max_speed_kn` covers across the whole window — 55 km at the
+shipped settings, against a searched area whose diagonal is 35 km. Nothing that survived the
+spatial filter could exceed it, so the rule could not fire and its zero in the report was
+guaranteed rather than observed. A count that is structurally zero is worse than no count: it
+reads as a clean archive. The reach is now what the vessel could have covered between *that
+report's* time and the middle of its own track, which for a spurious position among dense reports
+is seconds, plus a floor at the order of the match tolerance — below that radius a displaced
+report cannot change any verdict, so there is nothing to gain by removing it.
+
+---
+
+## 2026-08-13 — `dark` carries the number of declarations it was measured against
+
+**Decision.** Every classified detection now carries `declarations_searched` alongside
+`tolerance_m`, and the run says it out loud. A run that searched no declarations at all says so
+in a third line of its verdict.
+
+**Why.** The first real Danish slice this project ingested was empty — no vessel declared itself
+inside that scene at that instant — and the chain did exactly what it was designed to do: an
+empty slice is a search that ran and returned nothing, so all 115 detections came back honestly
+dark. Opened in QGIS, that is a hundred and fifteen dark vessels over the Kattegat, which reads
+as the headline finding of the project. Nothing in the layer distinguished it from one.
+
+**Why this is not the `unsearched` distinction again.** `unsearched` says no declarations were
+supplied. This says declarations were supplied and none of them was here, which is a different
+claim and a true one — the reasoning that makes an empty slice honestly dark still holds. What
+was missing was not correctness but legibility: a reader has the radius and now has what the
+radius was applied to, and 115 dark against 0 declarations is unmistakable at a glance.
