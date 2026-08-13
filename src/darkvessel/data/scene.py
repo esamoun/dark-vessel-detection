@@ -47,8 +47,28 @@ class Scene:
                     "to match against AIS and must not be guessed"
                 )
             return cls(
-                image=dataset.read(band),
+                image=_amplitude(dataset, band),
                 transform=dataset.transform,
                 crs=dataset.crs.to_string(),
                 acquired_at=datetime.fromisoformat(acquired_at),
             )
+
+
+def _amplitude(dataset: rasterio.DatasetReader, band: int) -> np.ndarray:
+    """The band's pixels, with anything the product declares as nodata turned into NaN.
+
+    A real Sentinel-1 product has holes — pixels the producer masked — and writes them as a fill
+    value with `nodata` set alongside. Read plainly, that fill is just a number, and on a scene
+    in dB where the sea sits near -14 dB and the fill is 0, it is brighter than any vessel in the
+    image. The first real scene run through this chain returned three "targets" of 72100, 38955
+    and 36428 pixels for exactly that reason: no crash, no warning, a plausible count.
+
+    NaN rather than a mask because every comparison against NaN is false, so a hole cannot be
+    above any threshold a detector picks — including one written later that never thought about
+    nodata at all.
+    """
+    image = dataset.read(band).astype(np.float32, copy=False)
+    nodata = dataset.nodatavals[band - 1]
+    if nodata is not None:
+        image = np.where(image == np.float32(nodata), np.nan, image)
+    return image

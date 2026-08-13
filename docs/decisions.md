@@ -255,10 +255,11 @@ id, polarisations, orbit pass. The transform and CRS Earth Engine wrote are left
 **Why not export to Drive.** A batch export has no size limit and would take a whole swath, but
 it splits a run in two: launch a task, wait, download, then run the chain. The direct download
 answers in one call, which keeps "a run is one command against one config file" true, and it is
-capped at 32 MB — which is the point. A Sentinel-1 GRD product is two orders of magnitude past
-that, so no full product can arrive by this path even by mistake. The area shipped in
-`configs/anholt.yaml` is about 15 km square: 18 MB in two polarisations, 1485 x 1497 px, which at
-512/64 is sixteen tiles with real seams between them rather than a single tile pretending. Drive
+bounded — which is the point. A Sentinel-1 GRD product is two orders of magnitude past what one
+response carries, so no full product can arrive by this path even by mistake. The area shipped in
+`configs/anholt.yaml` is about 15 km square and came back as 1582 x 1498 px in VV and VH, 33 MB,
+which at 512/64 is sixteen tiles with real seams between them rather than a single tile
+pretending. Drive
 remains the escape hatch for a whole swath, and is not built until something needs one.
 
 **Why the transform is taken as it stands.** Rebuilding one from the bounding box and the pixel
@@ -319,3 +320,34 @@ cannot be distinguished from the bug it is meant to disprove is worth moving.
 literal in the seam test at once. The tests assert ground coordinates worked out from the
 transform rather than recomputed by the code, so an inconsistent shift fails them; passing after
 the move is what says the shift was uniform.
+
+---
+
+## 2026-08-13 — A product's nodata is a hole, and a hole is not a target
+
+**Decision.** `Scene.from_geotiff` turns anything the file declares as nodata into NaN before the
+image reaches a detector.
+
+**What happened.** The first real Sentinel-1 scene run through the chain returned 126 detections.
+Twelve of them were not vessels. Earth Engine writes masked pixels as a fill value and declares
+that value as nodata; the export took 0 for the fill, and 6.2% of the scene was fill. Read
+plainly, 0 is just a number — and on a scene in dB, where the sea sits near -14 dB, it is
+brighter than any vessel in the image. The threshold detector duly found three "targets" of
+72100, 38955 and 36428 pixels.
+
+**Why this is the interesting kind of bug.** Nothing crashed and nothing warned. The count was
+plausible, the detections carried scores and coordinates like any other, and the largest of them
+would have looked, in QGIS, like an unusually large vessel rather than a hole in the product. It
+is the same family as a georeferencing fault or a double-counted target: an answer that is wrong
+without being suspicious. It also could not have been found on the synthetic scene, which has no
+holes because it was written by us — the first real product was always going to be the thing that
+surfaced it.
+
+**Why NaN rather than a mask.** Every comparison against NaN is false, so a hole cannot exceed
+any threshold a detector picks — including a detector written later that never considered nodata
+at all. A masked array would work today and would depend on each future detector remembering to
+honour it.
+
+**What it also confirmed.** Those three blobs were far wider than the 64 px overlap, and came back
+duplicated across tiles — exactly as the ownership scheme's stated precondition says they must.
+The scheme held; the input broke the condition it is documented to require.

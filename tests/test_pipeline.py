@@ -30,6 +30,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
+import rasterio
 import yaml
 from affine import Affine
 from shapely import Point
@@ -237,6 +238,49 @@ def test_a_declared_position_beyond_the_tolerance_leaves_the_detection_dark() ->
 
     assert within["status"].iloc[0] == "matched"
     assert beyond["status"].iloc[0] == "dark"
+
+
+def test_a_gap_in_the_scene_is_not_a_target(tmp_path: Path) -> None:
+    """A real product has holes, and a hole is not dark water.
+
+    Earth Engine writes masked pixels as a fill value and declares it as nodata. Read without
+    honouring that declaration, the fill is just a number — and on a scene in dB, where the sea
+    sits near -14 and the fill is 0, it is a number brighter than any vessel in the image. The
+    first real Sentinel-1 scene run through this chain produced three "targets" of 72100, 38955
+    and 36428 pixels that way: not a crash, not an obviously silly result, just a plausible
+    count with the largest ships in Denmark in it.
+    """
+    path = tmp_path / "with-gaps.tif"
+    sea = np.full((64, 64), -14.0, dtype=np.float32)
+    sea[20:23, 30:33] = -2.0  # one genuine bright target
+    sea[40:56, 8:24] = 0.0  # a hole in the product, brighter than the target if taken at face value
+
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=64,
+        width=64,
+        count=1,
+        dtype="float32",
+        crs=WORKING_CRS,
+        transform=Affine(PIXEL_M, 0.0, ORIGIN_X, 0.0, -PIXEL_M, ORIGIN_Y),
+        nodata=0.0,
+    ) as dataset:
+        dataset.write(sea, 1)
+        dataset.update_tags(ACQUIRED_AT=ACQUIRED_AT.isoformat())
+
+    detections = run(
+        scene=Scene.from_geotiff(path),
+        ais=None,
+        detector=BrightPixelDetector(threshold=-5.0),
+        tiling=ONE_TILE,
+        tolerance_m=TOLERANCE_M,
+    )
+
+    assert len(detections) == 1
+    # Centre of pixel (21, 31): 639000 + 31.5 * 10, 6282000 - 21.5 * 10.
+    detection_at(detections, 639_315.0, 6_281_785.0)
 
 
 def test_a_run_with_no_declarations_to_search_calls_nothing_dark() -> None:

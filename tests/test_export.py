@@ -204,13 +204,13 @@ def test_a_window_with_no_acquisition_is_an_error_naming_what_was_searched(
 def test_an_area_too_large_to_come_back_in_one_response_is_refused_before_it_is_sent(
     tmp_path: Path,
 ) -> None:
-    # Two degrees square at 10 m is some 900 MB in two polarisations — a whole GRD product by
+    # Two degrees square at 10 m is gigabytes in two polarisations — a whole GRD product by
     # another name. Earth Engine refuses it too, but only after the wait, and its message does
     # not say which of the three numbers to change.
     too_large = Bounds(west=11.0, south=56.0, east=13.0, north=58.0)
     catalogue = FakeCatalogue(scenes=[scene_ref("S1A_IW_GRDH_20260308", WINDOW.start)])
 
-    with pytest.raises(ValueError, match="past the 34 MB a direct download returns"):
+    with pytest.raises(ValueError, match="ceiling this export puts on a single response"):
         export(catalogue, tmp_path / "anholt.tif", area=too_large)
 
     assert catalogue.searches == []
