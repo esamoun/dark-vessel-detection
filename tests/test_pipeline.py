@@ -14,11 +14,11 @@ expectation.
 
 The geometry of the tiling itself is not tested here — a scene fully covered is a property of the
 layout, and a strip skipped between two targets leaves no trace in a fixture. That lives in
-`test_tiling.py`; what this file asserts is what comes out of the chain.
-
-Not yet covered, because the chain does not yet do it: AIS interpolation to the acquisition time
-(matching is against the nearest report in time). It arrives with the level that introduces it,
-and this file grows to meet it.
+`test_tiling.py`; what this file asserts is what comes out of the chain. Placing a vessel at the
+acquisition instant is the same shape of thing and lives in `test_interpolate.py`: the chain
+cannot show whether a position is right, only whether the classification that followed from it
+looks plausible. What this file asserts about it is that the placement reaches the matching, and
+changes the verdict where it should.
 
 Detector quality is not tested here. A model is evaluated, not asserted.
 """
@@ -35,9 +35,9 @@ import yaml
 from affine import Affine
 from shapely import Point
 
-from darkvessel.cli import main
+from darkvessel.cli import fusion_settings_from, main
 from darkvessel.data.scene import Scene
-from darkvessel.data.synthetic import SIZE_PX, TARGETS, write_synthetic_inputs
+from darkvessel.data.synthetic import BOUNDARY_TARGET, SIZE_PX, write_synthetic_inputs
 from darkvessel.data.tiling import Tiling
 from darkvessel.detect.threshold import BrightPixelDetector
 from darkvessel.pipeline import run
@@ -51,6 +51,10 @@ PIXEL_M = 10.0
 WORKING_CRS = "EPSG:25832"
 ACQUIRED_AT = datetime(2026, 3, 14, 5, 30, tzinfo=UTC)
 TOLERANCE_M = 200.0
+# The widest bracket of AIS reports these tests allow a position to be interpolated across. The
+# chain has no default for it, for the reason it has none for the tolerance: it decides what the
+# answer is, so a run states it.
+MAX_GAP = timedelta(minutes=10)
 
 # Larger than any scene in this file, so the tests that are not about tiling see one tile and
 # nothing else changes underneath them.
@@ -62,7 +66,8 @@ ONE_TILE = Tiling(size_px=1024, overlap_px=64)
 FOUR_TILES = Tiling(size_px=36, overlap_px=8)
 SPLIT_PX = 32
 
-SHIPPED_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "pipeline.yaml"
+CONFIGS = Path(__file__).resolve().parents[1] / "configs"
+SHIPPED_CONFIG = CONFIGS / "pipeline.yaml"
 
 CONFIG = (
     # Paths are relative to the config file, so a run is portable between machines.
@@ -82,6 +87,7 @@ CONFIG = (
     "  threshold: 0.5\n"
     "fusion:\n"
     f"  match_tolerance_m: {TOLERANCE_M:g}\n"
+    "  interpolation_max_gap_s: 600\n"
 )
 
 
@@ -115,6 +121,7 @@ def detect(
     ais: gpd.GeoDataFrame | None = None,
     tolerance_m: float = TOLERANCE_M,
     tiling: Tiling = ONE_TILE,
+    max_gap: timedelta = MAX_GAP,
 ) -> gpd.GeoDataFrame:
     """Run the chain with the deterministic stand-in detector."""
     return run(
@@ -123,14 +130,15 @@ def detect(
         detector=BrightPixelDetector(threshold=0.5),
         tiling=tiling,
         tolerance_m=tolerance_m,
+        max_gap=max_gap,
     )
 
 
-def run_from_config(directory: Path) -> gpd.GeoDataFrame:
+def run_from_config(directory: Path, config_text: str = CONFIG) -> gpd.GeoDataFrame:
     """Write synthetic inputs and a config into `directory`, run the command, read the output."""
     write_synthetic_inputs(directory)
     config = directory / "pipeline.yaml"
-    config.write_text(CONFIG)
+    config.write_text(config_text)
 
     assert main(["run", "--config", str(config)]) == 0
     return gpd.read_file(directory / "detections.gpkg")
@@ -228,6 +236,36 @@ def test_a_vessel_that_declared_itself_is_matched_and_one_that_did_not_is_dark()
     assert undeclared["tolerance_m"] == pytest.approx(200.0)
 
 
+def test_a_vessel_whose_track_reaches_the_target_by_the_acquisition_is_not_dark() -> None:
+    """The failure this level exists to remove, at the seam.
+
+    Neither of this vessel's reports stands within the tolerance of the detection: one is 900 m
+    west and the other 600 m east. Matched against either as it stands, a vessel that declared
+    itself twice inside five minutes is published as an undeclared one. Interpolated along the
+    track, it is exactly where the radar imaged it.
+    """
+    # Target at pixel (20, 30) -> (639305, 6281795). The vessel covers 1500 m in five minutes,
+    # three fifths of them before the acquisition: 638405 + 0.6 * 1500 = 639305.
+    scene = synthetic_scene(targets=[(20, 30)])
+    ais = ais_slice(
+        [
+            ("219000001", ACQUIRED_AT - timedelta(minutes=3), 638_405.0, 6_281_795.0),
+            ("219000001", ACQUIRED_AT + timedelta(minutes=2), 639_905.0, 6_281_795.0),
+        ]
+    )
+
+    detections = detect(scene, ais)
+
+    vessel = detection_at(detections, 639_305.0, 6_281_795.0)
+    assert vessel["status"] == "matched"
+    assert vessel["mmsi"] == "219000001"
+    assert vessel["match_distance_m"] == pytest.approx(0.0, abs=1e-6)
+    # The row says the position was built rather than observed, and how close the nearest real
+    # report sits to the acquisition: "matched" here rests on an interpolation, and says so.
+    assert vessel["position_basis"] == "interpolated"
+    assert vessel["position_age_s"] == pytest.approx(120.0)
+
+
 def test_a_declared_position_beyond_the_tolerance_leaves_the_detection_dark() -> None:
     scene = synthetic_scene(targets=[(20, 30)])
     # 250 m east of the target at (639305, 6281795).
@@ -276,6 +314,7 @@ def test_a_gap_in_the_scene_is_not_a_target(tmp_path: Path) -> None:
         detector=BrightPixelDetector(threshold=-5.0),
         tiling=ONE_TILE,
         tolerance_m=TOLERANCE_M,
+        max_gap=MAX_GAP,
     )
 
     assert len(detections) == 1
@@ -319,14 +358,15 @@ def test_a_single_command_turns_a_config_into_a_georeferenced_layer(tmp_path: Pa
     written = run_from_config(tmp_path)
 
     assert written.crs == WORKING_CRS
-    assert len(written) == 4
+    assert len(written) == 5
 
-    # Ground coordinates of the four synthetic targets, worked out from the transform that
+    # Ground coordinates of the five synthetic targets, worked out from the transform that
     # `write_synthetic_inputs` documents.
     declared_a = detection_at(written, 639_805.0, 6_281_395.0)
     declared_b = detection_at(written, 641_005.0, 6_280_795.0)
     undeclared = detection_at(written, 641_205.0, 6_281_695.0)
     on_the_seam = detection_at(written, 640_285.0, 6_280_715.0)
+    moving = detection_at(written, 639_605.0, 6_279_995.0)
 
     assert declared_a["status"] == "matched"
     assert declared_a["mmsi"] == "219000001"
@@ -340,7 +380,73 @@ def test_a_single_command_turns_a_config_into_a_georeferenced_layer(tmp_path: Pa
     # declared position cannot explain two detections.
     assert on_the_seam["status"] == "matched"
     assert on_the_seam["mmsi"] == "219000004"
+
+    # The vessel under way: 900 m west of the target three minutes before the acquisition, 600 m
+    # east of it two minutes after, and never within the tolerance of it at either. Matched
+    # against a report as it stands — which is what the shipped run did before this level — it is
+    # published as a dark vessel that was never there.
+    assert moving["status"] == "matched"
+    assert moving["mmsi"] == "219000005"
+    assert moving["position_basis"] == "interpolated"
+
+    # The one honest dark detection: the vessel that declared itself 11 km away.
     assert (written["status"] == "dark").sum() == 1
+
+    # Every other match rests on a report taken as it stands — those vessels reported only
+    # before the acquisition, so there is nothing to interpolate between and the layer says so.
+    assert declared_a["position_basis"] == "reported"
+    assert declared_a["position_age_s"] == pytest.approx(180.0)
+
+
+def test_a_run_says_how_many_of_its_matches_rest_on_an_interpolated_position(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An interpolated position is a construction, and the run's verdict should not hide it.
+
+    The layer carries `position_basis` per row, which is the durable form of the claim. This is
+    the same claim on the way past: someone who has just run the command and not yet opened the
+    output should be told how much of the answer is built rather than observed.
+    """
+    run_from_config(tmp_path)
+
+    verdict = capsys.readouterr().out
+    # Four matches: the moving vessel is placed by interpolation, the other three reported only
+    # before the acquisition and are matched against a report taken as it stands.
+    assert "1 on a position interpolated" in verdict
+    assert "3 on a report taken as it stands" in verdict
+
+
+def test_the_gap_a_config_allows_decides_what_is_interpolated_across(tmp_path: Path) -> None:
+    """The knob has to reach the matching, and be visible in the answer when it does.
+
+    The moving vessel's two reports are five minutes apart. Told that a straight line may span
+    no more than a minute, the run must refuse to draw one and fall back to the nearest report —
+    600 m from the target, so the vessel comes back dark. That is the wrong answer about the
+    world and the right answer about the evidence: with reports that far apart, nothing here
+    knows where the vessel was.
+    """
+    written = run_from_config(
+        tmp_path, CONFIG.replace("interpolation_max_gap_s: 600", "interpolation_max_gap_s: 60")
+    )
+
+    moving = detection_at(written, 639_605.0, 6_279_995.0)
+    assert moving["status"] == "dark"
+    assert (written["status"] == "dark").sum() == 2
+
+
+@pytest.mark.parametrize("shipped", sorted(CONFIGS.glob("*.yaml")), ids=lambda path: path.name)
+def test_every_shipped_config_names_the_fusion_settings_a_run_needs(shipped: Path) -> None:
+    """The same gap `export_request_from` exists to close, on the settings fusion reads.
+
+    Every test above writes its own config, so the shipped files are the ones nothing in the
+    suite executes. `configs/anholt.yaml` is worse than that: running it needs Earth Engine
+    credentials, so a missing key there surfaces only to someone who has already authenticated
+    and waited. Both go through the command's own parsing here instead.
+    """
+    settings = fusion_settings_from(yaml.safe_load(shipped.read_text()))
+
+    assert settings["tolerance_m"] > 0.0
+    assert settings["max_gap"] > timedelta(0)
 
 
 def test_the_shipped_config_still_cuts_the_synthetic_scene_across_a_target() -> None:
@@ -353,7 +459,7 @@ def test_the_shipped_config_still_cuts_the_synthetic_scene_across_a_target() -> 
     the tiling a reader actually runs.
     """
     tiling = Tiling(**yaml.safe_load(SHIPPED_CONFIG.read_text())["tiling"])
-    row, col = TARGETS[-1]
+    row, col = BOUNDARY_TARGET
 
     saw_it = [
         tile
@@ -362,7 +468,7 @@ def test_the_shipped_config_still_cuts_the_synthetic_scene_across_a_target() -> 
     ]
 
     assert len(saw_it) > 1, (
-        f"the shipped tiling gives target {TARGETS[-1]} to {len(saw_it)} tile(s); with fewer "
+        f"the shipped tiling gives target {BOUNDARY_TARGET} to {len(saw_it)} tile(s); with fewer "
         "than two the shipped run never reconciles anything across a tile boundary"
     )
 

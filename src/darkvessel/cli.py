@@ -8,10 +8,11 @@ Choosing it is a property of the run; the pipeline itself never knows which one 
 """
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import geopandas as gpd
 import yaml
 from pyproj import CRS
 
@@ -23,6 +24,7 @@ from darkvessel.data.tiling import Tiling
 from darkvessel.detect.detector import Detector
 from darkvessel.detect.geo import write_detections
 from darkvessel.detect.threshold import BrightPixelDetector
+from darkvessel.fusion.interpolate import INTERPOLATED, REPORTED
 from darkvessel.fusion.match import DARK, MATCHED
 from darkvessel.pipeline import run as run_pipeline
 
@@ -73,28 +75,58 @@ def _run(config_path: Path) -> int:
     # and what comes out is marked `unsearched`, never `dark`.
     declared = run_config["ais"]
     ais = None if declared is None else load_ais((relative_to / declared).resolve(), crs=scene.crs)
-    tolerance_m = float(config["fusion"]["match_tolerance_m"])
+    fusion = fusion_settings_from(config)
 
     detections = run_pipeline(
         scene=scene,
         ais=ais,
         detector=_detector_from(run_config),
         tiling=_tiling_from(config["tiling"]),
-        tolerance_m=tolerance_m,
+        **fusion,
     )
-
     output = (relative_to / run_config["output"]).resolve()
     write_detections(detections, output)
 
-    counts = detections["status"].value_counts()
-    verdict = (
-        f"  {counts.get(MATCHED, 0)} matched, {counts.get(DARK, 0)} dark "
-        f"at a tolerance of {tolerance_m:g} m"
-        if ais is not None
-        else "  no AIS supplied: nothing was searched, so no detection here is a dark vessel"
-    )
-    print(f"{len(detections)} detections in {scene.crs} -> {output}\n{verdict}")
+    print(f"{len(detections)} detections in {scene.crs} -> {output}")
+    for line in _verdict(detections, searched=ais is not None, tolerance_m=fusion["tolerance_m"]):
+        print(f"  {line}")
     return 0
+
+
+def _verdict(detections: gpd.GeoDataFrame, *, searched: bool, tolerance_m: float) -> list[str]:
+    """What the run found, said out loud.
+
+    The second line is the same claim `position_basis` makes in the layer, made on the way past:
+    a match against a position built at the acquisition instant and one against a report taken
+    from another moment are different claims, and someone who has run the command but not yet
+    opened the output should not have to assume they are the same.
+    """
+    if not searched:
+        return ["no AIS supplied: nothing was searched, so no detection here is a dark vessel"]
+
+    counts = detections["status"].value_counts()
+    bases = detections["position_basis"].value_counts()
+    return [
+        f"{counts.get(MATCHED, 0)} matched, {counts.get(DARK, 0)} dark "
+        f"at a tolerance of {tolerance_m:g} m",
+        f"of those matches, {bases.get(INTERPOLATED, 0)} on a position interpolated to the "
+        f"acquisition and {bases.get(REPORTED, 0)} on a report taken as it stands",
+    ]
+
+
+def fusion_settings_from(config: dict[str, Any]) -> dict[str, Any]:
+    """What the matching stage takes from a config file, as `run` takes it.
+
+    Separate from the command for the same reason as `export_request_from`: every test in this
+    package writes its own config, so the shipped ones are the files nothing in the suite runs,
+    and `configs/anholt.yaml` needs Earth Engine credentials before it can fail at all. Both go
+    through this function in a test instead.
+    """
+    fusion = config["fusion"]
+    return {
+        "tolerance_m": float(fusion["match_tolerance_m"]),
+        "max_gap": timedelta(seconds=float(fusion["interpolation_max_gap_s"])),
+    }
 
 
 def export_request_from(config: dict[str, Any], relative_to: Path) -> dict[str, Any]:

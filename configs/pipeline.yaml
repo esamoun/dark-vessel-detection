@@ -23,8 +23,11 @@ detector:
   checkpoint_every_epoch: true   # free-tier sessions are interrupted, not finished
 
 fusion:
-  interpolate_ais_to_acquisition: false   # not yet: matching is against the nearest report in time
-  match_tolerance_m: 200                  # provisional; see docs/decisions.md
+  match_tolerance_m: 200        # provisional; see docs/decisions.md
+  # The widest bracket of AIS reports a position may be interpolated across. Wider than this and
+  # the two reports say nothing useful about the moment between them, so the nearest one is used
+  # as it stands and the output row says so. Provisional; see docs/decisions.md.
+  interpolation_max_gap_s: 600
 
 # The run itself: what goes in, what comes out, and which detector does the work.
 # `darkvessel synthesise --out data/synthetic` writes inputs matching the paths below.
