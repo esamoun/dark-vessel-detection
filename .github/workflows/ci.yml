@@ -1,15 +1,9 @@
 # Lint and the test suite, on every push and every pull request, so that a regression is caught
 # by the repository rather than by the next person to read the code.
 #
-# CI installs with pip rather than the conda environment in environment.yml, and the difference
-# is deliberate. environment.yml exists because GDAL and the geospatial stack around it are
-# painful to build on a laptop; on Linux the same libraries arrive as wheels in seconds. What
-# this workflow proves is the claim the README actually makes to a reader — that
-# `pip install -e ".[dev]"` produces a working chain on a clean machine, with no weights, no GPU
-# and no network beyond the install itself.
-#
-# Lint and tests are separate jobs so that a formatting slip cannot hide a failing test, and so
-# that the checks list says which of the two broke without anyone opening a log.
+# Why pip rather than the conda environment, and why lint and tests are separate jobs:
+# docs/decisions.md, "CI installs with pip, and runs the same two make targets as a laptop".
+# The rationale lives there and is not repeated here, so the two cannot drift apart.
 
 name: CI
 
@@ -22,10 +16,15 @@ on:
 permissions:
   contents: read
 
-# A push that supersedes another on the same ref cancels it. Nothing here is worth the queue.
+# Keyed on the branch name rather than the ref, because the two triggers above name the same
+# branch differently — a push gives `refs/heads/x` and a pull request `refs/pull/N/merge`. Keyed
+# on the ref, a branch with an open pull request runs everything twice and neither run cancels
+# the other.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  # Superseding a run cancels it, except on main: a cancelled run is neither pass nor fail, and
+  # main is the one branch whose status the README badge reports.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   lint:
@@ -53,7 +52,11 @@ jobs:
       # Report both versions. If 3.13 breaks, the 3.11 result is still worth having.
       fail-fast: false
       matrix:
-        # The floor the package declares, and the version the development machine runs.
+        # The floor the package declares, and the version the development machine runs. The two
+        # legs do not test the same dependencies: rasterio and numpy now require >= 3.12, so the
+        # 3.11 leg backsolves to an older stack (rasterio 1.4.4 against 1.5.1). That is the point
+        # — requires-python claims 3.11, and this is what checks the claim — but it also means
+        # the 3.11 leg can go red on resolution rather than on code. See docs/decisions.md.
         python-version: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v7
