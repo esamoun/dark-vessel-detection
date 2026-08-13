@@ -32,17 +32,27 @@ The pipeline is built in four levels, each one shippable on its own.
 | --- | --- | --- |
 | **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | in progress |
 | **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene; awaiting the trained detector |
-| **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | planned |
+| **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | interpolation and matching done; awaiting real Danish AIS |
 | **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | planned |
 
 The chain that carries these exists first, deliberately, with a deterministic stand-in where the
 detector will go. What runs today: scene in, detector injected at the pipeline boundary, the
 scene cut into overlapping tiles and the targets they see reconciled into one list, pixel
-coordinates converted to ground coordinates, detections matched against declared AIS positions
-within a stated tolerance, GeoPackage out. What is still a placeholder: the detector is a
-threshold on bright pixels, the scene is synthetic, and AIS matching uses the nearest report in
-time rather than a position interpolated to the moment of acquisition — which means dark results
-from this level are wiring tests, not findings.
+coordinates converted to ground coordinates, each declared vessel interpolated along its track to
+the moment of acquisition and the detections matched against those positions within a stated
+tolerance, GeoPackage out. What is still a placeholder: the detector is a threshold on bright
+pixels, and the scene and the AIS slice are synthetic — so dark results from this level are wiring
+tests, not findings.
+
+A vessel moves between its last AIS report and the instant the radar images it: at 12 knots, some
+370 m a minute, which is more than the match tolerance. Comparing a detection against a report
+taken as it stands therefore manufactures dark vessels that were never there, and that is the
+most likely way for this project to produce a confidently wrong answer. Each vessel is placed at
+the acquisition timestamp before anything is compared. Where its track gives nothing to
+interpolate between — it ends before the radar looks, or the vessel reported once — the nearest
+report is used and the row says so, in `position_basis`. Nothing is extrapolated past a track:
+prolonging one from a course and speed derived from earlier points would manufacture a position
+where no measurement exists.
 
 A vessel on a tile boundary is seen by two tiles and must be reported once. That is done by
 ownership rather than by merging detections after the fact: each tile answers for one slice of
@@ -138,9 +148,15 @@ darkvessel run --config configs/pipeline.yaml
 ```
 
 ```
-4 detections in EPSG:25832 -> outputs/detections.gpkg
-  3 matched, 1 dark at a tolerance of 200 m
+5 detections in EPSG:25832 -> outputs/detections.gpkg
+  4 matched, 1 dark at a tolerance of 200 m
+  of those matches, 1 on a position interpolated to the acquisition and 3 on a report taken as it stands
 ```
+
+One of those five is a vessel under way, 900 m west of its target three minutes before the
+acquisition and 600 m east of it two minutes after. Neither report stands within the tolerance;
+the interpolated position lands on the target. Matched against a report as it stands, it comes
+back as a dark vessel that was never there.
 
 ### On a real Sentinel-1 scene
 
@@ -190,13 +206,18 @@ guard had been sized from an assumed dtype rather than a measured one.
 `outputs/detections.gpkg` opens directly in QGIS, in EPSG:25832. Each detection carries its
 `status` (`matched` or `dark`), the `mmsi` that explains it if one does, the distance to that
 declared position, and the `tolerance_m` the decision was made at — the radius is part of the
-result, because "dark" means nothing without it.
+result, because "dark" means nothing without it. A match also carries what the position it
+matched was built from: `position_basis` is `interpolated` or `reported`, and `position_age_s`
+is how far the nearest real report sits from the acquisition. A match against a position
+constructed at the acquisition instant and one against a report five minutes old are different
+claims, and the row says which it is rather than leaving it to be assumed.
 
 The run is defined by the config file. `configs/pipeline.yaml` names the scene, the AIS slice,
-the output, the tile size and overlap to run the detector at, and which detector to inject; the
-pipeline itself never knows which detector it got. One of the four synthetic targets stands
-exactly where the tiles that config cuts the scene into meet, so the shipped run crosses a seam
-rather than only the tests.
+the output, the tile size and overlap to run the detector at, which detector to inject, the match
+tolerance and the widest gap in a track a position may be interpolated across; the pipeline itself
+never knows which detector it got. One of the five synthetic targets stands exactly where the
+tiles that config cuts the scene into meet, so the shipped run crosses a seam rather than only the
+tests.
 
 ```bash
 make test    # the seam: georeferencing, tiling, matching and export, offline and deterministic

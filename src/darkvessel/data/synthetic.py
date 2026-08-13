@@ -5,8 +5,8 @@ by someone who has just cloned the repository: no Earth Engine credentials, no A
 weights. It is also what the seam test runs on, so the ground truth below is stated once and
 asserted against literals worked out from it by hand.
 
-The scene is a dark sea with faint speckle and four bright targets. Two of them have a vessel
-declaring itself nearby in AIS; the third does not, and must come back dark. A vessel declaring
+The scene is a dark sea with faint speckle and five bright targets. Four of them have a vessel
+declaring itself in AIS; the remaining one does not, and must come back dark. A vessel declaring
 itself far outside the scene must match nothing.
 
 Where it sits is chosen, not left to a round number. The scene covers 2.56 km of open water in
@@ -19,6 +19,13 @@ the whole reason the scene is larger than one tile. Several tiles see it and exa
 report it. It declares itself, so both ways of getting the reconciliation wrong show up in the
 result rather than in an error: lose it and a declared vessel disappears, report it twice and the
 copy no declaration is left to explain becomes a dark vessel that was never there.
+
+The fifth is a vessel under way, and it is here to catch the matching taking a report at face
+value. It reports 900 m west of the target three minutes before the acquisition and 600 m east of
+it two minutes after, so neither report stands within any sane tolerance of where the radar
+imaged it: matched against the nearest one in time it is published as an undeclared vessel, and
+interpolated along its track it lands on the target. A fixture whose vessels all sit still cannot
+tell the two apart.
 """
 
 import csv
@@ -45,13 +52,17 @@ SPECKLE_MAX = 0.2
 
 # (row, col) of each target centre. Ground coordinates, for reference and for the test to assert
 # against: (60, 80) -> 639805, 6281395 | (120, 200) -> 641005, 6280795 | (30, 220) -> 641205,
-# 6281695 | (128, 128) -> 640285, 6280715. Each is `origin + (index + 0.5) * pixel size`,
-# northing decreasing.
-#
-# The last one is placed, not chosen: at the tile size and overlap `configs/pipeline.yaml` sets,
-# this scene is cut into four tiles that meet at row 128 and column 128. A target anywhere else
-# would leave cross-tile reconciliation unexercised by the shipped configuration.
-TARGETS = [(60, 80), (120, 200), (30, 220), (128, 128)]
+# 6281695 | (128, 128) -> 640285, 6280715 | (200, 60) -> 639605, 6279995. Each is
+# `origin + (index + 0.5) * pixel size`, northing decreasing.
+TARGETS = [(60, 80), (120, 200), (30, 220), (128, 128), (200, 60)]
+
+# Placed, not chosen: at the tile size and overlap `configs/pipeline.yaml` sets, this scene is cut
+# into four tiles that meet at row 128 and column 128. A target anywhere else would leave
+# cross-tile reconciliation unexercised by the shipped configuration.
+BOUNDARY_TARGET = TARGETS[3]
+
+# The vessel under way, which no single report places anywhere near.
+MOVING_TARGET = TARGETS[4]
 
 # (mmsi, offset from acquisition, easting offset from a target, northing offset), where the
 # target is the one at the same position in TARGETS. The first vessel reports twice: an old
@@ -65,7 +76,12 @@ DECLARATIONS = [
     ("219000003", TARGETS[2], timedelta(minutes=-5), -8000.0, -8000.0),
     # The target on the tile boundary declares itself, so that a copy of it surviving
     # reconciliation appears as a dark vessel rather than as a harmless second row.
-    ("219000004", TARGETS[3], timedelta(minutes=-2), 0.0, -50.0),
+    ("219000004", BOUNDARY_TARGET, timedelta(minutes=-2), 0.0, -50.0),
+    # A vessel under way at 5 m/s, reporting either side of the acquisition and never within
+    # 200 m of the target at either. Three fifths of the 1500 m fall before the acquisition, so
+    # the interpolated position lands exactly on it: -900 + 0.6 * 1500 = 0.
+    ("219000005", MOVING_TARGET, timedelta(minutes=-3), -900.0, 0.0),
+    ("219000005", MOVING_TARGET, timedelta(minutes=2), 600.0, 0.0),
 ]
 
 

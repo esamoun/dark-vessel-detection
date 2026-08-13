@@ -351,3 +351,71 @@ honour it.
 **What it also confirmed.** Those three blobs were far wider than the 64 px overlap, and came back
 duplicated across tiles — exactly as the ownership scheme's stated precondition says they must.
 The scheme held; the input broke the condition it is documented to require.
+
+---
+
+## 2026-08-13 — Vessels are placed at the acquisition instant, and never extrapolated past their track
+
+**Supersedes** *Matching is against the nearest report in time, and that is wrong on purpose*.
+
+**Decision.** Before anything is compared, each vessel is placed at the acquisition timestamp by
+linear interpolation between the two AIS reports either side of it. Where the acquisition is not
+bracketed — the track ends before the radar looks, or begins after it, or the vessel reported
+once — the nearest report is used as it stands and the row says so. Nothing is extrapolated.
+`fusion.interpolate_ais_to_acquisition` is gone from the configs.
+
+**Why the config key went.** It recorded, in a file, a claim about the whole run. Every match now
+carries `position_basis` — `interpolated` or `reported` — and `position_age_s`, so the claim is
+made per vessel, in the layer someone opens, rather than globally in a file they may not read. A
+per-row statement is strictly stronger, and keeping the key would have meant maintaining a code
+path whose only purpose is to give the answer this entry supersedes.
+
+**Why not extrapolate.** Prolonging a track past its last observation needs a course and a speed,
+and the archive's position reports carry neither, so both would be derived from two earlier points
+and projected forward. That manufactures a position where no measurement exists. It is the same
+class of confidently wrong answer as matching against a stale report, and harder to see, because
+the output looks like a placement rather than a fallback. A vessel that cannot be placed keeps its
+nearest report and is marked; it stays in the search, because a vessel that declared itself and
+cannot be placed is still a vessel that declared itself, and dropping it would publish it as dark
+— the exact fault this level exists to remove.
+
+**The gap ceiling, provisionally 600 s.** A straight line between two reports is a claim that the
+vessel held one course and one speed between them, and the wider the bracket the more confident
+the claim looks while being worth less. `fusion.interpolation_max_gap_s` is the widest bracket a
+line may span; past it the nearest report is used instead. 600 s is an upper bound of the right
+order rather than a derived figure — a class A vessel underway reports every few seconds and one
+at anchor every three minutes, so a bracket wider than ten minutes is a hole in the archive rather
+than a reporting cadence. The number an error analysis would give is smaller: a vessel altering
+course inside a ten-minute gap leaves the chord by far more than the 200 m tolerance. Measuring
+chord error against real Danish tracks is what settles it, and that arrives with the level that
+ingests them. Provisional, and labelled as such, like the tolerance it sits beside.
+
+**What this does not fix.** The tolerance is still 200 m and still provisional. Interpolation was
+the prerequisite for deriving it: the tolerance was dominated by how far a vessel travels between
+its last report and the acquisition, and that distance is no longer part of the error budget for
+an interpolated position — what remains is how far the vessel departed from the straight line
+between its two reports. `position_age_s` is what says how much room there was to depart: it is
+the gap to the nearest of the two bracketing reports, not zero. Deriving a tolerance from it needs
+real tracks, not a synthetic fixture.
+
+**Why the gap ceiling is not written into the output rows, when the tolerance is.** They look
+alike and are not. Without the tolerance, `dark` cannot be read at all — the radius *is* the
+claim. `reported` can be read without the ceiling: the row says the position is an observation
+from another moment and `position_age_s` says how far away that moment was, which is what decides
+whether to trust the match. The ceiling is a threshold the run was configured with, like the tile
+size, and it belongs with the config rather than in every row.
+
+**Reports that cannot be placed at all are refused, not skipped.** Grouping by MMSI drops a report
+that has none without a word, and a missing timestamp compares false against the acquisition in
+both directions and falls out of the bracket just as quietly. Either way a declaration disappears
+on its way to the matching, and a declaration that disappears is a detection published as dark —
+this level's own fault, reintroduced by the mechanism meant to remove it. Raw Danish archives do
+contain such rows, so this will fire on the first real slice. That is the intended place for it to
+fire: cleaning raw AIS is the ingestion level's decision, and the alternative — pooling
+unidentified reports under one key — would draw a track between two different ships.
+
+**What the fixture gained.** A vessel under way, reporting 900 m west of its target three minutes
+before the acquisition and 600 m east of it two minutes after. Neither report is within any sane
+tolerance of where the radar imaged it; the interpolated position lands on it. Every vessel in the
+fixture had until now been standing still, and a fixture whose vessels do not move cannot tell a
+chain that interpolates from one that does not.

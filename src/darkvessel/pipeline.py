@@ -5,6 +5,8 @@ arrives as a parameter rather than an import, which is what lets the whole pipel
 tested — with a deterministic substitute, no weights, no GPU and no network.
 """
 
+from datetime import timedelta
+
 import geopandas as gpd
 
 from darkvessel.data.scene import Scene
@@ -22,6 +24,7 @@ def run(
     detector: Detector,
     tiling: Tiling,
     tolerance_m: float,
+    max_gap: timedelta,
 ) -> gpd.GeoDataFrame:
     """Run the chain over one scene and return its detections, georeferenced.
 
@@ -31,9 +34,10 @@ def run(
         detector: The injected detector.
         tiling: How the scene is cut up for the detector, and put back together afterwards.
         tolerance_m: How far a declared position may sit from a detection and still explain it.
+        max_gap: The widest bracket of AIS reports a position may be interpolated across.
 
     Returns:
         A GeoDataFrame in the scene's CRS, one row per detection.
     """
     detections = to_ground(detect_scene(scene.image, detector, tiling), scene)
-    return classify(detections, ais, scene.acquired_at, tolerance_m)
+    return classify(detections, ais, scene.acquired_at, tolerance_m, max_gap)
