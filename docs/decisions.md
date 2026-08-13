@@ -294,3 +294,28 @@ claim about what was searched, and with no AIS supplied nothing was.
 slice is a search that ran and returned nothing, and its detections are honestly dark. `None` is
 no search at all. The config spells the absence out as `ais: null` rather than allowing it by
 omission, so a run cannot arrive here by forgetting a key.
+
+---
+
+## 2026-08-13 — The synthetic scene is placed at sea, not at a round number
+
+**Decision.** The synthetic fixture moves from (500000, 6150000) to (639000, 6282000) in
+EPSG:25832 — from farmland near Vejen to open water in the Kattegat, inside the area
+`configs/anholt.yaml` fetches a real acquisition over.
+
+**What was wrong with the old origin.** Nothing, arithmetically. 500000 is the central meridian
+of UTM zone 32N and 6150000 is a round northing; both were placeholders, and every detection
+landed exactly where the transform said. But the transform said mainland Jutland. Dragged onto a
+basemap in QGIS — the first thing anyone does with the output, and an acceptance criterion of the
+real-scene ticket — the demonstration showed four vessels in a field.
+
+**Why it matters more than it looks.** The claim this repository makes is that the output opens
+in QGIS and lands where it should. A reader checking that claim against the shipped demo would
+have found it false, and would have had no way to tell a placeholder origin from a georeferencing
+fault — which is precisely the failure the georeferencing tests exist to rule out. A fixture that
+cannot be distinguished from the bug it is meant to disprove is worth moving.
+
+**How it was moved.** By a uniform shift, applied to the fixture and to every hand-derived
+literal in the seam test at once. The tests assert ground coordinates worked out from the
+transform rather than recomputed by the code, so an inconsistent shift fails them; passing after
+the move is what says the shift was uniform.
