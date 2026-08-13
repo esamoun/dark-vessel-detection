@@ -21,9 +21,16 @@ imagery:
   resolution_m: 10
   # Searched, not required to contain a scene: revisit over the Kattegat is a few days, so a
   # fortnight holds several. The earliest in the window is taken, so the run is repeatable.
+  #
+  # The window is narrow on purpose, and it is chosen by the AIS rather than by the radar. This
+  # box is quiet water off the main Kattegat lane — a handful of vessels cross it a day, at no
+  # particular hour — so most acquisitions over it catch nothing that declared itself, and the
+  # fusion level then has nothing to fuse. Twenty acquisitions were checked against the archive;
+  # 2026-06-21T05:32:30 is the first with vessels inside the scene at the instant it was taken.
+  # See docs/decisions.md.
   window:
-    start: 2026-07-01T00:00:00+00:00
-    end: 2026-07-15T00:00:00+00:00
+    start: 2026-06-21T00:00:00+00:00
+    end: 2026-06-21T12:00:00+00:00
 
 # 512 px is the figure that follows from a detector's memory, and this is a scene large enough
 # for it to mean something: 1582 x 1498 px as exported, four tiles per axis and sixteen in all,
@@ -36,6 +43,25 @@ fusion:
   match_tolerance_m: 200
   interpolation_max_gap_s: 600
 
+# The declarations to match against, from the Danish Maritime Authority's daily archive for the
+# day the scene was acquired. `darkvessel ais --config configs/anholt.yaml` fetches them; the
+# acquisition itself is read off the scene, so a slice and the scene cannot name two moments.
+ais:
+  # Either side of the acquisition. A vessel is placed by interpolating between the two reports
+  # bracketing it, so this only has to hold a bracket: a class A vessel under way reports every
+  # few seconds and one at anchor every three minutes. A quarter of an hour is generous.
+  window_s: 900
+  # How far outside the study area a report is still taken. A vessel imaged just inside the edge
+  # of the scene reported minutes earlier from just outside it, and cutting that report away
+  # leaves it with nothing to interpolate between. 5 km is what a vessel at 20 knots covers in
+  # the eight minutes either side of the widest bracket this run interpolates across.
+  margin_m: 5000
+  # Above this, one report cannot have followed another and one of them is noise. A ceiling on
+  # the physically possible rather than on the usual: the fastest thing in these waters is a
+  # 40-knot ferry, and a rule that removed it would be removing evidence.
+  max_speed_kn: 60
+  out: ../data/real/anholt-ais.csv
+
 earthengine:
   # The Cloud project `ee.Initialize` authenticates against. Left empty, Earth Engine falls back
   # to whatever the local credentials default to, which is fine on one machine and unreproducible
@@ -47,10 +73,10 @@ export:
 
 run:
   scene: ../data/real/anholt.tif
-  # No AIS for this run. Real declarations over Danish waters arrive with the level that ingests
-  # them; until then nothing has been searched, and the output says so rather than calling every
-  # detection dark.
-  ais: null
+  # Written by `darkvessel ais`, from the archive for the day of the acquisition above. Run that
+  # first: without the file this run has nothing to search, and a run with nothing to search says
+  # `unsearched` rather than calling every detection dark.
+  ais: ../data/real/anholt-ais.csv
   output: ../outputs/anholt.gpkg
   detector: bright-pixel   # still the stand-in: this run tests the chain, not the detector
   threshold: 0.0         # S1 GRD comes back in dB, not the 0..1 of the synthetic scene

@@ -49,17 +49,23 @@ def classify(
     `unsearched`, carrying no radius because no radius was applied.
     """
     searched = ais is not None
+    declared = _positions_at_acquisition(ais, acquired_at, detections.crs, max_gap)
 
     classified = detections.copy()
     classified["status"] = DARK if searched else UNSEARCHED
     classified["mmsi"] = pd.Series(pd.NA, index=classified.index, dtype="string")
     classified["match_distance_m"] = np.nan
     classified["tolerance_m"] = float(tolerance_m) if searched else np.nan
+    # How many declarations the radius was applied to. `dark` is a claim about a search, and a
+    # search of nothing is the one case where the claim is technically true and reads as its
+    # opposite: a layer of a hundred dark vessels over a quiet sea, with nothing in it to say
+    # that no vessel declared itself there in the first place. The first real slice this project
+    # ingested was exactly that, so the count travels with the verdict, like the radius.
+    classified["declarations_searched"] = float(len(declared)) if searched else np.nan
     classified["position_basis"] = pd.Series(pd.NA, index=classified.index, dtype="string")
     classified["position_age_s"] = np.nan
     classified["acquired_at"] = acquired_at
 
-    declared = _positions_at_acquisition(ais, acquired_at, classified.crs, max_gap)
     for detection_idx, declared_idx, distance_m in _closest_pairs(
         classified, declared, tolerance_m
     ):
