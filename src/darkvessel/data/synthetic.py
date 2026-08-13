@@ -5,9 +5,15 @@ by someone who has just cloned the repository: no Earth Engine credentials, no A
 weights. It is also what the seam test runs on, so the ground truth below is stated once and
 asserted against literals worked out from it by hand.
 
-The scene is a dark sea with faint speckle and three bright targets. Two of them have a vessel
-declaring itself nearby in AIS; the third does not, and must come back dark. A fourth vessel
-declares itself far outside the scene and must match nothing.
+The scene is a dark sea with faint speckle and four bright targets. Two of them have a vessel
+declaring itself nearby in AIS; the third does not, and must come back dark. A vessel declaring
+itself far outside the scene must match nothing.
+
+The fourth target stands where the tiles the shipped config cuts this scene into meet, and it is
+the whole reason the scene is larger than one tile. Several tiles see it and exactly one may
+report it. It declares itself, so both ways of getting the reconciliation wrong show up in the
+result rather than in an error: lose it and a declared vessel disappears, report it twice and the
+copy no declaration is left to explain becomes a dark vessel that was never there.
 """
 
 import csv
@@ -34,8 +40,13 @@ SPECKLE_MAX = 0.2
 
 # (row, col) of each target centre. Ground coordinates, for reference and for the test to assert
 # against: (60, 80) -> 500805, 6149395 | (120, 200) -> 502005, 6148795 | (30, 220) -> 502205,
-# 6149695. Each is `origin + (index + 0.5) * pixel size`, northing decreasing.
-TARGETS = [(60, 80), (120, 200), (30, 220)]
+# 6149695 | (128, 128) -> 501285, 6148715. Each is `origin + (index + 0.5) * pixel size`,
+# northing decreasing.
+#
+# The last one is placed, not chosen: at the tile size and overlap `configs/pipeline.yaml` sets,
+# this scene is cut into four tiles that meet at row 128 and column 128. A target anywhere else
+# would leave cross-tile reconciliation unexercised by the shipped configuration.
+TARGETS = [(60, 80), (120, 200), (30, 220), (128, 128)]
 
 # (mmsi, offset from acquisition, easting offset from a target, northing offset), where the
 # target is the one at the same position in TARGETS. The first vessel reports twice: an old
@@ -47,6 +58,9 @@ DECLARATIONS = [
     ("219000002", TARGETS[1], timedelta(minutes=-1), 0.0, 60.0),
     # A vessel that declared itself well outside the scene: nothing here should match it.
     ("219000003", TARGETS[2], timedelta(minutes=-5), -8000.0, -8000.0),
+    # The target on the tile boundary declares itself, so that a copy of it surviving
+    # reconciliation appears as a dark vessel rather than as a harmless second row.
+    ("219000004", TARGETS[3], timedelta(minutes=-2), 0.0, -50.0),
 ]
 
 

@@ -6,9 +6,10 @@
 
 > **Status — work in progress.** The chain runs end to end today, on a synthetic scene, with a
 > threshold on bright pixels standing in for the detector: one command in, a georeferenced
-> GeoPackage of matched and dark detections out. Nothing inside it is good yet — that is the
-> point of building it in this order. See [Approach](#approach) for what is real and what is a
-> placeholder.
+> GeoPackage of matched and dark detections out. It tiles a scene larger than one tile and
+> reports a vessel sitting on a tile boundary exactly once. Nothing inside it is good yet — that
+> is the point of building it in this order. See [Approach](#approach) for what is real and what
+> is a placeholder.
 
 ---
 
@@ -30,17 +31,24 @@ The pipeline is built in four levels, each one shippable on its own.
 | Level | What it does | Status |
 | --- | --- | --- |
 | **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | in progress |
-| **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | planned |
+| **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | tiling and output done; awaiting a real scene |
 | **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | planned |
 | **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | planned |
 
 The chain that carries these exists first, deliberately, with a deterministic stand-in where the
-detector will go. What runs today: scene in, detector injected at the pipeline boundary, pixel
+detector will go. What runs today: scene in, detector injected at the pipeline boundary, the
+scene cut into overlapping tiles and the targets they see reconciled into one list, pixel
 coordinates converted to ground coordinates, detections matched against declared AIS positions
 within a stated tolerance, GeoPackage out. What is still a placeholder: the detector is a
-threshold on bright pixels, the scene is one tile so nothing is deduplicated across tiles, and
-AIS matching uses the nearest report in time rather than a position interpolated to the moment
-of acquisition — which means dark results from this level are wiring tests, not findings.
+threshold on bright pixels, the scene is synthetic, and AIS matching uses the nearest report in
+time rather than a position interpolated to the moment of acquisition — which means dark results
+from this level are wiring tests, not findings.
+
+A vessel on a tile boundary is seen by two tiles and must be reported once. That is done by
+ownership rather than by merging detections after the fact: each tile answers for one slice of
+the scene and stays quiet about the rest, so the count is right by construction and there is no
+merge radius to tune. The reasoning, and the one condition it places on the config, are in
+[`docs/decisions.md`](docs/decisions.md).
 
 Two deep learning components sit inside this:
 
@@ -130,8 +138,8 @@ darkvessel run --config configs/pipeline.yaml
 ```
 
 ```
-3 detections in EPSG:25832 -> outputs/detections.gpkg
-  2 matched, 1 dark at a tolerance of 200 m
+4 detections in EPSG:25832 -> outputs/detections.gpkg
+  3 matched, 1 dark at a tolerance of 200 m
 ```
 
 `outputs/detections.gpkg` opens directly in QGIS, in EPSG:25832. Each detection carries its
@@ -140,10 +148,13 @@ declared position, and the `tolerance_m` the decision was made at — the radius
 result, because "dark" means nothing without it.
 
 The run is defined by the config file. `configs/pipeline.yaml` names the scene, the AIS slice,
-the output, and which detector to inject; the pipeline itself never knows which detector it got.
+the output, the tile size and overlap to run the detector at, and which detector to inject; the
+pipeline itself never knows which detector it got. One of the four synthetic targets stands
+exactly where the tiles that config cuts the scene into meet, so the shipped run crosses a seam
+rather than only the tests.
 
 ```bash
-make test    # the seam test: georeferencing and matching, offline and deterministic
+make test    # the seam: georeferencing, tiling and matching, offline and deterministic
 make lint
 ```
 

@@ -187,3 +187,58 @@ the leg will go red for a reason that has nothing to do with the code, and the a
 point is to raise the floor to 3.12 in `pyproject.toml` and `environment.yml` — not to widen the
 matrix or pin dependencies to hold 3.11 open. Lint runs on 3.11 only; ruff's result does not
 depend on the interpreter.
+
+---
+
+## 2026-08-13 — Cross-tile duplicates are prevented by ownership, not removed by proximity
+
+**Decision.** The scene is partitioned into cores, one per tile, and a tile reports only the
+detections standing in its own core. There is no merge step, no distance threshold and no
+non-maximum suppression over the assembled detections.
+
+**Why not merge by proximity.** The obvious scheme is to run every tile, pool the detections and
+collapse any two that land within a few pixels of each other. It needs a radius, and there is no
+radius that is right: too small and a target seen slightly differently by two tiles survives
+twice; too large and two vessels moored side by side become one. The chain already asserts, in
+`match.py`, that two hulls 60 m apart are two vessels — a merge radius wide enough to be safe
+against clipped centroids would quietly contradict that. Worse, both failures are silent. A
+merged pair and a duplicated target both produce a count that looks entirely plausible.
+
+Ownership has no such parameter. Every position in the scene lies in exactly one core, so the
+count is right by construction rather than by tuning, and the property is testable as a property:
+walk every position of every tile and assert each is claimed exactly once.
+
+**What it rests on, stated because it is a real constraint on the config.** The overlap must be
+at least as wide as the largest target the detector will report. A core stops half an overlap
+short of its tile's edge, so a target centred in a core is at least half an overlap from that
+edge and is seen whole by the tile that owns it. A neighbouring tile may see the same target cut
+in half and report a centroid displaced towards its own interior — that view is discarded,
+because a clipped centroid cannot move far enough to land in the neighbour's core. At 10 m pixels
+a vessel is a handful of pixels across and any sane overlap satisfies this; a very long ship on a
+scene tiled tightly would not, and that is a config error rather than a code path.
+
+**The other half of the rule: the last tile is pulled back against the edge of the scene.** A
+scene is not a whole number of strides. Rather than a runt tile at the far edge, or a tile hanging
+over it, the last tile starts at `extent - size` and therefore overlaps its predecessor by more
+than the configured amount. Every tile is then the same size — the shape a detector is trained on
+— at the cost of reading a strip twice, which ownership makes harmless.
+
+**Consequence, taken deliberately.** Detections are returned in scene row-major order rather than
+in the order the tiles happened to produce them. Tiling is a property of the hardware the
+detector runs on; two runs of the same scene at different tile sizes return the same answer, and
+a test asserts it.
+
+**The shipped config drops from 512/64 to 144/32, and that is not a claim about Sentinel-1.** A
+tile of about 512 px is the figure that follows from a detector's memory, and it is what a real
+scene will be run at. The scene `configs/pipeline.yaml` actually points at is the 256 px synthetic
+one, which a 512 px tile swallows whole — so the shipped command would demonstrate tiling by never
+tiling. 144/32 cuts that scene into four tiles meeting where the fixture stands a target. The
+number follows the scene in the config, and when the config points at a Sentinel-1 scene it will
+follow that instead.
+
+**Why a test reads that config file.** It is the one config the suite does not write for itself,
+which makes it the one place a value can be widened back without a test noticing — the same
+class of gap as the `.gitignore` in docs/failures.md, where every check ran against something
+other than what was shipped. `test_the_shipped_config_still_cuts_the_synthetic_scene_across_a_target`
+closes it: it asserts that, at the tiling that file declares, more than one tile sees the
+fixture's boundary target.

@@ -10,9 +10,14 @@ imagery:
   polarisations: [VV, VH]
   resolution_m: 10
 
+# Sized to the scene this config actually runs on. A Sentinel-1 tile is 512 px or so — what the
+# detector's memory allows — but the synthetic scene is 256 px, and a tiling that swallowed it
+# whole would mean the shipped configuration never crossed a tile boundary. 144/32 cuts it into
+# four tiles meeting at row and column 128, where the synthetic scene stands a target.
+# The overlap must be at least as wide as the largest target; see docs/decisions.md.
 tiling:
-  size_px: 512
-  overlap_px: 64
+  size_px: 144
+  overlap_px: 32
 
 detector:
   checkpoint_every_epoch: true   # free-tier sessions are interrupted, not finished
