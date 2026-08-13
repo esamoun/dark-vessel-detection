@@ -223,8 +223,16 @@ Anholt Offshore Wind Farm is published at 56.60°N 11.21°E, 111 turbines over a
 8 km wide. The detections come out centred on 56.63°N **11.2075°E** — 150 m from the published
 longitude — and 9.4 km wide, with the latitude pulled north because the scene clips the southern
 end of a farm 20 km long. A transform out by anything would not land a 600 m lattice on the
-published position of a real structure. (The earlier scene was checked by eye in QGIS over an
-OpenStreetMap basemap; that check belongs to that acquisition, and this is what replaces it here.)
+published position of a real structure.
+
+**Checked by eye as well, 2026-08-14.** `outputs/anholt.gpkg` opened in QGIS over the scene
+itself, the raster rendered single-band from −25 to −5 dB and the detections drawn as hollow
+outlines so the pixel under each one stays visible. Every detection sits on a bright point of one
+to three pixels against a uniform speckled sea; a transform out by any amount would displace them
+all by the same vector, and none is displaced. The points stop where the farm does, with clear
+water and no detections east of it. A handful of bright points carry no detection — turbines the
+0 dB threshold missed, which is why the chain reports 70 objects where the farm has 111. That is
+the placeholder detector's recall, not a fault in the chain, and it is Level 1's to fix.
 
 **Nothing matched, and the interesting part is why.** Five vessels declared themselves inside the
 searched area. Three were in the margin outside the scene, where a declaration is kept so that a
