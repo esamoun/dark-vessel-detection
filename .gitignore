@@ -1,7 +1,9 @@
-# Data and outputs — never committed
-data/
-outputs/
-checkpoints/
+# Data and outputs — never committed.
+# Anchored to the repository root: unanchored, `data/` also matches the source package
+# src/darkvessel/data/ and silently drops it from the repository.
+/data/
+/outputs/
+/checkpoints/
 *.tif
 *.tiff
 *.img

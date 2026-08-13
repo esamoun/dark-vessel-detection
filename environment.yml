@@ -17,11 +17,11 @@ dependencies:
   - jupyterlab
   - pyyaml
   - tqdm
+  - pyogrio
   - pytest
   - ruff
   - pip
   - pip:
-      - earthengine-api
-      - torch
-      - torchvision
+      # torch and earthengine-api are extras, not installed here: the chain runs without them.
+      # `pip install -e ".[detector]"` / `".[gee]"` when a stage actually needs them.
       - -e .

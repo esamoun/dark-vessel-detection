@@ -1,4 +1,5 @@
 # Pipeline configuration. A run is defined here, not in notebook cell order.
+# Paths are relative to this file.
 
 area:
   name: danish-waters
@@ -17,5 +18,14 @@ detector:
   checkpoint_every_epoch: true   # free-tier sessions are interrupted, not finished
 
 fusion:
-  interpolate_ais_to_acquisition: true
-  match_tolerance_m: null        # set from position uncertainty; see docs/decisions.md
+  interpolate_ais_to_acquisition: false   # not yet: matching is against the nearest report in time
+  match_tolerance_m: 200                  # provisional; see docs/decisions.md
+
+# The run itself: what goes in, what comes out, and which detector does the work.
+# `darkvessel synthesise --out data/synthetic` writes inputs matching the paths below.
+run:
+  scene: ../data/synthetic/scene.tif
+  ais: ../data/synthetic/ais.csv
+  output: ../outputs/detections.gpkg
+  detector: bright-pixel   # deterministic stand-in: no weights, no GPU, no network
+  threshold: 0.5

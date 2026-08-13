@@ -11,21 +11,25 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Eithan Samoun" }]
 
+# What the chain itself needs. Deliberately free of torch and Earth Engine: the pipeline runs
+# with a detector injected into it, and must stay installable and runnable without weights, a
+# GPU or a network. See docs/decisions.md.
 dependencies = [
     "numpy",
     "pandas",
     "rasterio",
+    "affine",
     "geopandas",
+    "pyogrio",
     "shapely",
     "pyproj",
-    "earthengine-api",
-    "torch",
-    "torchvision",
     "pyyaml",
     "tqdm",
 ]
 
 [project.optional-dependencies]
+detector = ["torch", "torchvision"]   # training and CNN inference; not needed to run the chain
+gee = ["earthengine-api"]             # Sentinel-1 export and contextual layers
 dev = ["pytest", "ruff"]
 
 [project.scripts]

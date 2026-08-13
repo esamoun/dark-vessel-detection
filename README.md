@@ -2,7 +2,11 @@
 
 **Detecting undeclared vessels by fusing Sentinel-1 SAR imagery with AIS records over Danish waters.**
 
-> **Status — work in progress.** Level 2 in development. See [Roadmap](#roadmap).
+> **Status — work in progress.** The chain runs end to end today, on a synthetic scene, with a
+> threshold on bright pixels standing in for the detector: one command in, a georeferenced
+> GeoPackage of matched and dark detections out. Nothing inside it is good yet — that is the
+> point of building it in this order. See [Approach](#approach) for what is real and what is a
+> placeholder.
 
 ---
 
@@ -27,6 +31,14 @@ The pipeline is built in four levels, each one shippable on its own.
 | **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | planned |
 | **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | planned |
 | **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | planned |
+
+The chain that carries these exists first, deliberately, with a deterministic stand-in where the
+detector will go. What runs today: scene in, detector injected at the pipeline boundary, pixel
+coordinates converted to ground coordinates, detections matched against declared AIS positions
+within a stated tolerance, GeoPackage out. What is still a placeholder: the detector is a
+threshold on bright pixels, the scene is one tile so nothing is deduplicated across tiles, and
+AIS matching uses the nearest report in time rather than a position interpolated to the moment
+of acquisition — which means dark results from this level are wiring tests, not findings.
 
 Two deep learning components sit inside this:
 
@@ -59,8 +71,10 @@ false-positive problem real.
 
 ```
 src/darkvessel/
-  data/       AOI selection, Sentinel-1 export, AIS ingestion, tiling
-  detect/     dataset, model, training, full-scene inference, pixel->geo
+  pipeline.py the single seam: scene + AIS + injected detector -> classified detections
+  cli.py      the one command; builds the detector and hands it to the pipeline
+  data/       AOI selection, Sentinel-1 export, AIS ingestion, tiling, synthetic inputs
+  detect/     detector contract, dataset, model, training, inference, pixel->geo
   embed/      contrastive representation learning, clustering
   fusion/     AIS interpolation to acquisition time, spatio-temporal matching
   context/    Earth Engine contextual layers
@@ -98,7 +112,37 @@ that maps them.
 ```bash
 conda env create -f environment.yml
 conda activate darkvessel
-pip install -e .
+pip install -e ".[dev]"
+```
+
+Training and Earth Engine dependencies are extras — `".[detector]"` and `".[gee]"` — and are not
+needed to run the pipeline.
+
+## Running the chain
+
+No credentials, no downloads, no weights:
+
+```bash
+darkvessel synthesise --out data/synthetic
+darkvessel run --config configs/pipeline.yaml
+```
+
+```
+3 detections in EPSG:25832 -> outputs/detections.gpkg
+  2 matched, 1 dark at a tolerance of 200 m
+```
+
+`outputs/detections.gpkg` opens directly in QGIS, in EPSG:25832. Each detection carries its
+`status` (`matched` or `dark`), the `mmsi` that explains it if one does, the distance to that
+declared position, and the `tolerance_m` the decision was made at — the radius is part of the
+result, because "dark" means nothing without it.
+
+The run is defined by the config file. `configs/pipeline.yaml` names the scene, the AIS slice,
+the output, and which detector to inject; the pipeline itself never knows which detector it got.
+
+```bash
+make test    # the seam test: georeferencing and matching, offline and deterministic
+make lint
 ```
 
 ## Licence
