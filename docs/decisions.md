@@ -70,3 +70,84 @@ enough to notice.
 fixed offshore structures without additional labelling, supports similarity search across the
 archive, and flags anomalies. Kept in reserve for a future land-based project, where an annual
 embedding is exactly the right tool.
+
+---
+
+## 2026-08-13 — The chain is built end to end before anything in it is good
+
+**Decision.** The first working thing is a walking skeleton: a synthetic scene, a threshold on
+bright pixels standing in for the detector, matching against the nearest AIS report in time, and
+a GeoPackage out. Every stage is present and none of them is yet good.
+
+**Why.** The three failure modes that matter here are silent: a georeferencing fault puts
+plausible detections in the wrong place, a tiling fault double-counts, a matching fault invents
+dark vessels. None of them announces itself, and all of them are cheap to catch while the chain
+is still trivial and impossible to catch once a model's errors are mixed in. Building the chain
+first also means the seam is fixed by something that runs, rather than designed in the abstract.
+
+**Consequence.** The detector is a parameter of the pipeline, not an import inside it, so the
+whole chain runs with no weights, no GPU and no network. That is what makes the seam test
+possible, and it is the load-bearing design decision of the project.
+
+---
+
+## 2026-08-13 — Matching is against the nearest report in time, and that is wrong on purpose
+
+**Decision.** The skeleton matches each detection to the AIS report nearest in time to the
+acquisition, taken as it stands. No interpolation along the track.
+
+**Why.** Interpolation is Level 3, and putting it in now would mean building the interesting
+part before the wiring around it was proven. The naive version establishes the seam that the
+real one drops into.
+
+**The risk, stated rather than discovered later.** A vessel at 12 knots moves some 370 m in a
+minute. Against a report a few minutes old, a declared vessel can fall outside any sane
+tolerance and be reported dark. Every dark result from this level of the chain is an artefact of
+that, not evidence, and the naive matching is recorded in the config as
+`interpolate_ais_to_acquisition: false` so a run cannot silently claim otherwise.
+
+---
+
+## 2026-08-13 — Match tolerance provisionally 200 m
+
+**Decision.** `match_tolerance_m: 200` in the pipeline config, and the tolerance is written into
+every output row rather than left in the config file.
+
+**Why 200.** It is a placeholder of the right order — Sentinel-1 GRD geolocation error is metres
+to tens of metres and AIS position error is small, so the tolerance is dominated by how far a
+vessel travels between its last report and the acquisition. The number that belongs here comes
+from that analysis and cannot be derived until AIS interpolation exists. It is provisional and
+labelled as such.
+
+**Why it travels with the results.** "Dark" is a claim about what was searched. A detection
+marked dark at 200 m and one marked dark at 2 km are different claims, and a reader who has only
+the layer cannot tell them apart unless the radius is in the row.
+
+---
+
+## 2026-08-13 — torch and Earth Engine are extras, not dependencies
+
+**Decision.** The package's required dependencies are the chain's: numpy, rasterio, geopandas
+and friends. `torch`/`torchvision` move to a `detector` extra and `earthengine-api` to a `gee`
+extra.
+
+**Why.** The acceptance condition for the chain is that it runs with no weights, GPU or network.
+A hard dependency on torch contradicts that at install time: a reader cloning the repository to
+see the pipeline work would pull two gigabytes of CUDA wheels to run a threshold on bright
+pixels. It also matters locally — the development machine has 8 GB and limited disk.
+
+---
+
+## 2026-08-13 — A scene outside the working CRS is refused, not reprojected
+
+**Decision.** The run declares its working CRS in the config. If the scene is not in it, the
+command fails with an error naming both CRSs.
+
+**Why not just use the scene's CRS.** The match tolerance is a distance in metres, compared
+against coordinate distances. Given a scene in degrees, 200 becomes 200 degrees and every
+detection is matched — or, with a small tolerance, every detection goes dark. Nothing crashes
+and the output looks entirely plausible. This is the same class of fault as a georeferencing
+error, and it is caught the same way: loudly, at the boundary.
+
+**Why not reproject silently.** Reprojecting radar amplitude resamples it, which changes what
+the detector sees. That is a decision about the run, and it belongs to whoever configured it.
