@@ -175,3 +175,15 @@ required check on a public repository.
 **Why lint and tests are separate jobs.** In one job the lint step runs first and a formatting
 slip stops the tests from running at all, so a red badge says nothing about whether the code
 works. Separately, the checks list names which of the two broke.
+
+**Why the tests run on two Python versions.** `requires-python` claims 3.11 and `environment.yml`
+pins it, but the development machine runs 3.13. Testing only one of them leaves the other an
+untested claim.
+
+**What that costs, recorded now rather than discovered later.** rasterio and numpy have both
+moved to `>= 3.12`, so the 3.11 leg does not install the same dependencies as the 3.13 one — it
+backsolves to rasterio 1.4.4 where 3.13 gets 1.5.1. It resolves today. When it stops resolving,
+the leg will go red for a reason that has nothing to do with the code, and the answer at that
+point is to raise the floor to 3.12 in `pyproject.toml` and `environment.yml` — not to widen the
+matrix or pin dependencies to hold 3.11 open. Lint runs on 3.11 only; ruff's result does not
+depend on the interpreter.

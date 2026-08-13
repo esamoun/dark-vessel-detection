@@ -147,8 +147,9 @@ make test    # the seam test: georeferencing and matching, offline and determini
 make lint
 ```
 
-Both run on every push and pull request — the same two commands, from
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml), on Python 3.11 and 3.13.
+Both run on every push and pull request, from
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) — the same two commands, not a second
+definition of them. Lint runs on Python 3.11; the tests run on 3.11 and 3.13.
 
 ## Licence
 
