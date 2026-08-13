@@ -151,3 +151,27 @@ error, and it is caught the same way: loudly, at the boundary.
 
 **Why not reproject silently.** Reprojecting radar amplitude resamples it, which changes what
 the detector sees. That is a decision about the run, and it belongs to whoever configured it.
+
+---
+
+## 2026-08-13 — CI installs with pip, and runs the same two make targets as a laptop
+
+**Decision.** GitHub Actions runs `make lint` and `make test` on every push and pull request, as
+two separate jobs, installing with `pip install -e ".[dev]"` rather than building the conda
+environment in `environment.yml`.
+
+**Why the same make targets.** If CI runs a different command from the one in the README, there
+are two definitions of "the tests pass" and they drift apart quietly. The Makefile is the single
+definition; CI is one more caller of it.
+
+**Why pip and not conda.** `environment.yml` exists for a specific local problem — GDAL and the
+geospatial stack are painful to build on macOS. On Linux the same libraries are wheels and
+install in seconds, so conda would buy minutes of environment solving and nothing else. It also
+makes CI verify the claim the README actually makes to a reader: that a clean machine with pip
+gets a working chain. The chain runs with no weights, no GPU and no network, which is what makes
+this possible at all — a run needing Earth Engine credentials or a checkpoint could not be a
+required check on a public repository.
+
+**Why lint and tests are separate jobs.** In one job the lint step runs first and a formatting
+slip stops the tests from running at all, so a red badge says nothing about whether the code
+works. Separately, the checks list names which of the two broke.
