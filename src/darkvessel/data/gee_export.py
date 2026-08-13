@@ -27,6 +27,7 @@ from typing import Any, Protocol
 
 import rasterio
 
+from darkvessel.data.area import Bounds
 from darkvessel.data.scene import ACQUIRED_AT_TAG
 
 # Enough to choose from, few enough that the metadata call stays small. A fortnight over one
@@ -50,28 +51,6 @@ MAX_REQUEST_BYTES = 64 * 1024 * 1024
 # float64, twice the width this once guessed. Guessing it low is the failure mode that matters —
 # the guard then waves through exactly the request it exists to stop.
 BYTES_PER_SAMPLE = 8
-
-
-@dataclass(frozen=True)
-class Bounds:
-    """An area of interest, in WGS84 degrees, as the catalogue expects it."""
-
-    west: float
-    south: float
-    east: float
-    north: float
-
-    def __post_init__(self) -> None:
-        if self.west >= self.east or self.south >= self.north:
-            raise ValueError(
-                f"bounds must run west to east and south to north, got {self.as_rectangle()}"
-            )
-        if not (-180 <= self.west and self.east <= 180 and -90 <= self.south and self.north <= 90):
-            raise ValueError(f"bounds are outside the WGS84 range: {self.as_rectangle()}")
-
-    def as_rectangle(self) -> list[float]:
-        """The order Earth Engine's `ee.Geometry.Rectangle` takes."""
-        return [self.west, self.south, self.east, self.north]
 
 
 @dataclass(frozen=True)

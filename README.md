@@ -4,12 +4,15 @@
 
 [![CI](https://github.com/esamoun/dark-vessel-detection/actions/workflows/ci.yml/badge.svg)](https://github.com/esamoun/dark-vessel-detection/actions/workflows/ci.yml)
 
-> **Status — work in progress.** The chain runs end to end today, on a real Sentinel-1 scene, with
-> a threshold on bright pixels standing in for the detector: one command in, a georeferenced
-> GeoPackage out that opens in QGIS where it should. It tiles a scene larger than one tile and
-> reports a target sitting on a tile boundary exactly once. What it finds so far is mostly a wind
-> farm — the detector is the placeholder, and that is the point of building it in this order. See
-> [Approach](#approach) for what is real and what is not.
+> **Status — work in progress.** The chain runs end to end today on real data at both ends: a real
+> Sentinel-1 scene, and a real day of the Danish Maritime Authority's AIS archive, with a
+> threshold on bright pixels standing in for the detector. Three commands in — the scene, the
+> declarations, the chain — and a georeferenced GeoPackage out that opens in QGIS where it should. It tiles a scene larger than one tile and
+> reports a target sitting on a tile boundary exactly once. What it finds so far is a wind farm,
+> and what declared itself in that scene is a pair of sailing yachts no radar at 10 m pixels can
+> show — the detector is the placeholder and the study area turns out to be the wrong water, both
+> of which are findings rather than faults. See [Approach](#approach) for what is real and what is
+> not, and [what the first real fusion run showed](#what-the-first-real-fusion-run-showed--2026-08-13).
 
 ---
 
@@ -32,7 +35,7 @@ The pipeline is built in four levels, each one shippable on its own.
 | --- | --- | --- |
 | **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | in progress |
 | **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene; awaiting the trained detector |
-| **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | interpolation and matching done; awaiting real Danish AIS |
+| **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | runs on real Danish archives; the study area has no radar-visible traffic |
 | **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | planned |
 
 The chain that carries these exists first, deliberately, with a deterministic stand-in where the
@@ -40,9 +43,10 @@ detector will go. What runs today: scene in, detector injected at the pipeline b
 scene cut into overlapping tiles and the targets they see reconciled into one list, pixel
 coordinates converted to ground coordinates, each declared vessel interpolated along its track to
 the moment of acquisition and the detections matched against those positions within a stated
-tolerance, GeoPackage out. What is still a placeholder: the detector is a threshold on bright
-pixels, and the scene and the AIS slice are synthetic — so dark results from this level are wiring
-tests, not findings.
+tolerance, GeoPackage out. Both ends of that are real now: a Sentinel-1 acquisition fetched
+clipped from Earth Engine, and a day of the Danish AIS archive streamed, filtered and cleaned
+with every removal counted. What is still a placeholder is the detector — a threshold on bright
+pixels — so dark results are not yet findings about the sea.
 
 A vessel moves between its last AIS report and the instant the radar images it: at 12 knots, some
 370 m a minute, which is more than the match tolerance. Comparing a detection against a report
@@ -79,7 +83,7 @@ geospatial data engineering, not deep learning, and is described as such.
 | Source | Use | Access |
 | --- | --- | --- |
 | Sentinel-1 GRD | SAR imagery | Copernicus Data Space / Earth Engine `COPERNICUS/S1_GRD` |
-| Danish Maritime Authority AIS | Declared vessel positions | open daily archives |
+| Danish Maritime Authority AIS | Declared vessel positions | open daily archives, `aisdata.ais.dk` |
 | Labelled SAR ship datasets | Detector training | public research datasets |
 | Earth Engine catalogue | Bathymetry, EEZ, coastline, fishing effort | Google Earth Engine |
 
@@ -93,7 +97,7 @@ false-positive problem real.
 src/darkvessel/
   pipeline.py the single seam: scene + AIS + injected detector -> classified detections
   cli.py      the one command; builds the detector and hands it to the pipeline
-  data/       AOI selection, Sentinel-1 export, AIS ingestion, tiling, synthetic inputs
+  data/       study area, Sentinel-1 export, Danish AIS archives and ingestion, tiling, fixtures
   detect/     detector contract, dataset, model, training, inference, pixel->geo
   embed/      contrastive representation learning, clustering
   fusion/     AIS interpolation to acquisition time, spatio-temporal matching
@@ -165,8 +169,9 @@ This one needs Earth Engine credentials, and is the only part of the repository 
 ```bash
 pip install -e ".[gee]"
 earthengine authenticate          # once; set your project in configs/anholt.yaml
-darkvessel export --config configs/anholt.yaml
-darkvessel run --config configs/anholt.yaml
+darkvessel export --config configs/anholt.yaml   # the scene
+darkvessel ais    --config configs/anholt.yaml   # what declared itself in it
+darkvessel run    --config configs/anholt.yaml   # the chain
 ```
 
 `export` asks Earth Engine for one acquisition over the Anholt wind farm, already clipped to the
@@ -177,36 +182,87 @@ smaller than a whole product, and an area that would ask for one is refused befo
 sent. The shipped area, about 15 km square, came back as 1582 x 1498 px in VV and VH — 33 MB, and
 sixteen tiles at 512/64 with real seams between them rather than the four the synthetic scene has.
 
-That run has no AIS to match against; real Danish declarations arrive with Level 3. Its
-detections come back marked `unsearched` rather than `dark`, because nothing was searched:
+`ais` fetches the Danish Maritime Authority's archive for the day of that acquisition — the
+acquisition instant is read off the scene, so the two cannot describe different moments — and
+filters it down to the study area and a quarter of an hour either side. The archive for this day
+is 662 MB compressed and 3.3 GB of CSV; it is inflated off the network a chunk at a time and
+never stored, so what stays on disk is the few hundred reports that survive:
 
 ```
-115 detections in EPSG:25832 -> outputs/anholt.gpkg
-  no AIS supplied: nothing was searched, so no detection here is a dark vessel
+declared positions around 2026-06-21T05:32:30+00:00, from anholt.tif
+  26366160 position reports read, 54798 of them with no usable position
+  415 in the study area and the window, 0 more inside the area with no readable timestamp
+  of those, 237 removed by cleaning: 0 not a vessel, 0 with no nine-digit identifier, 235
+  duplicated, 2 contradicting another report of the same instant, 0 at a position the rest of
+  their own track cannot reach
+  178 declared positions kept
 ```
 
-#### What the first real run showed — checked on a basemap, 2026-08-13
+More than half of what reached the cleaning was the archive repeating itself. Every rule's count
+is printed because a slice is a claim about which vessels declared themselves, and it is only as
+good as what was thrown away on the way to it.
 
-Scene `S1C_IW_GRDH_1SDV_20260702T170036_…`, acquired 2026-07-02 17:00:36 UTC, ascending, VV+VH,
-1582 x 1498 px over the Anholt area. `outputs/anholt.gpkg` was opened in QGIS over an
-OpenStreetMap basemap: the detections fall at sea east of Grenaa, in the water the config asks
-for, with no offset visible against the coastline.
+```
+90 detections in EPSG:25832 -> outputs/anholt.gpkg
+  0 matched, 90 dark at a tolerance of 200 m, against 5 declared positions
+```
 
-They are not vessels. Nearest-neighbour distances are bimodal with nothing at all between 100 m
-and 500 m: 93 of the 115 sit within 100 m of another — one bright object reported twice by a
-threshold that splits it — and merging those leaves **60 objects spaced 680 m apart** (p10 554,
-p90 957). Ships do not arrange themselves on a 680 m lattice. That is the Anholt wind farm, whose
-turbines are bright point scatterers, and it is the false-positive problem this project has to
-solve rather than a fault in the chain. Separating fixed structures from vessels is Level 3.
+#### What the first real fusion run showed — 2026-08-13
 
-Two things this run caught, both recorded in [`docs/failures.md`](docs/failures.md): the chain was
-reading the product's nodata fill as the brightest targets in the scene, and the export's size
-guard had been sized from an assumed dtype rather than a measured one.
+Scene `S1A_IW_GRDH_1SDV_20260621T053230_…`, acquired 2026-06-21 05:32:30 UTC, descending, VV+VH,
+1582 x 1498 px over the Anholt area, against the Danish archive for that day.
+
+**The detections are the wind farm, again — and they say so twice over.** 39 of the 90 sit within
+100 m of another — one bright object split in two by a threshold — and merging those leaves 70
+objects with a median spacing of 604 m. Ships do not arrange themselves on a 600 m lattice.
+Turbines are bright point scatterers, and separating them from vessels is the detector's problem
+rather than the fusion's.
+
+That lattice is also the georeferencing check for this scene, and a stronger one than a basemap.
+Anholt Offshore Wind Farm is published at 56.60°N 11.21°E, 111 turbines over a footprint up to
+8 km wide. The detections come out centred on 56.63°N **11.2075°E** — 150 m from the published
+longitude — and 9.4 km wide, with the latitude pulled north because the scene clips the southern
+end of a farm 20 km long. A transform out by anything would not land a 600 m lattice on the
+published position of a real structure. (The earlier scene was checked by eye in QGIS over an
+OpenStreetMap basemap; that check belongs to that acquisition, and this is what replaces it here.)
+
+**Nothing matched, and the interesting part is why.** Five vessels declared themselves inside the
+searched area. Three were in the margin outside the scene, where a declaration is kept so that a
+vessel at the edge of the frame keeps the reports either side of it. The other two were inside
+the frame, and neither is visible to this chain:
+
+| MMSI | Type | Length | What the radar has there |
+| --- | --- | --- | --- |
+| 219032944 | Sailing | — | inside a hole in the product; no data within 100 m |
+| 244001536 | Sailing | 8 m | peak −12.1 dB within 100 m, against a sea at −16.7 dB and a threshold at 0 dB |
+
+An 8 m glassfibre sailing boat is not a strong scatterer, and at 10 m pixels it is barely one
+pixel. No threshold that finds it would leave a scene rather than a speckle map. So the honest
+reading of `0 matched, 90 dark` is neither a finding nor a bug: it is a scene with no
+radar-visible declared traffic in it.
+
+**Which is a fact about the study area, and the most useful thing this run produced.** Anholt was
+chosen for its wind farm, and that put the box in quiet water off the main Kattegat lane. All 30
+Sentinel-1 acquisitions over it between 21 June and 28 July 2026 were checked against the
+archive: 19 had no declared vessel inside the frame at all, and across the other 11 the largest
+vessel ever standing in the scene at the instant it was taken was **15 m** — every one of them a
+sailing boat or a pleasure craft. There is no commercial traffic in this box. An area chosen to
+make the detector's false-positive problem visible turns out to make the fusion's problem
+invisible, and no luckier acquisition exists to be found. Level 3 needs a box on the shipping
+lane; that is recorded in [`docs/failures.md`](docs/failures.md) rather than papered over.
+
+Three things earlier real runs caught, all in [`docs/failures.md`](docs/failures.md): the chain
+read the product's nodata fill as the brightest targets in the scene, the export's size guard had
+been sized from an assumed dtype rather than a measured one, and the first AIS slice ingested was
+empty — which the chain correctly, and unreadably, reported as 115 dark vessels.
 
 `outputs/detections.gpkg` opens directly in QGIS, in EPSG:25832. Each detection carries its
 `status` (`matched` or `dark`), the `mmsi` that explains it if one does, the distance to that
-declared position, and the `tolerance_m` the decision was made at — the radius is part of the
-result, because "dark" means nothing without it. A match also carries what the position it
+declared position, the `tolerance_m` the decision was made at, and `declarations_searched` —
+how many declared positions that radius was applied to. Both numbers are part of the result,
+because "dark" is a claim about a search: without the radius it cannot be read at all, and
+without the count a scene where nobody declared themselves is indistinguishable from a scene
+full of ships that switched their transponders off. A match also carries what the position it
 matched was built from: `position_basis` is `interpolated` or `reported`, and `position_age_s`
 is how far the nearest real report sits from the acquisition. A match against a position
 constructed at the acquisition instant and one against a report five minutes old are different

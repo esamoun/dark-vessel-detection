@@ -337,6 +337,66 @@ def test_a_run_with_no_declarations_to_search_calls_nothing_dark() -> None:
     assert pd.isna(detections["tolerance_m"].iloc[0])
 
 
+def test_a_search_that_had_nothing_to_search_says_so_rather_than_reporting_dark_vessels() -> None:
+    """The first real Danish slice this project ingested was empty, and this is why that matters.
+
+    An AIS slice that held no vessel in the scene at the acquisition is a search that ran and
+    came back empty, so every detection in it is honestly dark. It is also the one case where
+    the honest word reads as its opposite: a layer of a hundred dark vessels over the Kattegat
+    looks exactly like a finding, and nothing in it says that no ship declared itself there at
+    all. The count of what the radius was applied to travels with the verdict, like the radius.
+    """
+    scene = synthetic_scene(targets=[(20, 30)])
+
+    detections = detect(scene, ais=ais_slice([]))
+
+    assert detections["status"].iloc[0] == "dark"
+    assert detections["declarations_searched"].iloc[0] == 0
+    # Still a search, unlike `ais=None`: the radius was applied, to nothing.
+    assert detections["tolerance_m"].iloc[0] == pytest.approx(200.0)
+
+
+def test_a_run_says_how_many_declared_positions_its_verdict_rests_on(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """And the number it says is the number in the layer.
+
+    The verdict counts the vessels in the slice and the layer counts the positions the matching
+    was run against. They are the same quantity by construction — one placed position per MMSI —
+    and this is what stops them from drifting into two different answers to one question.
+    """
+    written = run_from_config(tmp_path)
+
+    verdict = capsys.readouterr().out
+
+    # Five declarations from five MMSIs in the fixture; the vessel reporting twice is placed once.
+    assert "against 5 declared positions" in verdict
+    assert written["declarations_searched"].eq(5).all()
+    assert "dark by default rather than by evidence" not in verdict
+
+
+def test_a_scene_with_no_detections_does_not_claim_nobody_declared_themselves(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No detections is not the same as no declarations, and the verdict must not confuse them.
+
+    Reading the count back off the layer meant reading it off a row that does not exist, and
+    falling back to zero — so a run over a quiet scene would announce that no vessel declared
+    itself, over a slice holding five of them. That is the wrong-but-plausible claim the count
+    was added to prevent, reintroduced by the way it was reported.
+    """
+    run_from_config(
+        tmp_path,
+        CONFIG.replace("threshold: 0.5", "threshold: 2.0"),  # nothing is that bright
+    )
+
+    verdict = capsys.readouterr().out
+
+    assert "0 detections" in verdict
+    assert "against 5 declared positions" in verdict
+    assert "dark by default rather than by evidence" not in verdict
+
+
 def test_one_declared_position_cannot_explain_two_detections() -> None:
     # Two targets 60 m apart: pixel (20, 30) -> (639305, 6281795), (20, 36) -> (639365, 6281795).
     scene = synthetic_scene(targets=[(20, 30), (20, 36)])
