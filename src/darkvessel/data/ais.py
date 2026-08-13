@@ -33,13 +33,18 @@ from darkvessel.data.dma import Archive
 # AIS reports positions in WGS84; everything downstream works in the projected CRS.
 AIS_CRS = "EPSG:4326"
 
-# The five of the archive's twenty-six columns this project reads, and what it calls them.
+# The six of the archive's twenty-six columns this project reads, and what it calls them.
 COLUMNS = {
     "# Timestamp": "timestamp",
     "Type of mobile": "mobile",
     "MMSI": "mmsi",
     "Latitude": "lat",
     "Longitude": "lon",
+    # How big the vessel says it is. Not used to filter anything: it is carried so that a match,
+    # or the absence of one, can be read. At 10 m pixels a 15 m sailing boat is a pixel and a
+    # half and a 200 m tanker is twenty, so a scene full of small craft and a scene full of
+    # cargo are different claims about what the radar could have seen at all.
+    "Length": "length_m",
 }
 # Day first, and no zone: the archive is published in UTC and says so nowhere in the file. Read
 # as local time this is out by two hours over a Danish summer, which is 40 km of vessel track and
@@ -50,8 +55,8 @@ TIMESTAMP_FORMAT = "%d/%m/%Y %H:%M:%S"
 # The archive carries every transmitter in Danish waters. A base station is on land and an aid to
 # navigation is a buoy or a lighthouse: both are real, neither is a vessel, and a detection one of
 # them explained would read in the output exactly like a ship that declared itself. Fixed
-# structures standing in a radar scene are the detector's problem, and this project already knows
-# it has one — see the wind farm in `configs/anholt.yaml`.
+# structures standing in a radar scene are the detector's problem — a wind farm's turbines are
+# the case this project has already documented — and not one the fusion level may explain away.
 VESSEL_CLASSES = ("Class A", "Class B")
 
 # Rows parsed at a time. Large enough that the per-chunk overhead disappears, small enough that a
@@ -137,15 +142,15 @@ def slice_for(
             on the water could have reached, and a ferry at 40 knots must pass it untouched.
 
     Returns:
-        One row per surviving report, in WGS84, with `mmsi`, `timestamp` and point geometry —
-        what `interpolate.py` places and `match.py` compares against — and the count of what
-        every rule removed on the way.
+        One row per surviving report, in WGS84, with `mmsi`, `timestamp`, `length_m` and point
+        geometry — what `interpolate.py` places and `match.py` compares against — and the count
+        of what every rule removed on the way.
     """
     searched = area.grown_by(margin_m)
     surviving = [
         _within(chunk, searched, acquired_at, window)
         for day in _days_the_window_touches(acquired_at, window)
-        for chunk in _chunks(archive, day)
+        for chunk in read_day(archive, day, COLUMNS)
     ]
 
     return _cleaned(
@@ -160,7 +165,7 @@ def slice_for(
 def _joined(slices: list[pd.DataFrame]) -> pd.DataFrame:
     """The chunks that survived, as one frame. An archive with nothing in the window gives none."""
     if not slices:
-        return pd.DataFrame(columns=["timestamp", "mobile", "mmsi", "lat", "lon"])
+        return pd.DataFrame(columns=["timestamp", "mobile", "mmsi", "lat", "lon", "length_m"])
     return pd.concat(slices, ignore_index=True)
 
 
@@ -186,8 +191,8 @@ class _Surviving:
     no_timestamp: int
 
 
-def _chunks(archive: Archive, day: date) -> Iterator[pd.DataFrame]:
-    """A day's archive, in pieces small enough to hold.
+def read_day(archive: Archive, day: date, columns: dict[str, str]) -> Iterator[pd.DataFrame]:
+    """A day's archive, in pieces small enough to hold, with `columns` renamed as they are read.
 
     A generator rather than a list, which is the whole point: the day is inflated, parsed,
     filtered and discarded a chunk at a time, and collecting the chunks first would put all
@@ -195,15 +200,22 @@ def _chunks(archive: Archive, day: date) -> Iterator[pd.DataFrame]:
 
     Read as text throughout. The archive writes a blank where a field is unavailable and a
     sentinel where a position is, and a parser told to expect numbers turns the first into an
-    error and the second into a coordinate; both are decided below, where they can be counted.
+    error and the second into a coordinate; both are decided by the caller, where they can be
+    counted.
+
+    `columns` is a parameter because two readers want different subsets of the same file: the
+    ingestion takes the five that place a report, and `survey.py` also wants the speed, which
+    only means something when the question is whether a vessel was moving. One reader with a
+    parameter, rather than two that could drift apart on chunk size or on how text is parsed.
     """
     with archive.open_day(day) as stream:
-        yield from pd.read_csv(
+        for chunk in pd.read_csv(
             stream,
-            usecols=list(COLUMNS),
+            usecols=list(columns),
             dtype="string",
             chunksize=CHUNK_ROWS,
-        )
+        ):
+            yield chunk.rename(columns=columns)
 
 
 def _within(
@@ -217,7 +229,7 @@ def _within(
     Position first, because it is a numeric comparison over every row of the archive and the
     timestamps are the expensive parse. What survives is a thousandth of what arrives.
     """
-    reports = chunk.rename(columns=COLUMNS)
+    reports = chunk
     # Down to plain floats rather than the nullable kind the text columns produce: a comparison
     # against a missing value there is missing rather than false, and a row counted as neither
     # placeable nor unplaceable is a row that leaves the total not adding up.
@@ -229,7 +241,12 @@ def _within(
     placeable = lat.between(-90, 90) & lon.between(-180, 180)
     inside = placeable & lat.between(area.south, area.north) & lon.between(area.west, area.east)
 
-    here = reports[inside].assign(lat=lat[inside], lon=lon[inside])
+    # Blank on most rows, because length arrives in a static message the receiver merges in only
+    # when it has one. Absent, not zero: a vessel that never said how big it is has an unknown
+    # length, and reading the blank as a number would make it the smallest thing on the water.
+    length = pd.to_numeric(reports["length_m"], errors="coerce").astype("float64")
+
+    here = reports[inside].assign(lat=lat[inside], lon=lon[inside], length_m=length[inside])
     when = pd.to_datetime(here["timestamp"], format=TIMESTAMP_FORMAT, errors="coerce", utc=True)
     # A report whose timestamp cannot be read falls outside the window in both directions and
     # would leave without a word. Counted here rather than allowed to: a declaration that
@@ -267,12 +284,17 @@ def _cleaned(
     afloat = reports["mobile"].isin(VESSEL_CLASSES)
     reports, not_a_vessel = reports[afloat], int((~afloat).sum())
 
-    # Nine digits, which is what an MMSI is. The real archive carries four-, seven- and
-    # eight-digit identifiers alongside them, and pooling those under one key would draw a track
-    # between two different ships — the decision `interpolate.py` refuses to make and names the
-    # ingestion as the place for.
-    identified = reports["mmsi"].str.fullmatch(r"\d{9}").fillna(False).astype(bool)
+    identified = _identified(reports)
     reports, missing_identifier = reports[identified], int((~identified).sum())
+
+    # Length is a property of the vessel, not of the row that happened to carry it, so it is
+    # spread across the vessel's own reports as soon as there is a vessel to spread it across.
+    # Before the duplicate rule rather than after: two identical rows differ only in whether the
+    # receiver had the static data yet, and whichever the archive wrote first would otherwise
+    # decide whether the ship has a size at all.
+    reports = reports.assign(
+        length_m=reports.groupby("mmsi", sort=False, observed=True)["length_m"].transform("max")
+    )
 
     repeated = reports.duplicated(subset=["mmsi", "timestamp", "lat", "lon"], keep="first")
     reports, duplicated = reports[~repeated], int(repeated.sum())
@@ -297,6 +319,29 @@ def _cleaned(
         implausible_jump=implausible_jump,
         kept=len(reports),
     )
+
+
+def _identified(reports: pd.DataFrame) -> pd.Series:
+    """Which reports carry a nine-digit identifier, which is what an MMSI is.
+
+    The real archive carries four-, seven- and eight-digit identifiers alongside them, and pooling
+    those under one key would draw a track between two different ships — the decision
+    `interpolate.py` refuses to make and names the ingestion as the place for.
+    """
+    return reports["mmsi"].str.fullmatch(r"\d{9}").fillna(False).astype(bool)
+
+
+def from_a_vessel(reports: pd.DataFrame) -> pd.Series:
+    """Which reports come from an identified vessel rather than from something else afloat.
+
+    The two rules the ingestion applies first, as one, for the survey to apply too. Not the whole
+    cleaning: the ingestion counts what each rule removed, because a slice is a claim about which
+    vessels declared themselves and is only as good as what was thrown away on the way to it. A
+    survey of where traffic is makes no such claim, and needs the same two rules for a different
+    reason — a base station never moves and a four-digit identifier is several ships pooled, and
+    a rectangle chosen for either is a rectangle chosen for the shore beside it.
+    """
+    return reports["mobile"].isin(VESSEL_CLASSES) & _identified(reports)
 
 
 def _beyond_reach(reports: pd.DataFrame, max_speed_kn: float) -> pd.Series:
@@ -355,9 +400,11 @@ def _positions(reports: pd.DataFrame) -> gpd.GeoDataFrame:
     is how a reprojection gets applied to coordinates already in metres. Columns are named rather
     than inferred, so a slice a filter emptied comes back as an empty answer of the right shape.
     """
-    frame = reports.reindex(columns=["mmsi", "timestamp", "lon", "lat"]).reset_index(drop=True)
+    frame = reports.reindex(columns=["mmsi", "timestamp", "length_m", "lon", "lat"]).reset_index(
+        drop=True
+    )
     return gpd.GeoDataFrame(
-        frame.drop(columns=["lon", "lat"]).astype({"mmsi": "string"}),
+        frame.drop(columns=["lon", "lat"]).astype({"mmsi": "string", "length_m": "float64"}),
         geometry=gpd.points_from_xy(frame["lon"], frame["lat"]),
         crs=AIS_CRS,
     )
@@ -378,6 +425,7 @@ def write_ais(reports: gpd.GeoDataFrame, path: Path) -> None:
             "timestamp": pd.to_datetime(reports["timestamp"], utc=True).map(
                 lambda moment: moment.isoformat()
             ),
+            "length_m": reports["length_m"],
             "lon": reports.geometry.x,
             "lat": reports.geometry.y,
         }
@@ -387,9 +435,10 @@ def write_ais(reports: gpd.GeoDataFrame, path: Path) -> None:
 def load_ais(path: Path, crs: str) -> gpd.GeoDataFrame:
     """Read position reports from CSV and return them in `crs`.
 
-    Expects columns `mmsi`, `timestamp`, `lon`, `lat`. MMSI is kept as text: it is an
+    Expects columns `mmsi`, `timestamp`, `length_m`, `lon`, `lat`. MMSI is kept as text: it is an
     identifier, never a quantity, and reading it as a number invites a leading zero to be lost
-    or a missing value to turn it into a float.
+    or a missing value to turn it into a float. `length_m` is a float and is often missing, which
+    is a vessel that never said how big it is rather than a vessel of no size.
     """
     reports = pd.read_csv(path, dtype={"mmsi": "string"})
     reports["timestamp"] = pd.to_datetime(reports["timestamp"], utc=True, format="ISO8601")

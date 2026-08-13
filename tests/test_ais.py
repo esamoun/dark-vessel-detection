@@ -28,17 +28,18 @@ import geopandas as gpd
 import pytest
 import yaml
 
-from darkvessel.cli import ais_request_from
+from darkvessel.cli import ais_request_from, export_request_from
 from darkvessel.data.ais import Cleaning, load_ais, slice_for, write_ais
 from darkvessel.data.area import Bounds
 from darkvessel.data.dma import Archive, archive_url, zip_member
 
 WORKING_CRS = "EPSG:25832"
 
-# An acquisition and the area `configs/anholt.yaml` cuts a scene to. The date is a fixture's
-# date, not a claim about which scene is shipped — that is `configs/anholt.yaml`'s to make.
+# An acquisition and a rectangle in the Kattegat. Both are the fixture's own and neither is a
+# claim about what is shipped: which rectangle the study area is, and which acquisition it is
+# run on, are `configs/kattegat-lane.yaml`'s to make and are checked against that file below.
 ACQUIRED_AT = datetime(2026, 7, 2, 17, 0, 36, tzinfo=UTC)
-ANHOLT = Bounds(west=11.15, south=56.58, east=11.40, north=56.71)
+AREA = Bounds(west=11.15, south=56.58, east=11.40, north=56.71)
 
 # A point comfortably inside the area, and one comfortably outside it.
 INSIDE = (11.28, 56.64)
@@ -48,18 +49,27 @@ WINDOW = timedelta(minutes=15)
 MARGIN_M = 5_000.0
 MAX_SPEED_KN = 60.0
 
-SHIPPED_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "anholt.yaml"
+SHIPPED_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "kattegat-lane.yaml"
 
-# Five of the archive's twenty-six columns are read. The other two here are carried so that a
+# One row of the archive, as the five columns this project reads plus the length it carries when
+# the vessel happened to have broadcast its static data recently: (timestamp, mobile, mmsi, lat,
+# lon, length).
+Row = tuple[str, str, str, float | str, float | str, float | str]
+
+# Six of the archive's twenty-six columns are read. The other two here are carried so that a
 # fixture cannot pass by being narrower than the file it stands for.
-HEADER = "# Timestamp,Type of mobile,MMSI,Latitude,Longitude,Navigational status,SOG,Destination"
+HEADER = (
+    "# Timestamp,Type of mobile,MMSI,Latitude,Longitude,Navigational status,SOG,Length,Destination"
+)
 
 
-def archive_csv(reports: list[tuple[str, str, str, float | str, float | str]]) -> str:
-    """Rows as the Danish archive writes them: (timestamp, mobile, mmsi, lat, lon)."""
+def archive_csv(reports: list[Row]) -> str:
+    """Rows as the Danish archive writes them: (timestamp, mobile, mmsi, lat, lon, length)."""
     lines = [HEADER]
-    for when, mobile, mmsi, lat, lon in reports:
-        lines.append(f"{when},{mobile},{mmsi},{lat},{lon},Under way using engine,7.4,ANHOLT")
+    for when, mobile, mmsi, lat, lon, length in reports:
+        lines.append(
+            f"{when},{mobile},{mmsi},{lat},{lon},Under way using engine,7.4,{length},SKAGEN"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -68,11 +78,17 @@ def report(
     age: timedelta = timedelta(0),
     at: tuple[float, float] = INSIDE,
     mobile: str = "Class A",
-) -> tuple[str, str, str, float | str, float | str]:
-    """One position report, placed relative to the acquisition."""
+    length: float | str = "",
+) -> Row:
+    """One position report, placed relative to the acquisition.
+
+    The length defaults to blank because that is what most rows of the real archive carry: length
+    arrives in a static message the receiver merges in when it has one, so a vessel declares it on
+    some of its rows and not on others.
+    """
     lon, lat = at
     when = (ACQUIRED_AT + age).strftime("%d/%m/%Y %H:%M:%S")
-    return (when, mobile, mmsi, lat, lon)
+    return (when, mobile, mmsi, lat, lon, length)
 
 
 @dataclass
@@ -103,14 +119,14 @@ def ingest(
     return slice_for(
         archive=archive,
         acquired_at=ACQUIRED_AT,
-        area=ANHOLT,
+        area=AREA,
         window=window,
         margin_m=margin_m,
         max_speed_kn=max_speed_kn,
     )
 
 
-def one_day(reports: list[tuple[str, str, str, float | str, float | str]]) -> FakeArchive:
+def one_day(reports: list[Row]) -> FakeArchive:
     return FakeArchive(days={ACQUIRED_AT.date(): archive_csv(reports)})
 
 
@@ -160,11 +176,11 @@ def test_a_vessel_at_the_edge_of_the_scene_keeps_the_reports_either_side_of_it()
     interpolate between — so it is placed at whichever report survived, and the failure this
     level exists to remove comes back through the ingestion instead of through the matching.
     """
-    just_outside = (ANHOLT.east + 0.02, 56.64)  # about 1.2 km east of the area
+    just_outside = (AREA.east + 0.02, 56.64)  # about 1.2 km east of the area
     archive = one_day(
         [
             report(age=timedelta(minutes=-2), at=just_outside),
-            report(age=timedelta(minutes=2), at=(ANHOLT.east - 0.01, 56.64)),
+            report(age=timedelta(minutes=2), at=(AREA.east - 0.01, 56.64)),
         ]
     )
 
@@ -185,7 +201,7 @@ def test_a_window_that_reaches_into_yesterday_opens_yesterdays_archive() -> None
     slice_for(
         archive=archive,
         acquired_at=just_after_midnight,
-        area=ANHOLT,
+        area=AREA,
         window=WINDOW,
         margin_m=MARGIN_M,
         max_speed_kn=MAX_SPEED_KN,
@@ -253,7 +269,7 @@ def test_a_report_inside_the_area_with_no_readable_timestamp_is_counted() -> Non
     archive = one_day(
         [
             report(mmsi="219000001", age=timedelta(minutes=-1)),
-            ("2026-07-02 17:00:00", "Class A", "219000002", 56.64, 11.28),
+            ("2026-07-02 17:00:00", "Class A", "219000002", 56.64, 11.28, ""),
         ]
     )
 
@@ -455,7 +471,77 @@ def test_an_empty_slice_is_an_answer_and_not_an_error() -> None:
 
     assert reports.empty
     assert cleaning.kept == 0
-    assert set(reports.columns) >= {"mmsi", "timestamp", "geometry"}
+    assert set(reports.columns) >= {"mmsi", "timestamp", "length_m", "geometry"}
+
+
+def test_a_declared_length_reaches_the_slice() -> None:
+    """How big the vessel said it was, carried to where someone can read it.
+
+    A dark vessel is only interesting if the radar could have seen it. At 10 m pixels a 15 m
+    sailing boat is a pixel and a half and a 200 m tanker is twenty, so the length is what says
+    whether a match, or the absence of one, means anything at all.
+    """
+    archive = one_day([report(mmsi="219000001", length=228.0)])
+
+    reports, _ = ingest(archive)
+
+    assert reports["length_m"].tolist() == [228.0]
+
+
+def test_a_length_declared_once_is_carried_across_the_vessels_own_reports() -> None:
+    """Length is a property of the vessel, not of the report that happened to mention it.
+
+    The archive merges static data into position rows only when the receiver has it, so a vessel
+    under way declares its length on a few of its rows and leaves the field blank on the rest.
+    Read row by row, the same ship is 228 m at one instant and unknown at the next — and the
+    report that survives to be placed at the acquisition is whichever one the bracket picked.
+    """
+    archive = one_day(
+        [
+            report(age=timedelta(minutes=-2), length=""),
+            report(age=timedelta(minutes=-1), length=228.0),
+            report(age=timedelta(minutes=1), length=""),
+        ]
+    )
+
+    reports, _ = ingest(archive)
+
+    assert reports["length_m"].tolist() == [228.0, 228.0, 228.0]
+
+
+def test_a_vessel_that_never_declared_a_length_is_still_a_declaration() -> None:
+    """An unknown length is not a reason to remove a vessel from the search.
+
+    The asymmetry the whole ingestion is built on: a declaration wrongly removed is a detection
+    published as a dark vessel. A vessel whose size is unknown still declared its position, and
+    the position is what the matching compares.
+    """
+    archive = one_day([report(mmsi="219000001", length="")])
+
+    reports, cleaning = ingest(archive)
+
+    assert cleaning.kept == 1
+    assert reports["length_m"].isna().all()
+
+
+def test_a_length_never_decides_whether_a_report_is_kept() -> None:
+    """Two rows the archive wrote twice, one of them carrying the static data and one not.
+
+    Exact duplicates collapse on position and instant, and the field that is filled in on only
+    one of the copies must not decide which copy that is: the vessel's own length would then
+    survive or vanish on the order the archive happened to write two identical rows in.
+    """
+    archive = one_day(
+        [
+            report(mmsi="219000001", length=""),
+            report(mmsi="219000001", length=228.0),
+        ]
+    )
+
+    reports, cleaning = ingest(archive)
+
+    assert cleaning.duplicated == 1
+    assert reports["length_m"].tolist() == [228.0]
 
 
 def test_the_slice_written_is_the_slice_the_chain_reads_back(tmp_path: Path) -> None:
@@ -471,7 +557,7 @@ def test_the_slice_written_is_the_slice_the_chain_reads_back(tmp_path: Path) -> 
             report(mmsi="019000002", age=timedelta(minutes=1), at=(11.30, 56.66)),
         ]
     )
-    path = tmp_path / "anholt-ais.csv"
+    path = tmp_path / "kattegat-lane-ais.csv"
 
     reports, _ = ingest(archive)
     write_ais(reports, path)
@@ -523,17 +609,23 @@ def test_the_archive_url_names_the_day_asked_for() -> None:
 
 
 def test_the_shipped_config_describes_an_ais_slice_the_command_can_fetch() -> None:
-    """`configs/anholt.yaml` through the command's own parsing, minus the 662 MB.
+    """`configs/kattegat-lane.yaml` through the command's own parsing, minus the 662 MB.
 
     The same gap `export_request_from` exists to close: the shipped configs are the ones nothing
     in this suite runs, and this one's faults would otherwise surface to someone who had already
     waited for a day of Danish AIS to come down the wire.
+
+    The rectangle is checked against the one the export cuts the scene to rather than against a
+    copy of it written out here. Two readings of `area.bounds` that disagree produce dark vessels
+    along whichever edge they disagree on, which is what `area.py` exists to prevent; a literal
+    repeated in this file would pin the study area against being edited rather than pin the two
+    readings together, and the study area is a thing that moves.
     """
     config = yaml.safe_load(SHIPPED_CONFIG.read_text())
 
     request = ais_request_from(config, SHIPPED_CONFIG.parent)
 
-    assert request["area"] == ANHOLT
+    assert request["area"] == export_request_from(config, SHIPPED_CONFIG.parent)["area"]
     assert request["window"] > timedelta(0)
     assert request["margin_m"] > 0.0
     assert request["max_speed_kn"] > 0.0
@@ -543,15 +635,15 @@ def test_the_shipped_config_describes_an_ais_slice_the_command_can_fetch() -> No
 
 
 def test_a_margin_grows_the_area_on_every_side() -> None:
-    grown = ANHOLT.grown_by(5_000.0)
+    grown = AREA.grown_by(5_000.0)
 
-    assert grown.west < ANHOLT.west
-    assert grown.east > ANHOLT.east
-    assert grown.south < ANHOLT.south
-    assert grown.north > ANHOLT.north
+    assert grown.west < AREA.west
+    assert grown.east > AREA.east
+    assert grown.south < AREA.south
+    assert grown.north > AREA.north
     # 5 km of northing is about 0.045 degrees of latitude anywhere on the ellipsoid.
-    assert grown.north - ANHOLT.north == pytest.approx(0.045, abs=0.002)
+    assert grown.north - AREA.north == pytest.approx(0.045, abs=0.002)
 
 
 def test_a_margin_of_nothing_leaves_the_area_alone() -> None:
-    assert ANHOLT.grown_by(0.0) == ANHOLT
+    assert AREA.grown_by(0.0) == AREA
