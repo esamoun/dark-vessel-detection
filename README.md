@@ -156,9 +156,10 @@ darkvessel run --config configs/anholt.yaml
 `export` asks Earth Engine for one acquisition over the Anholt wind farm, already clipped to the
 area and reprojected into the working CRS, and writes a single GeoTIFF carrying its acquisition
 time, scene id, polarisations and orbit pass. Clipping and reprojection happen on Google's
-machines: no GRD product reaches the local disk, and the 32 MB a direct download returns is two
-orders of magnitude smaller than one. About 15 km square at 10 m is 1485 x 1497 px — sixteen
-tiles with real seams between them, rather than the four the synthetic scene has.
+machines, and no GRD product reaches the local disk: a single response is two orders of magnitude
+smaller than a whole product, and an area that would ask for one is refused before the request is
+sent. The shipped area, about 15 km square, came back as 1582 x 1498 px in VV and VH — 33 MB, and
+sixteen tiles at 512/64 with real seams between them rather than the four the synthetic scene has.
 
 That run has no AIS to match against; real Danish declarations arrive with Level 3. Its
 detections come back marked `unsearched` rather than `dark`, because nothing was searched:

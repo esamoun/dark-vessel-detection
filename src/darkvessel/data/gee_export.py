@@ -40,12 +40,16 @@ ORBIT_PASS_TAG = "ORBIT_PASS"
 
 COLLECTION = "COPERNICUS/S1_GRD"
 
-# Earth Engine answers a direct download in one response, and refuses one larger than this. The
-# limit is the reason no full GRD product can arrive by this path even by accident: a Sentinel-1
-# scene is two orders of magnitude past it, so an area that would pull one is refused here, with
-# the arithmetic shown, rather than by a request that fails after the wait.
-MAX_REQUEST_BYTES = 32 * 1024 * 1024
-BYTES_PER_SAMPLE = 4  # S1 GRD bands come back as float32
+# A ceiling this package sets on a single direct download, not a limit quoted from Earth Engine:
+# the real cap is a server-side detail that would go stale in this comment. Calibrated against a
+# measurement instead — the area in `configs/anholt.yaml` estimates at 38 MB here and came back
+# fine — and set well above it, while staying two orders of magnitude below a whole GRD product.
+# That is what the guard is for: catching an area that would pull a product, not shaving megabytes.
+MAX_REQUEST_BYTES = 64 * 1024 * 1024
+# Measured on the first real export rather than assumed: Earth Engine returned S1 GRD bands as
+# float64, twice the width this once guessed. Guessing it low is the failure mode that matters —
+# the guard then waves through exactly the request it exists to stop.
+BYTES_PER_SAMPLE = 8
 
 
 @dataclass(frozen=True)
@@ -265,10 +269,15 @@ def _refuse_a_request_too_large_to_answer(
     crs: str,
     resolution_m: float,
 ) -> None:
-    """Refuse an area that cannot come back in one response, before anything is sent.
+    """Refuse an area too large to come back in one response, before anything is sent.
 
-    Earth Engine answers this with an error too, after the wait. Refusing here says which number
-    to change: the area, the resolution, or the number of polarisations.
+    Earth Engine refuses an oversized request too, after the wait, and its message does not say
+    which number to change: the area, the resolution, or the number of polarisations.
+
+    The size is an estimate. Earth Engine reprojects onto its own grid, so the pixel count it
+    settles on differs from this by a few per cent — the shipped area works out at 1485 x 1497
+    here and came back 1582 x 1498. That is fine for a guard whose job is to catch an area off by
+    two orders of magnitude, and it is why the ceiling is not set anywhere near a real limit.
     """
     from pyproj import Transformer
 
@@ -281,6 +290,7 @@ def _refuse_a_request_too_large_to_answer(
     if size > MAX_REQUEST_BYTES:
         raise ValueError(
             f"{area.as_rectangle()} at {resolution_m:g} m in {len(polarisations)} polarisations is "
-            f"{size / 1e6:.0f} MB, past the {MAX_REQUEST_BYTES / 1e6:.0f} MB a direct download "
-            "returns; shrink the area, or export to Drive instead — see docs/decisions.md"
+            f"about {size / 1e6:.0f} MB, past the {MAX_REQUEST_BYTES / 1e6:.0f} MB ceiling this "
+            "export puts on a single response; shrink the area, drop a polarisation, or export to "
+            "Drive instead — see docs/decisions.md"
         )

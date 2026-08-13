@@ -26,8 +26,8 @@ imagery:
     end: 2026-07-15T00:00:00+00:00
 
 # 512 px is the figure that follows from a detector's memory, and this is a scene large enough
-# for it to mean something: 1485 x 1497 px, so four tiles per axis and sixteen in all, with real
-# seams between them. `configs/pipeline.yaml` runs 144/32 because its scene is 256 px.
+# for it to mean something: 1582 x 1498 px as exported, four tiles per axis and sixteen in all,
+# with real seams. `configs/pipeline.yaml` runs 144/32 because its scene is 256 px.
 tiling:
   size_px: 512
   overlap_px: 64
@@ -40,7 +40,7 @@ earthengine:
   # The Cloud project `ee.Initialize` authenticates against. Left empty, Earth Engine falls back
   # to whatever the local credentials default to, which is fine on one machine and unreproducible
   # on any other. Set it to yours before the first export.
-  project: null
+  project: "carbon-cacao-488416-s6"
 
 export:
   out: ../data/real/anholt.tif
@@ -53,4 +53,4 @@ run:
   ais: null
   output: ../outputs/anholt.gpkg
   detector: bright-pixel   # still the stand-in: this run tests the chain, not the detector
-  threshold: -12.0         # S1 GRD comes back in dB, not the 0..1 of the synthetic scene
+  threshold: 0.0         # S1 GRD comes back in dB, not the 0..1 of the synthetic scene
