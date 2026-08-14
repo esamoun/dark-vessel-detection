@@ -24,6 +24,8 @@ from darkvessel.data.scene import Scene
 from darkvessel.data.survey import survey as survey_traffic
 from darkvessel.data.synthetic import write_synthetic_inputs
 from darkvessel.data.tiling import Tiling
+from darkvessel.detect.checkpoints import Checkpoints, Journal
+from darkvessel.detect.dataset import Layout, Subset, catalogue, split_by_scene
 from darkvessel.detect.detector import Detector
 from darkvessel.detect.geo import write_detections
 from darkvessel.detect.threshold import BrightPixelDetector
@@ -59,6 +61,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     survey_command.add_argument("--config", type=Path, required=True)
 
+    train_command = commands.add_parser(
+        "train", help="train the detector on labelled SAR (needs a GPU and the detector extra)"
+    )
+    train_command.add_argument("--config", type=Path, required=True)
+
     args = parser.parse_args(argv)
 
     if args.command == "synthesise":
@@ -69,6 +76,8 @@ def main(argv: list[str] | None = None) -> int:
         return _ais(args.config)
     if args.command == "survey":
         return _survey(args.config)
+    if args.command == "train":
+        return _train(args.config)
     return _run(args.config)
 
 
@@ -267,6 +276,104 @@ def _survey(config_path: Path) -> int:
     )
     for candidate in survey_traffic(archive=danish_maritime_authority(), **request)[:report]:
         print(f"  {candidate.line()}")
+    return 0
+
+
+def training_request_from(config: dict[str, Any], relative_to: Path) -> dict[str, Any]:
+    """Everything a training run takes from a config file.
+
+    Separate from the command for the reason `export_request_from` is, with the constraint drawn
+    tighter: this is the one stage that needs a GPU, and the machine that has one is rented by
+    the hour and is not this one. A mistyped key would otherwise surface after the dataset had
+    been attached, the wheels installed and the first epoch begun.
+
+    Nothing here imports torch, and that is what lets a test parse the shipped config on a laptop
+    with no framework installed. The command below imports it, once it has something to run.
+
+    One seed, not several. The subset the run trains on, the way each tile is laid down and the
+    order they arrive in are all derived from it, so a run is named by that number and a resumed
+    session reproduces the interrupted one exactly.
+    """
+    data, out = config["data"], config["out"]
+    seed = int(config["training"]["seed"])
+
+    return {
+        "root": (relative_to / data["root"]).resolve(),
+        "layout": Layout(
+            images=data["images"],
+            annotations=data["annotations"],
+            image_suffix=data["image_suffix"],
+        ),
+        "tile_px": int(data["tile_px"]),
+        "subset": Subset(
+            empty_per_ship_tile=float(config["subset"]["empty_per_ship_tile"]), seed=seed
+        ),
+        "model": {
+            "pretrained": bool(config["model"]["pretrained"]),
+            "trainable_backbone_layers": int(config["model"]["trainable_backbone_layers"]),
+            "anchor_sizes": tuple(tuple(level) for level in config["model"]["anchor_sizes"]),
+        },
+        "schedule": {
+            "epochs": int(config["schedule"]["epochs"]),
+            "batch_size": int(config["schedule"]["batch_size"]),
+            "learning_rate": float(config["schedule"]["learning_rate"]),
+            "momentum": float(config["schedule"]["momentum"]),
+            "weight_decay": float(config["schedule"]["weight_decay"]),
+            "workers": int(config["schedule"]["workers"]),
+            "seed": seed,
+        },
+        "reporting": {
+            "tolerance_m": float(config["reporting"]["tolerance_m"]),
+            "resolution_m": float(data["resolution_m"]),
+            "thresholds": tuple(float(score) for score in config["reporting"]["thresholds"]),
+        },
+        "checkpoints": Checkpoints(
+            (relative_to / out["checkpoints"]).resolve(), keep=int(out["keep"])
+        ),
+        "journal": Journal((relative_to / out["metrics"]).resolve()),
+        "device": config["training"].get("device"),
+    }
+
+
+def _train(config_path: Path) -> int:
+    """Train the detector. The one command in this package that needs a GPU to be worth running.
+
+    torch is imported here rather than at the top of the module because the chain's acceptance
+    condition is that it installs and runs with no weights, no GPU and no network — see
+    docs/decisions.md. `darkvessel run` must not pull two gigabytes of CUDA wheels to threshold
+    bright pixels, and it does not.
+    """
+    import torch
+
+    from darkvessel.detect.model import detector_model
+    from darkvessel.detect.train import Reporting, Schedule, train
+
+    config = yaml.safe_load(config_path.read_text())
+    request = training_request_from(config, config_path.parent)
+
+    refs = catalogue(request["root"], request["layout"])
+    training, held_out = split_by_scene(refs)
+    kept = request["subset"].of(training)
+
+    print(f"{len(refs)} labelled tiles under {request['root']}")
+    print(f"  training: {request['subset'].line(training)}")
+    print(
+        f"  held out, scored entire: {len(held_out)} tiles carrying "
+        f"{sum(len(ref.boxes) for ref in held_out)} ships"
+    )
+
+    device = torch.device(request["device"] or ("cuda" if torch.cuda.is_available() else "cpu"))
+    train(
+        model=detector_model(tile_px=request["tile_px"], **request["model"]),
+        training=kept,
+        held_out=held_out,
+        checkpoints=request["checkpoints"],
+        journal=request["journal"],
+        schedule=Schedule(**request["schedule"]),
+        reporting=Reporting(**request["reporting"]),
+        device=device,
+    )
+    print(f"metrics in {request['journal'].path}")
     return 0
 
 
