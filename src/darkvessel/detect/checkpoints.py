@@ -25,6 +25,29 @@ from typing import Any
 # `epoch-007.pt`, zero-padded so that a directory listing is in the order the epochs ran.
 _CHECKPOINT = re.compile(r"^epoch-(\d+)\.pt$")
 
+# What a half-written file is called while it is being written. Chosen so that `_CHECKPOINT`
+# cannot match it: a fragment must not be able to pass for an epoch.
+_PARTIAL = ".partial"
+
+
+@contextmanager
+def atomically(path: Path) -> Iterator[Path]:
+    """Yield somewhere to write `path`, and put it there once it is whole.
+
+    The one rule this module exists for, in the one place that states it. Anything that goes
+    wrong inside — an interrupt, a full disk, an out-of-memory on the way to `state_dict` —
+    leaves nothing behind and leaves whatever was already at `path` untouched.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(path.name + _PARTIAL)
+
+    try:
+        yield partial
+        os.replace(partial, path)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+
 
 class Checkpoints:
     """The directory a run resumes from.
@@ -64,22 +87,13 @@ class Checkpoints:
 
     @contextmanager
     def writing(self, epoch: int) -> Iterator[Path]:
-        """Yield a path to write this epoch's state to, and put it in place once it is whole.
+        """Yield a path to write this epoch's state to, and keep it only if it is written whole.
 
-        Anything that goes wrong inside — an interrupt, a full disk, an out-of-memory on the way
-        to `state_dict` — leaves the directory exactly as it was, holding the last epoch that
-        did finish.
+        A session that dies inside here leaves the directory exactly as it was, holding the last
+        epoch that did finish.
         """
-        self.directory.mkdir(parents=True, exist_ok=True)
-        final = self.directory / f"epoch-{epoch:03d}.pt"
-        partial = final.with_suffix(".pt.partial")
-
-        try:
+        with atomically(self.directory / f"epoch-{epoch:03d}.pt") as partial:
             yield partial
-            os.replace(partial, final)
-        except BaseException:
-            partial.unlink(missing_ok=True)
-            raise
 
         self._prune()
 
@@ -106,7 +120,6 @@ class Journal:
         return list(json.loads(self.path.read_text()))
 
     def record(self, entry: dict[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        partial = self.path.with_suffix(self.path.suffix + ".partial")
-        partial.write_text(json.dumps([*self.entries(), entry], indent=2))
-        os.replace(partial, self.path)
+        history = [*self.entries(), entry]
+        with atomically(self.path) as partial:
+            partial.write_text(json.dumps(history, indent=2))

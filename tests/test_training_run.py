@@ -28,13 +28,18 @@ from test_dataset import FIXTURE, write_dataset  # noqa: E402
 
 from darkvessel.cli import training_request_from  # noqa: E402
 from darkvessel.detect.checkpoints import Checkpoints, Journal  # noqa: E402
-from darkvessel.detect.dataset import catalogue, split_by_scene  # noqa: E402
+from darkvessel.detect.dataset import Layout, catalogue, split_by_scene  # noqa: E402
+from darkvessel.detect.metrics import Reporting  # noqa: E402
 from darkvessel.detect.model import detector_model  # noqa: E402
-from darkvessel.detect.train import Reporting, Schedule, train  # noqa: E402
+from darkvessel.detect.train import Schedule, train  # noqa: E402
 
 CONFIG = Path(__file__).resolve().parents[1] / "configs" / "train.yaml"
 
 TILE_PX = 64
+
+# Eight tiles cannot settle where the annotations start counting — no box touches an edge — so
+# this one says. Over the real 9000 it is measured; see `dataset._first_index`.
+LAYOUT = Layout(image_suffix=FIXTURE.image_suffix, first_index=0)
 
 pytestmark = pytest.mark.filterwarnings("ignore::rasterio.errors.NotGeoreferencedWarning")
 
@@ -59,7 +64,7 @@ def a_run(tmp_path: Path, epochs: int) -> dict:
     machine with new weights in memory, and a test that reused the trained model would prove
     nothing about whether the checkpoint on the disk is what continues the run.
     """
-    refs = catalogue(a_small_labelled_dataset(tmp_path / "data"), FIXTURE)
+    refs = catalogue(a_small_labelled_dataset(tmp_path / "data"), LAYOUT)
     training, held_out = split_by_scene(refs)
 
     return {
@@ -102,6 +107,29 @@ def test_a_second_session_continues_the_run_the_first_one_started(tmp_path: Path
     assert Checkpoints(tmp_path / "run").next_epoch() == 3
 
 
+def test_an_epoch_whose_weights_landed_but_whose_score_did_not_is_scored(tmp_path: Path) -> None:
+    """The gap the ordering inside an epoch opens, and the thing that closes it.
+
+    Weights are written before the held-out split is scored, on the argument that numbers can be
+    recomputed from a checkpoint and an epoch cannot. That argument only holds if something
+    recomputes them. Kill the session in exactly that window on the last epoch of the schedule
+    and the loop below never runs again — so the final checkpoint would sit there with no
+    precision against it and nothing left that would ever produce one.
+    """
+    run = a_run(tmp_path, epochs=1)
+    train(**run)
+    Journal(tmp_path / "run" / "metrics.json").path.unlink()
+
+    train(**(a_run(tmp_path, epochs=1)))
+
+    scored = Journal(tmp_path / "run" / "metrics.json").entries()
+    assert [entry["epoch"] for entry in scored] == [1]
+    # Scored from the checkpoint, so the loss the interrupted session measured is gone. Saying
+    # so beats writing a zero nobody measured.
+    assert scored[0]["training_loss"] is None
+    assert scored[0]["held_out_ships"] == 1
+
+
 def test_a_finished_schedule_asked_to_run_again_does_nothing(tmp_path: Path) -> None:
     """Restarting a session after the schedule has finished is the ordinary case on a free tier:
     the notebook is re-run and the cell is the same cell. It should not quietly train a second
@@ -141,7 +169,7 @@ def test_the_shipped_training_config_is_the_one_the_command_parses() -> None:
 
     assert request["schedule"]["epochs"] > 0
     assert request["subset"].empty_per_ship_tile >= 0.0
-    assert request["reporting"]["thresholds"] == tuple(sorted(request["reporting"]["thresholds"]))
+    assert request["reporting"].thresholds == tuple(sorted(request["reporting"].thresholds))
     assert len(request["model"]["anchor_sizes"]) == 5, "one anchor size per level of the pyramid"
     # The Kaggle attachment points are absolute, and have to survive being read relative to a
     # config file that lives in this repository rather than in the session.
@@ -154,5 +182,5 @@ def test_the_shipped_config_reports_the_tolerance_the_fusion_will_use(tmp_path: 
     training = training_request_from(yaml.safe_load(CONFIG.read_text()), CONFIG.parent)
     pipeline = yaml.safe_load((CONFIG.parent / "kattegat-lane.yaml").read_text())
 
-    assert training["reporting"]["tolerance_m"] == float(pipeline["fusion"]["match_tolerance_m"])
-    assert training["reporting"]["resolution_m"] == float(pipeline["imagery"]["resolution_m"])
+    assert training["reporting"].tolerance_m == float(pipeline["fusion"]["match_tolerance_m"])
+    assert training["reporting"].resolution_m == float(pipeline["imagery"]["resolution_m"])
