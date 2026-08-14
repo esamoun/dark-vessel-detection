@@ -1,7 +1,11 @@
 """Dataset and augmentations for SAR detection.
 
 Only geometry-preserving augmentations are physically valid on radar amplitude: flips and
-rotations yes, colour and contrast jitter no. Speckle perturbation is the radar-native option.
+rotations yes, colour and contrast jitter no. What is applied here is the eight symmetries of the
+square and nothing else. Speckle perturbation is the radar-native way to go further — it changes
+pixel values, but according to the distribution the sensor itself imposes rather than
+arbitrarily — and it is not implemented: it needs a speckle model to be argued for, and that
+belongs with the rest of the work on what this data actually is.
 
 The labels are LS-SSDD-v1.0 — 15 large Sentinel-1 IW acquisitions cut into 9000 sub-images of
 800 x 800, VV, labelled by SAR experts against AIS and Google Earth. It is the one public set
@@ -27,18 +31,25 @@ import rasterio
 
 # LS-SSDD's own split: sub-images cut from the first ten large scenes train, the last five are
 # held out. Kept as the dataset publishes it so that the numbers this repository reports can be
-# put next to the published baselines rather than only next to each other.
-TRAINING_SCENES = tuple(range(1, 11))
+# put next to the published baselines rather than only next to each other. Only the held-out half
+# is named, because it is the half the split is drawn on — everything else trains, including a
+# sixteenth scene nobody has added yet.
 HELD_OUT_SCENES = tuple(range(11, 16))
 
 
 @dataclass(frozen=True)
 class Layout:
-    """Where the images and the annotations sit, as LS-SSDD ships them."""
+    """Where the images and the annotations sit, as LS-SSDD ships them.
+
+    `first_index` is whether the annotations count their pixels from zero or from one. Left as
+    None it is measured from the boxes themselves, which is what a full dataset always allows;
+    it is here for the subset too small to settle the question on its own.
+    """
 
     images: str = "JPEGImages"
     annotations: str = "Annotations"
     image_suffix: str = ".jpg"
+    first_index: int | None = None
 
 
 LS_SSDD = Layout()
@@ -83,6 +94,21 @@ class Box:
             (self.min_row + self.max_row) / 2 - 0.5,
             (self.min_col + self.max_col) / 2 - 0.5,
         )
+
+    def to_xyxy(self) -> tuple[float, float, float, float]:
+        """The same box as torchvision states one: x before y, and the corners in that order.
+
+        The swap lives here, with the convention it swaps, for the reason the half-pixel above
+        does. Written out at each call site instead, it is four subscripts that read the same
+        whether or not they are right, in three places, and a transposed pair trains the model
+        on ships rotated into the sea beside them.
+        """
+        return (self.min_col, self.min_row, self.max_col, self.max_row)
+
+    @classmethod
+    def from_xyxy(cls, xyxy: Sequence[float]) -> "Box":
+        """The inverse, for boxes coming back out of a model."""
+        return cls(min_row=xyxy[1], min_col=xyxy[0], max_row=xyxy[3], max_col=xyxy[2])
 
 
 @dataclass(frozen=True)
@@ -138,6 +164,9 @@ def catalogue(root: Path, layout: Layout = LS_SSDD) -> list[TileRef]:
     is an error rather than a smaller dataset. The images are what gets trained on; an image
     whose label never arrived would otherwise be a tile the run quietly never saw, or worse, a
     tile it saw as empty sea.
+
+    Every annotation is read before any box is built, because a box cannot be converted until the
+    set has decided where its indices start counting — see `_first_index`.
     """
     images = sorted((root / layout.images).glob(f"*{layout.image_suffix}"))
     if not images:
@@ -147,7 +176,10 @@ def catalogue(root: Path, layout: Layout = LS_SSDD) -> list[TileRef]:
         )
 
     annotations = root / layout.annotations
-    return [_ref_from(annotations / f"{image.stem}.xml", image) for image in images]
+    annotated = [_annotation_at(annotations / f"{image.stem}.xml", image) for image in images]
+    first_index = _first_index(annotated, layout.first_index)
+
+    return [_ref_from(tile, first_index) for tile in annotated]
 
 
 def split_by_scene(
@@ -197,12 +229,16 @@ class Subset:
         kept = with_ship + random.Random(self.seed).sample(empty, keep)
         return sorted(kept, key=lambda ref: ref.name)
 
-    def line(self, refs: Sequence[TileRef]) -> str:
-        """What the subset kept and what it left, for the run to say out loud."""
-        kept = self.of(refs)
+    def line(self, kept: Sequence[TileRef], out_of: int) -> str:
+        """What the subset kept and what it left, for the run to say out loud.
+
+        Takes the selection rather than making a second one. Drawing it again here would walk
+        six thousand tiles to describe a list the caller is already holding, and would describe
+        a different list the day the selection stops being a pure function of the seed.
+        """
         ships = sum(len(ref.boxes) for ref in kept)
         return (
-            f"{len(kept)} of {len(refs)} tiles: {len([r for r in kept if r.boxes])} carrying "
+            f"{len(kept)} of {out_of} tiles: {len([r for r in kept if r.boxes])} carrying "
             f"{ships} ships, {len([r for r in kept if not r.boxes])} empty at "
             f"{self.empty_per_ship_tile:g} per ship tile"
         )
@@ -292,50 +328,132 @@ def _quarter_turned(
     )
 
 
-def _ref_from(annotation: Path, image_path: Path) -> TileRef:
-    if not annotation.exists():
+@dataclass(frozen=True)
+class _Annotated:
+    """One annotation file, read but not yet interpreted.
+
+    Held in this half-read state because a box cannot be converted until the whole set has been
+    seen: what its numbers mean depends on where the annotations start counting, and that is a
+    property of the dataset rather than of any one file in it.
+    """
+
+    name: str
+    image_path: Path
+    height: int
+    width: int
+    corners: tuple[dict[str, int], ...]
+
+
+def _annotation_at(path: Path, image_path: Path) -> _Annotated:
+    if not path.exists():
         raise FileNotFoundError(
-            f"{image_path.stem} has an image but no annotation at {annotation}; an incomplete "
+            f"{image_path.stem} has an image but no annotation at {path}; an incomplete "
             "download reads as a sea with no ships in it, and trains exactly that"
         )
 
-    root = ElementTree.parse(annotation).getroot()
+    root = ElementTree.parse(path).getroot()
     size = root.find("size")
     if size is None:
-        raise ValueError(f"{annotation} declares no image size, so its boxes cannot be checked")
-    shape = (int(size.findtext("height", "0")), int(size.findtext("width", "0")))
+        raise ValueError(f"{path} declares no image size, so its boxes cannot be checked")
 
-    return TileRef(
-        name=annotation.stem,
-        scene=_scene_of(annotation.stem),
+    return _Annotated(
+        name=path.stem,
         image_path=image_path,
-        boxes=tuple(_box_from(bndbox, shape, annotation) for bndbox in root.iter("bndbox")),
+        height=int(size.findtext("height", "0")),
+        width=int(size.findtext("width", "0")),
+        corners=tuple(_corners_of(bndbox, path) for bndbox in root.iter("bndbox")),
     )
 
 
-def _box_from(bndbox: ElementTree.Element, shape: tuple[int, int], annotation: Path) -> Box:
-    """Read one VOC box, from inclusive pixel indices into half-open pixel edges.
+def _corners_of(bndbox: ElementTree.Element, path: Path) -> dict[str, int]:
+    corners = {}
+    for edge in ("xmin", "ymin", "xmax", "ymax"):
+        written = bndbox.findtext(edge)
+        if written is None:
+            raise ValueError(f"{path}: a box has no {edge}, so it describes no region at all")
+        corners[edge] = int(float(written))
 
-    The file does not say whether its indices count from zero or from one, and on a ship four
-    pixels across the difference is a quarter of the target. Zero is assumed, and the assumption
-    is checked rather than trusted: under it no index can reach the size of the image, so one
-    that does means the file counts from one and every box in the set is off by a pixel.
+    return corners
+
+
+def _first_index(annotated: Sequence[_Annotated], declared: int | None) -> int:
+    """Whether the annotations count their pixels from zero or from one.
+
+    Measured from the boxes rather than assumed, because the file does not say and the two
+    readings differ by a pixel — which on a ship four pixels across is a quarter of the target,
+    applied to every ship in the set, in the same direction, invisibly. PASCAL VOC as originally
+    published counts from one; sets written with later tools frequently do not, and LS-SSDD says
+    nothing either way.
+
+    The evidence is decisive when it exists. An index of 0 cannot occur in a file counting from
+    one, and an index equal to the width cannot occur in a file counting from zero — so a single
+    box touching either edge settles it, and over thousands of tiles cut from a scene there are
+    always many. Where a subset is too small to contain one, this refuses rather than guesses,
+    and names the setting that answers it.
     """
-    corners = {edge: int(bndbox.findtext(edge, "-1")) for edge in ("xmin", "ymin", "xmax", "ymax")}
-    height, width = shape
+    lower = any(
+        corner[edge] == 0 for tile in annotated for corner in tile.corners for edge in corner
+    )
+    upper = any(
+        corner[edge] == extent
+        for tile in annotated
+        for corner in tile.corners
+        for edge, extent in (
+            ("xmin", tile.width),
+            ("xmax", tile.width),
+            ("ymin", tile.height),
+            ("ymax", tile.height),
+        )
+    )
 
-    for edge, limit in (("xmin", width), ("xmax", width), ("ymin", height), ("ymax", height)):
-        if not 0 <= corners[edge] < limit:
-            raise ValueError(
-                f"{annotation}: {edge} is {corners[edge]}, outside a {width} x {height} image; "
-                "the annotations count their pixels from one, not from zero"
+    if lower and upper:
+        raise ValueError(
+            "the annotations hold both an index of 0 and one equal to the image size, which no "
+            "single convention allows; they are not all in the same frame"
+        )
+    if declared is not None:
+        return declared
+    if lower:
+        return 0
+    if upper:
+        return 1
+
+    raise ValueError(
+        "cannot tell whether these annotations count their pixels from zero or from one: no box "
+        "touches either edge of its tile. Over the whole dataset one always does, so this is a "
+        "subset — set `data.first_index` in the config to say which, and see docs/decisions.md"
+    )
+
+
+def _ref_from(annotated: _Annotated, first_index: int) -> TileRef:
+    """Turn one read annotation into a tile, converting inclusive indices to half-open edges."""
+    for corner in annotated.corners:
+        for edge, extent in (
+            ("xmin", annotated.width),
+            ("xmax", annotated.width),
+            ("ymin", annotated.height),
+            ("ymax", annotated.height),
+        ):
+            if not first_index <= corner[edge] < extent + first_index:
+                raise ValueError(
+                    f"{annotated.name}: {edge} is {corner[edge]}, outside a "
+                    f"{annotated.width} x {annotated.height} image whose annotations count from "
+                    f"{first_index}"
+                )
+
+    return TileRef(
+        name=annotated.name,
+        scene=_scene_of(annotated.name),
+        image_path=annotated.image_path,
+        boxes=tuple(
+            Box(
+                min_row=float(corner["ymin"] - first_index),
+                min_col=float(corner["xmin"] - first_index),
+                max_row=float(corner["ymax"] - first_index + 1),
+                max_col=float(corner["xmax"] - first_index + 1),
             )
-
-    return Box(
-        min_row=float(corners["ymin"]),
-        min_col=float(corners["xmin"]),
-        max_row=float(corners["ymax"] + 1),
-        max_col=float(corners["xmax"] + 1),
+            for corner in annotated.corners
+        ),
     )
 
 

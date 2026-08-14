@@ -6,7 +6,10 @@ last checkpoint, never assume the session survives to the end of the schedule.
 The order inside an epoch is part of that and is not the obvious one. The weights are written
 *before* the held-out split is scored, so a session that dies during evaluation costs the
 numbers and not the epoch — a checkpoint is the expensive thing to lose and the metrics can be
-recomputed from it, never the other way round.
+recomputed from it, never the other way round. That is only true if something actually recomputes
+them, so the first thing a session does is score any epoch whose weights landed and whose score
+did not. Without it the last epoch of a finished schedule can end up on the disk with no numbers
+against it and nothing left that would ever produce them.
 
 What is deliberately absent is mixed precision. It is the obvious way to buy epochs on a T4, and
 it adds a scaler whose state has to be saved and restored correctly on a machine that cannot run
@@ -24,7 +27,7 @@ from tqdm import tqdm
 from darkvessel.detect.checkpoints import Checkpoints, Journal
 from darkvessel.detect.dataset import Box, TileRef, symmetry_for
 from darkvessel.detect.detector import PixelDetection
-from darkvessel.detect.metrics import NOTHING, Attempt, measure, tolerance_px
+from darkvessel.detect.metrics import NOTHING, Attempt, Reporting, measure
 from darkvessel.detect.model import SHIP, as_model_input
 
 
@@ -39,21 +42,6 @@ class Schedule:
     weight_decay: float
     workers: int
     seed: int
-
-
-@dataclass(frozen=True)
-class Reporting:
-    """How the held-out split is scored, in the units the chain downstream works in.
-
-    `tolerance_m` and `resolution_m` are metres and metres per pixel because the fusion that
-    consumes these detections matches in metres. `thresholds` is a list rather than one number
-    because a detector does not have a precision, it has a precision at a confidence — and which
-    confidence to run at is a decision about an inspection budget, made later and by someone else.
-    """
-
-    tolerance_m: float
-    resolution_m: float
-    thresholds: tuple[float, ...]
 
 
 def train(
@@ -92,6 +80,21 @@ def train(
         optimiser.load_state_dict(state["optimiser"])
         say(f"resuming after epoch {epoch}, from {path.name}")
 
+        # The epoch whose weights survived the session that wrote them but whose score did not.
+        # Scored now, from the checkpoint just loaded, because nothing else ever would: past the
+        # end of the schedule the loop below does not run at all.
+        if epoch not in {entry["epoch"] for entry in journal.entries()}:
+            say(f"epoch {epoch} was never scored; scoring it from its checkpoint")
+            _report(
+                epoch,
+                loss=None,
+                attempt=_score(model, held_out, schedule, reporting, device),
+                held_out=held_out,
+                reporting=reporting,
+                journal=journal,
+                say=say,
+            )
+
     first = checkpoints.next_epoch()
     if first > schedule.epochs:
         say(f"the schedule of {schedule.epochs} epochs is already finished; nothing to do")
@@ -116,31 +119,56 @@ def train(
                 },
                 path,
             )
+        say(f"epoch {epoch}: loss {loss:.4f}, checkpoint {checkpoints.directory.name}/{path.name}")
 
-        attempt = _score(model, held_out, schedule, reporting, device)
-        journal.record(
-            {
-                "epoch": epoch,
-                "training_loss": loss,
-                "held_out_tiles": len(held_out),
-                "held_out_ships": attempt.ships,
-                "at": [
-                    {
-                        "score": threshold,
-                        "precision": counts.precision,
-                        "recall": counts.recall,
-                        "found": counts.true_positives,
-                        "false": counts.false_positives,
-                        "missed": counts.false_negatives,
-                    }
-                    for threshold, counts in attempt.sweep(reporting.thresholds)
-                ],
-            }
+        _report(
+            epoch,
+            loss=loss,
+            attempt=_score(model, held_out, schedule, reporting, device),
+            held_out=held_out,
+            reporting=reporting,
+            journal=journal,
+            say=say,
         )
 
-        say(f"epoch {epoch}: loss {loss:.4f}, checkpoint {checkpoints.directory.name}/{path.name}")
-        for threshold, counts in attempt.sweep(reporting.thresholds):
-            say(f"  {counts.line(threshold)}")
+
+def _report(
+    epoch: int,
+    *,
+    loss: float | None,
+    attempt: Attempt,
+    held_out: Sequence[TileRef],
+    reporting: Reporting,
+    journal: Journal,
+    say: Callable[[str], None],
+) -> None:
+    """Write down what this epoch was worth, and say it.
+
+    `loss` is None for an epoch scored from a checkpoint rather than at the end of its own pass:
+    the number was lost with the session that computed it, and a zero there would be a training
+    loss nobody measured.
+    """
+    journal.record(
+        {
+            "epoch": epoch,
+            "training_loss": loss,
+            "held_out_tiles": len(held_out),
+            "held_out_ships": attempt.ships,
+            "at": [
+                {
+                    "score": threshold,
+                    "precision": counts.precision,
+                    "recall": counts.recall,
+                    "found": counts.true_positives,
+                    "false": counts.false_positives,
+                    "missed": counts.false_negatives,
+                }
+                for threshold, counts in attempt.sweep(reporting.thresholds)
+            ],
+        }
+    )
+    for threshold, counts in attempt.sweep(reporting.thresholds):
+        say(f"  {counts.line(threshold)}")
 
 
 def _one_epoch(
@@ -201,7 +229,7 @@ def _score(
         num_workers=schedule.workers,
         collate_fn=_as_batch,
     )
-    tolerance = tolerance_px(reporting.tolerance_m, reporting.resolution_m)
+    tolerance = reporting.tolerance()
 
     model.eval()
     attempt = NOTHING
@@ -235,10 +263,9 @@ class _Tiles(Dataset):
         if self.epoch is not None:
             tile = symmetry_for(tile.name, self.epoch, self.seed)(tile)
 
-        boxes = torch.tensor(
-            [[box.min_col, box.min_row, box.max_col, box.max_row] for box in tile.boxes],
-            dtype=torch.float32,
-        ).reshape(-1, 4)
+        boxes = torch.tensor([box.to_xyxy() for box in tile.boxes], dtype=torch.float32).reshape(
+            -1, 4
+        )
 
         return as_model_input(tile.image), {
             "boxes": boxes,
@@ -255,22 +282,18 @@ def _as_batch(batch: list[tuple]) -> tuple[tuple, tuple]:
 def _detections_from(output: dict[str, torch.Tensor]) -> list[PixelDetection]:
     """A model's boxes, as the points the rest of the chain deals in.
 
-    Through `Box.centre` rather than by averaging the corners here, so that the half-pixel
-    between an edge coordinate and a pixel index is applied in the one place that owns it.
+    Through `Box.from_xyxy` and `Box.centre` rather than by unpacking the corners here, so that
+    the axis swap and the half-pixel between an edge coordinate and a pixel index are each
+    applied in the one place that owns them.
     """
     return [
         PixelDetection(row=row, col=col, score=float(score))
         for box, score in zip(
             output["boxes"].cpu().tolist(), output["scores"].cpu().tolist(), strict=True
         )
-        for row, col in [
-            Box(min_row=box[1], min_col=box[0], max_row=box[3], max_col=box[2]).centre()
-        ]
+        for row, col in [Box.from_xyxy(box).centre()]
     ]
 
 
 def _ships_in(target: dict[str, torch.Tensor]) -> list[Box]:
-    return [
-        Box(min_row=box[1], min_col=box[0], max_row=box[3], max_col=box[2])
-        for box in target["boxes"].tolist()
-    ]
+    return [Box.from_xyxy(box) for box in target["boxes"].tolist()]

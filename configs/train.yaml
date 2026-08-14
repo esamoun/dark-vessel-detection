@@ -26,6 +26,12 @@ data:
   images: JPEGImages
   annotations: Annotations
   image_suffix: .jpg
+  # Whether the annotations count their pixels from zero or from one. Left empty it is measured
+  # from the boxes themselves, which the full dataset always settles: a 0 cannot occur in a file
+  # counting from one, and an index equal to the width cannot occur in one counting from zero.
+  # Set it only for a subset too small to contain either. Guessing it wrong shifts every ship by
+  # a pixel, in the same direction, invisibly.
+  first_index:
   # The sub-images as the dataset cuts them. The model is trained and run at this one scale and
   # resamples nothing — the chain tiles at 512, and reconciling the two is the next ticket's
   # problem, stated here rather than discovered there.
@@ -45,10 +51,13 @@ model:
   # Kaggle needs its internet switch on to fetch them; set this false in a session without one.
   pretrained: true
   trainable_backbone_layers: 3
-  # One per level of the feature pyramid, in pixels: at 10 m, hulls of 40, 80, 160, 320 and
-  # 640 m. A stock detector starts at 32 px, which is a 320 m ship — larger than almost
-  # everything in the training set, so the proposals would be looking for what is not there.
-  anchor_sizes: [[4], [8], [16], [32], [64]]
+  # One per level of the feature pyramid, in pixels. These are torchvision's own, and they are
+  # the wrong range on purpose: the smallest is 32 px, which at 10 m is a 320 m ship — larger
+  # than almost everything in the training set, so the proposals are looking for what is not
+  # there. This run is the baseline the small-target work is measured against, and moving them
+  # to [[4], [8], [16], [32], [64]] — 40 m upwards — is that work's first experiment, not this
+  # one's. See docs/decisions.md.
+  anchor_sizes: [[32], [64], [128], [256], [512]]
 
 schedule:
   # What a handful of free-tier evenings affords, not what the literature runs. Every epoch is

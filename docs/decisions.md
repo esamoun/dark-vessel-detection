@@ -790,3 +790,56 @@ later. The reader names the dtype it was given and says why it will not take it.
 **What has to happen.** A documented mapping from calibrated dB to the range the model was fitted
 on, chosen deliberately and tested on a scene where the answer is known by eye. That is the swap
 ticket's work, and it is written down here so that it is a task rather than a discovery.
+
+---
+
+## 2026-08-14 — The first training run keeps the stock anchors, and that is the baseline
+
+**Decision.** The shipped training config uses torchvision's own anchor sizes — 32 px upwards —
+even though they are the wrong range for this data. Adapting them is the next detector ticket's
+work, and `anchor_sizes` is a config key so that the adaptation is one line and a second run.
+
+**Why not just fix them now.** They are wrong in a way that is easy to state: the smallest anchor
+is 32 px, which at 10 m is a vessel 320 m long, longer than nearly everything in the training set.
+The temptation is therefore to ship the fix with the first run. But the ticket that owns the
+adaptation asks for each change to be *measured against the configuration before it, on the same
+held-out split* — and shipping the fix unmeasured deletes the configuration before it. There would
+be nothing left to compare against except a number nobody has.
+
+**What it costs.** The first run's recall will be poor, possibly very poor, and the evening it
+takes will buy a baseline rather than a detector. That is the arbitration rule this project
+already wrote down: cut model performance, never chain completeness. A baseline that makes the
+next change measurable is worth more than a better first number that makes it unmeasurable.
+
+**The same argument does not apply to the channel count.** Repeating single-polarisation
+amplitude across three channels is not an adaptation, it is the minimum required for a
+three-channel backbone to accept the data at all. What the ticket means by an input stage adapted
+to radar polarisation — a dual-polarisation stem trained as one — is still to come, and is not
+what is here.
+
+---
+
+## 2026-08-14 — Where the annotations start counting is measured, not assumed
+
+**Decision.** Whether the VOC boxes count their pixels from zero or from one is determined from
+the boxes themselves at load time. `data.first_index` in the config overrides it and exists only
+for a subset too small to settle the question.
+
+**Why it matters more than it looks.** The two readings differ by one pixel. On a ship four
+pixels across that is a quarter of the target, applied to every ship in the set, in the same
+direction, and it is invisible: the boxes still land on ships, the loss still falls, and the
+detector simply learns the wrong size of the only thing it is looking for.
+
+**Why measured rather than assumed.** PASCAL VOC as originally published counts from one; sets
+written with later tools frequently count from zero; LS-SSDD says neither. The first version of
+this code assumed zero and checked the assumption by refusing any index that reached the image
+size. That is a real check, but it fails in the wrong direction — on a 1-based set it stops the
+run dead with no way past, and on a subset where no box happens to touch an edge it passes while
+being wrong.
+
+**What the evidence is.** An index of 0 cannot occur in a set counting from one, and an index
+equal to the width cannot occur in a set counting from zero. Either one settles it, and over
+9000 tiles cut from whole scenes there are always many. Both present at once means the
+annotations are not all in one frame, which is refused. Neither present means the question cannot
+be answered from the data, which is also refused — naming the setting that answers it, rather
+than defaulting to the reading that happens to be more common.

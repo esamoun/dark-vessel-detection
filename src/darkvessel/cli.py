@@ -28,6 +28,7 @@ from darkvessel.detect.checkpoints import Checkpoints, Journal
 from darkvessel.detect.dataset import Layout, Subset, catalogue, split_by_scene
 from darkvessel.detect.detector import Detector
 from darkvessel.detect.geo import write_detections
+from darkvessel.detect.metrics import Reporting
 from darkvessel.detect.threshold import BrightPixelDetector
 from darkvessel.fusion.interpolate import INTERPOLATED, REPORTED
 from darkvessel.fusion.match import DARK, MATCHED
@@ -303,6 +304,8 @@ def training_request_from(config: dict[str, Any], relative_to: Path) -> dict[str
             images=data["images"],
             annotations=data["annotations"],
             image_suffix=data["image_suffix"],
+            # Empty means "measure it from the boxes", which is what a full dataset allows.
+            first_index=None if data["first_index"] is None else int(data["first_index"]),
         ),
         "tile_px": int(data["tile_px"]),
         "subset": Subset(
@@ -322,11 +325,11 @@ def training_request_from(config: dict[str, Any], relative_to: Path) -> dict[str
             "workers": int(config["schedule"]["workers"]),
             "seed": seed,
         },
-        "reporting": {
-            "tolerance_m": float(config["reporting"]["tolerance_m"]),
-            "resolution_m": float(data["resolution_m"]),
-            "thresholds": tuple(float(score) for score in config["reporting"]["thresholds"]),
-        },
+        "reporting": Reporting(
+            tolerance_m=float(config["reporting"]["tolerance_m"]),
+            resolution_m=float(data["resolution_m"]),
+            thresholds=tuple(float(score) for score in config["reporting"]["thresholds"]),
+        ),
         "checkpoints": Checkpoints(
             (relative_to / out["checkpoints"]).resolve(), keep=int(out["keep"])
         ),
@@ -346,7 +349,7 @@ def _train(config_path: Path) -> int:
     import torch
 
     from darkvessel.detect.model import detector_model
-    from darkvessel.detect.train import Reporting, Schedule, train
+    from darkvessel.detect.train import Schedule, train
 
     config = yaml.safe_load(config_path.read_text())
     request = training_request_from(config, config_path.parent)
@@ -356,7 +359,7 @@ def _train(config_path: Path) -> int:
     kept = request["subset"].of(training)
 
     print(f"{len(refs)} labelled tiles under {request['root']}")
-    print(f"  training: {request['subset'].line(training)}")
+    print(f"  training: {request['subset'].line(kept, out_of=len(training))}")
     print(
         f"  held out, scored entire: {len(held_out)} tiles carrying "
         f"{sum(len(ref.boxes) for ref in held_out)} ships"
@@ -370,7 +373,7 @@ def _train(config_path: Path) -> int:
         checkpoints=request["checkpoints"],
         journal=request["journal"],
         schedule=Schedule(**request["schedule"]),
-        reporting=Reporting(**request["reporting"]),
+        reporting=request["reporting"],
         device=device,
     )
     print(f"metrics in {request['journal'].path}")

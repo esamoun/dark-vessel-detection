@@ -4,24 +4,23 @@ Two adaptations drive the design: vessels are a few pixels wide at 10 m resoluti
 high-resolution levels of the feature pyramid carry the signal; and pretrained backbones expect
 three colour channels where the input is single- or dual-polarisation radar amplitude.
 
-Both are adaptations of a stock Faster R-CNN rather than a design from nothing, and that is the
-point. What is specific to this project is the chain around the detector and the honesty of the
-numbers coming out of it; the architecture is the part where the literature is already right,
-and a hand-rolled one would be worse and would take the evenings that the rest of the chain
-needs. What had to be changed is small, and each change is a number that can be checked.
+Neither is made here. This is a stock Faster R-CNN with a two-class head, and the adaptations
+belong to the ticket that measures them — each against the configuration before it, on the same
+held-out split. Shipping them now with no measurement behind them would delete the baseline that
+comparison needs.
 
-The anchors are the first. A stock detector's smallest anchor is 32 px, which at 10 m is a
-vessel 320 m long — longer than all but the largest container ships, and therefore larger than
-every ship in the training set. Left alone, the region proposal network is looking for objects
-none of which are present. The sizes below start at 4 px, a 40 m coastal fishing boat, and
-double up the pyramid.
+So the anchors below are torchvision's own, and they are almost certainly wrong for this data:
+the smallest is 32 px, which at 10 m is a vessel 320 m long, longer than all but the largest
+container ships and therefore larger than nearly every ship in the training set. That is a
+prediction about the first run's recall rather than a defect to fix here, and `anchor_sizes` is
+a config key so that changing it is one line and a second run.
 
-The second is the channel count. ImageNet backbones take three channels and Sentinel-1 VV is
-one, so the amplitude is repeated across all three. That keeps the pretrained first-layer
-filters meaningful — they are being shown a grey image, which is a thing they have seen — where
-averaging them into a single-channel convolution throws away most of what was learnt. It costs
-two-thirds of the first layer's arithmetic on data that carries no extra information, and that
-is the cheapest part of the network.
+What *is* done here is the channel count, because without it nothing runs at all: ImageNet
+backbones take three channels and Sentinel-1 VV is one, so the amplitude is repeated across all
+three. Repetition is the null adaptation — it keeps the pretrained first-layer filters
+meaningful, since a grey image is a thing they have seen — and it is not what the ticket means
+by an input stage adapted to radar polarisation, which is a dual-polarisation stem trained as
+one. That is still to come.
 
 This module is the only one in `detect/` that imports torch, along with `train.py`. Everything
 that can be got wrong quietly — the split, the subset, the augmentations, the counting, the
@@ -36,12 +35,13 @@ from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.rpn import AnchorGenerator
 
 # torchvision reserves 0 for the background, so there are two classes: not-a-ship, and a ship.
-BACKGROUND, SHIP = 0, 1
+SHIP = 1
 CLASSES = 2
 
-# One tuple per level of the feature pyramid, in pixels. At 10 m these are hulls of 40, 80, 160,
-# 320 and 640 m — the range from a coastal fishing boat to the largest thing that floats.
-ANCHOR_SIZES = ((4,), (8,), (16,), (32,), (64,))
+# One tuple per level of the feature pyramid, in pixels — torchvision's own, kept as the baseline
+# the small-target work is measured against. At 10 m they are hulls of 320 m and upwards, which
+# is the wrong range for this data and is meant to be.
+ANCHOR_SIZES = ((32,), (64,), (128,), (256,), (512,))
 
 # A ship is longer than it is wide and it can lie in any direction, so the ratios are the stock
 # ones. Nothing about radar argues for changing them.
