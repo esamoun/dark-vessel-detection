@@ -19,9 +19,6 @@ tiling:
   size_px: 144
   overlap_px: 32
 
-detector:
-  checkpoint_every_epoch: true   # free-tier sessions are interrupted, not finished
-
 fusion:
   match_tolerance_m: 200        # provisional; see docs/decisions.md
   # The widest bracket of AIS reports a position may be interpolated across. Wider than this and

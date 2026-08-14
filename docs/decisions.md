@@ -661,3 +661,132 @@ back, the area that was refused, and the same area in one polarisation that came
 have held. It would also have left two wrong models in the code with a constant on top hiding
 both, and the next area that failed would have failed for a third reason nobody could separate
 from the first two. The margin came out once the arithmetic explained the measurement.
+
+---
+
+## 2026-08-14 — The detector trains on LS-SSDD-v1.0
+
+**Decision.** Labels come from LS-SSDD-v1.0: 15 large Sentinel-1 IW acquisitions, VV, cut by the
+dataset's authors into 9000 sub-images of 800 x 800, with ships labelled by SAR experts against
+AIS and Google Earth.
+
+**Why.** Its physics is this chain's physics. Same satellite, same 10 m pixel spacing, same
+problem of a hull three or four pixels across against an enormous empty sea — and the same
+labelling method as the thing being built here, AIS read against imagery. A detector trained on
+it is learning what a ship looks like on the product this pipeline actually exports.
+
+**Rejected.** HRSID, 5604 sub-images at 0.5–3 m: a 100 m ship there is a hundred pixels with a
+visible superstructure, and the features that separate it from the sea are not the features
+available at 10 m. SSDD, the classic small set, mixes Sentinel-1, RadarSat-2 and TerraSAR-X at
+resolutions from 1 to 15 m, so a model fitted to it is fitted to an average of sensors that this
+project only ever sees one of. xView3-SAR is the closest match of all — Sentinel-1 with
+AIS-derived labels, and the public challenge this problem is known by — and it is terabytes.
+Scoping a subset of it is a piece of work in its own right; it stays in reserve for the level
+where the detector is the bottleneck rather than the chain.
+
+**What it costs.** LS-SSDD ships VH only as the 15 large scenes, not as sub-images, so training
+is VV alone. That happens to match what the chain exports — the Kattegat box comes back VV-only
+against Earth Engine's 48 MiB ceiling — so nothing is lost today. It is also the reason both will
+have to move together on the day cross-polarised backscatter is wanted.
+
+---
+
+## 2026-08-14 — The held-out split is drawn by scene, and only the training side is ever cut down
+
+**Decision.** LS-SSDD's own split: sub-images cut from scenes 01–10 train, 11–15 are held out.
+The training side keeps every tile carrying a ship plus one empty tile per ship-bearing tile; the
+held-out side is scored entire, pure backgrounds and all.
+
+**Why by scene.** Two 800 px cuts of one acquisition are not two independent samples. They share
+a sea state, an incidence angle, a calibration and a speckle distribution, and a ship on the seam
+between them is in both. A split drawn over sub-images would measure how well the model
+recognises scenes it has already seen — a number that goes up and means nothing. Using the
+dataset's own split rather than a fresh one also keeps the results comparable to published
+baselines instead of only to themselves.
+
+**Why the training side is cut down.** LS-SSDD is mostly open water by design, and on a free tier
+the binding constraint is GPU hours. Dropping most of the empty tiles buys epochs. It is bounded
+rather than total because a detector never shown open water will find ships in it, and the ratio
+is written in the config so a run states how much sea it trained against.
+
+**Why the held-out side is not.** The empty tiles are exactly where a false positive happens.
+Scoring only over tiles known to contain a ship would report a precision the detector has not
+earned, and it would be the easiest number in this project to publish by accident.
+
+---
+
+## 2026-08-14 — A detection is scored against the tolerance the fusion will apply to it
+
+**Decision.** A detection counts as finding a ship when it lands within 200 m of that ship's
+labelled centre — the fusion's own match tolerance, read into pixels through the resolution.
+Not by intersection-over-union between boxes. Detections are matched in order of confidence and
+claim a ship exclusively, and precision and recall are reported at a table of score thresholds
+rather than at one.
+
+**Why not overlap.** A 60 m vessel is six pixels at 10 m. A box two pixels out — a fifth of a
+hull — already fails at half overlap, so an IoU score at this resolution mostly measures box
+regression, and no part of this chain uses the box. What it uses is the point: a detection
+becomes a ground coordinate and is compared against a declared position within a tolerance in
+metres. Scoring the detector by the rule that will later be applied to it measures the thing that
+matters downstream rather than a proxy for it.
+
+**What it costs, stated rather than hidden.** 200 m is 20 pixels, which is generous against
+labels that are pixel-accurate: a detection can be four hull-lengths off and still count. That is
+the right rule for *this* chain and the wrong rule for comparing against a detection benchmark,
+and the tolerance is in the config in metres so that anyone reading a precision can see how far a
+hit was allowed to be.
+
+**Why a table of thresholds.** A detector does not have a precision. It has a precision at a
+confidence, and choosing the confidence is a decision about how much an inspection costs — made
+later, by someone else, against a budget this repository knows nothing about.
+
+---
+
+## 2026-08-14 — What survives a session that is killed
+
+**Decision.** A checkpoint is written under a temporary name and moved into place in one step.
+The weights are written before the held-out split is scored, not after. The last two epochs are
+kept and the rest deleted. Metrics go to a plain JSON file beside the weights. Mixed precision is
+not used.
+
+**Why the temporary name.** Free-tier sessions end when the provider says so, and a third of a
+gigabyte of weights takes a while to reach the disk. A kernel stopped in the middle of that leaves
+a truncated file under exactly the name the next session resumes from — so the run continues from
+a state that was never valid, and nothing anywhere says so. `os.replace` makes a checkpoint either
+whole or absent.
+
+**Why weights before metrics.** An interrupted evaluation costs numbers that can be recomputed
+from the checkpoint. An interrupted checkpoint costs an epoch that cannot.
+
+**Why only two.** Kaggle gives 20 GB of working space against checkpoints of a third of a
+gigabyte. Resuming needs the last one; the spare is cheap insurance. Choosing the *best* epoch
+rather than the last is a different job, done later against the metrics file.
+
+**Why metrics in JSON rather than inside the checkpoint.** The precision and recall are the
+output of this level. Reading them should not require torch, a GPU or an unpickle.
+
+**Why no mixed precision.** It is the obvious way to buy epochs on a T4, and it adds a loss scaler
+whose state has to be saved and restored correctly — on a development machine that cannot run the
+code path that uses it. An untested resume is a worse trade than a slower epoch. It belongs with
+the rest of the small-target work, where there will be a GPU to test it on.
+
+---
+
+## 2026-08-14 — The detector is trained on 8-bit amplitude and the chain feeds it decibels
+
+**Decision.** Recorded now, resolved at the level that swaps the trained detector into the chain.
+
+**What the gap is.** LS-SSDD ships its sub-images as 8-bit JPEG, so the reader takes them as
+amplitude in 0..1 and refuses anything else. What the chain exports is Sentinel-1 GRD from Earth
+Engine in decibels, where the sea sits near −14 and the shipped run thresholds at 0. These are not
+the same quantity, and the stretch that turned one into the other is not recorded in the dataset
+and cannot be recovered from it.
+
+**Why refuse rather than cast.** Handing a dB scene to a model fitted on 0..1 amplitude does not
+crash and does not warn. It produces detections — plausible ones, in plausible places, with
+scores — and the first sign of trouble would be a precision that made no sense three levels
+later. The reader names the dtype it was given and says why it will not take it.
+
+**What has to happen.** A documented mapping from calibrated dB to the range the model was fitted
+on, chosen deliberately and tested on a scene where the answer is known by eye. That is the swap
+ticket's work, and it is written down here so that it is a task rather than a discovery.
