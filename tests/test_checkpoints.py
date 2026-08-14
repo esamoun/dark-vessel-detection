@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from darkvessel.detect.checkpoints import Checkpoints, Journal
+from darkvessel.detect.checkpoints import Checkpoints, Journal, atomically
 
 
 def test_a_run_that_has_never_started_starts_at_the_first_epoch(tmp_path: Path) -> None:
@@ -97,3 +97,19 @@ def test_the_numbers_a_run_reported_outlive_the_session_that_reported_them(tmp_p
 
 def test_a_journal_from_a_run_that_never_reported_anything_is_empty(tmp_path: Path) -> None:
     assert Journal(tmp_path / "run" / "metrics.json").entries() == []
+
+
+def test_a_journal_is_written_by_the_same_rule_the_weights_are(tmp_path: Path) -> None:
+    """One rule, one implementation. The metrics are small enough that a torn write looks
+    survivable, and it is not: half a JSON array does not parse, so a session killed mid-write
+    would take every number the run had reported so far with it."""
+    journal = Journal(tmp_path / "run" / "metrics.json")
+    journal.record({"epoch": 1, "recall": 0.31})
+
+    with pytest.raises(RuntimeError):
+        with atomically(journal.path) as partial:
+            partial.write_text("[{half of an ent")
+            raise RuntimeError("session ended")
+
+    assert journal.entries() == [{"epoch": 1, "recall": 0.31}]
+    assert [path.name for path in (tmp_path / "run").iterdir()] == ["metrics.json"]

@@ -28,6 +28,25 @@ from darkvessel.detect.detector import PixelDetection
 
 
 @dataclass(frozen=True)
+class Reporting:
+    """How a held-out split is scored, in the units the chain downstream works in.
+
+    Here rather than beside the training loop for two reasons. It is a statement about counting,
+    which is this module's subject; and it imports nothing, so the command that reads it out of
+    a config file can be checked on a laptop with no framework installed — which is the whole
+    point of that command existing separately from the one that trains.
+    """
+
+    tolerance_m: float
+    resolution_m: float
+    thresholds: tuple[float, ...]
+
+    def tolerance(self) -> float:
+        """The same distance the fusion will use, in the pixels the detector works in."""
+        return tolerance_px(self.tolerance_m, self.resolution_m)
+
+
+@dataclass(frozen=True)
 class Counts:
     """The three ways a run ends up, at one operating point."""
 

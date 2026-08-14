@@ -374,6 +374,20 @@ true:
   read into pixels through the resolution — rather than by box overlap. At 10 m a 60 m vessel is
   six pixels, so an IoU score here mostly measures a box no part of this chain uses. It is also
   the generous reading, and it is in the config in the open for that reason.
+- **Where the annotations start counting is measured, not assumed.** VOC boxes are inclusive
+  pixel indices and the file does not say whether they count from zero or from one; the two
+  readings differ by a pixel, which on a four-pixel ship is a quarter of the target, in the same
+  direction for every ship, visible nowhere. An index of 0 cannot occur in a set counting from
+  one and an index equal to the width cannot occur in one counting from zero, so the boxes settle
+  it themselves. Where they cannot — a subset too small to contain either — the load refuses
+  rather than defaulting.
+
+The architecture is a stock Faster R-CNN with a two-class head, and its anchors are torchvision's
+own — which are the wrong range for this data and are meant to be. The smallest is 32 px, a
+320 m vessel at 10 m, longer than nearly everything in the training set. Fixing that belongs to
+the ticket that measures each adaptation against the configuration before it, and shipping the
+fix unmeasured would delete the configuration it has to be measured against. So the first run
+buys a baseline rather than a detector, and `anchor_sizes` is a config key.
 
 The run is built for being interrupted rather than for finishing. Checkpoints are written every
 epoch, under a temporary name and moved into place in one step, so a kernel stopped halfway
