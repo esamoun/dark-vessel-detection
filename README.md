@@ -12,8 +12,12 @@
 > once. The study area is now measured rather than picked, and sits on the Kattegat shipping lane:
 > the latest run has six commercial ships in one frame, four of them trailing a wake. The detector
 > is still the placeholder, and the run surfaced the next real problem — a ship making twelve
-> knots is imaged half a kilometre from where it is. See [Approach](#approach) for what is real and
-> what is not, and [what the first run on the lane showed](#what-the-first-run-on-the-lane-showed--2026-08-14).
+> knots is imaged half a kilometre from where it is. The detector now has a training run that
+> checkpoints and resumes on a free tier, tested by killing it and starting it again; what it does
+> not yet have is a run, so there are no precision or recall numbers here and this section will
+> say so until there are. See [Approach](#approach) for what is real and
+> what is not, [what the first run on the lane showed](#what-the-first-run-on-the-lane-showed--2026-08-14),
+> and [Training the detector](#training-the-detector).
 
 ---
 
@@ -34,7 +38,7 @@ The pipeline is built in four levels, each one shippable on its own.
 
 | Level | What it does | Status |
 | --- | --- | --- |
-| **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | in progress |
+| **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trains and resumes; no run has been made yet, so there are no numbers to report |
 | **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene; awaiting the trained detector |
 | **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | runs on real Danish archives over a measured study area; the tolerance does not yet account for the azimuth shift of a moving ship |
 | **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | planned |
@@ -85,7 +89,7 @@ geospatial data engineering, not deep learning, and is described as such.
 | --- | --- | --- |
 | Sentinel-1 GRD | SAR imagery | Copernicus Data Space / Earth Engine `COPERNICUS/S1_GRD` |
 | Danish Maritime Authority AIS | Declared vessel positions | open daily archives, `aisdata.ais.dk` |
-| Labelled SAR ship datasets | Detector training | public research datasets |
+| LS-SSDD-v1.0 | Detector training | 15 large Sentinel-1 scenes, VV, cut into 9000 labelled sub-images |
 | Earth Engine catalogue | Bathymetry, EEZ, coastline, fishing effort | Google Earth Engine |
 
 Study area: **Danish waters** — dense and varied traffic, excellent Sentinel-1 revisit as a
@@ -107,7 +111,8 @@ src/darkvessel/
   cli.py      the one command; builds the detector and hands it to the pipeline
   data/       study area and the survey that chose it, Sentinel-1 export, Danish AIS archives
               and ingestion, tiling, fixtures
-  detect/     detector contract, dataset, model, training, inference, pixel->geo
+  detect/     detector contract, labelled dataset and augmentations, model, training,
+              checkpoints and resume, precision/recall, inference, pixel->geo
   embed/      contrastive representation learning, clustering
   fusion/     AIS interpolation to acquisition time, spatio-temporal matching
   context/    Earth Engine contextual layers
@@ -329,6 +334,74 @@ export and recorded here rather than asserted in a test that could not fail.
 Both run on every push and pull request, from
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — the same two commands, not a second
 definition of them. Lint runs on Python 3.11; the tests run on 3.11 and 3.13.
+
+## Training the detector
+
+This is the one part of the project that needs a GPU, and it does not run here: the development
+machine is an 8 GB M1 laptop, so training happens on a Kaggle free tier where the labelled data
+is already attached and never touches the local disk. What is in the repository is the run —
+`darkvessel train --config configs/train.yaml`, driven by a config file like every other stage,
+with [`notebooks/kaggle-train.ipynb`](notebooks/kaggle-train.ipynb) as a four-cell wrapper that
+clones, installs and calls it.
+
+**No run has been made yet, so this section reports no precision and no recall.** When one has,
+the numbers come out of the `metrics.json` the run writes and land here, whatever they say.
+
+The labels are **LS-SSDD-v1.0**: 15 large Sentinel-1 IW acquisitions, VV, cut by its authors into
+9000 sub-images of 800 x 800, ships labelled by SAR experts against AIS and Google Earth. It is
+chosen because its physics is this chain's physics — same satellite, same 10 m pixel, the same
+problem of a hull three pixels across against an enormous empty sea. The higher-resolution sets
+were rejected for the opposite reason: at 0.5 m a ship is a hundred pixels with a superstructure,
+and those are not the features available here.
+
+Four decisions in it are worth stating, because each one is a way to report a number that is not
+true:
+
+- **The split is drawn by scene, never by sub-image.** Two 800 px cuts of one acquisition share a
+  sea state, an incidence angle and a speckle distribution, and a ship on the seam is in both.
+  LS-SSDD's own split — scenes 01–10 against 11–15 — is used as published, so the numbers are
+  comparable to the baselines rather than only to themselves.
+- **Only the training side is cut down.** Every tile carrying a ship is kept, plus one empty tile
+  per ship-bearing tile, because free-tier hours are the binding constraint. The held-out split is
+  scored entire: the empty tiles are exactly where a false positive happens, and dropping them
+  would report a precision the detector had not earned.
+- **Augmentations move pixels and never change them.** Flips and quarter turns, the eight
+  symmetries of the square. Amplitude on radar *is* the measurement, so a contrast jitter does not
+  produce a second look at the same ship — it produces a ship made of a different material. The
+  test for this asserts the property rather than the list: the sorted pixel values of a tile come
+  back identical after any augmentation the code is allowed to apply.
+- **A detection is scored against the tolerance the fusion will apply to it** — 200 m, in metres,
+  read into pixels through the resolution — rather than by box overlap. At 10 m a 60 m vessel is
+  six pixels, so an IoU score here mostly measures a box no part of this chain uses. It is also
+  the generous reading, and it is in the config in the open for that reason.
+
+The run is built for being interrupted rather than for finishing. Checkpoints are written every
+epoch, under a temporary name and moved into place in one step, so a kernel stopped halfway
+through writing 300 MB leaves the last good epoch standing instead of a truncated file that the
+next session resumes from. Weights are written *before* the held-out split is scored: an
+interrupted evaluation costs numbers that can be recomputed, an interrupted checkpoint costs an
+epoch that cannot. And a resumed session is the same run, not a similar one — which empty tiles
+the subset kept, which way each tile is laid down and the order they arrive in are all derived
+from one seed and the epoch number rather than from a generator's position in a stream.
+
+That claim is checked rather than asserted. `tests/test_training_run.py` runs the real loop and
+the real model builder on the CPU over eight tiles, kills the session after one epoch, and
+requires a second session with freshly initialised weights to continue at epoch 2. It is skipped
+where torch is not installed, which includes CI — the chain's acceptance condition is that it
+installs and runs without a framework, and the suite is honest about running without one.
+
+Everything that can be got wrong quietly is on the torch-free side of that seam and is tested in
+CI: the split, the subset, the augmentations, the counting, and the resume bookkeeping. Only the
+architecture and the loop itself need the framework.
+
+```bash
+pip install -e ".[detector]"
+darkvessel train --config configs/train.yaml   # locally: proves it starts, then use Kaggle
+```
+
+The reasoning behind each of these, and the gap that is still open — the model is fitted on 8-bit
+amplitude while the chain exports decibels, which is a mapping that has to be chosen deliberately
+before the detector can be swapped in — is in [`docs/decisions.md`](docs/decisions.md).
 
 ## Licence
 

@@ -540,7 +540,9 @@ def test_every_shipped_config_names_the_fusion_settings_a_run_needs(shipped: Pat
     """
     config = yaml.safe_load(shipped.read_text())
     if "run" not in config:
-        assert "survey" in config, f"{shipped.name} describes neither a run nor a survey"
+        assert "survey" in config or "training" in config, (
+            f"{shipped.name} describes neither a run, a survey nor a training"
+        )
         return
 
     settings = fusion_settings_from(config)

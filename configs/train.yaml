@@ -1,0 +1,84 @@
+# Training the detector, on a free-tier cloud GPU. Paths are relative to this file, so the
+# absolute ones below are the Kaggle attachment points and stay absolute wherever the config is
+# read from. Nothing here transits the local disk: the dataset is attached to the session and
+# the checkpoints are written to the session's working directory.
+#
+# Run it with:  darkvessel train --config configs/train.yaml
+# Interrupt it, start the session again, run the same command: it continues where it stopped.
+
+# Named `training` rather than `run`, because a `run:` block in this project means the pipeline
+# run over a scene, and this file describes neither a scene nor a pipeline.
+training:
+  # One number, and the run is named by it. The subset of empty tiles, the orientation each tile
+  # is laid down in, and the order they arrive in are all derived from this — which is what makes
+  # a resumed session the same experiment as the one it resumed, rather than a second one.
+  seed: 20260814
+  # Left empty, the run takes the GPU if there is one. Set it to `cpu` for the smoke run that
+  # proves the loop and the resume work before an evening of GPU hours is spent on them.
+  device:
+
+data:
+  # LS-SSDD-v1.0: 15 large Sentinel-1 IW acquisitions, cut into 9000 sub-images of 800 x 800, VV,
+  # labelled by SAR experts against AIS and Google Earth. Chosen because its physics is the
+  # physics of this chain — same satellite, same 10 m pixel, same ships of three pixels against a
+  # very large empty sea. See docs/decisions.md for what was rejected and why.
+  root: /kaggle/input/ls-ssdd-v10/LS-SSDD-v1.0-OPEN
+  images: JPEGImages
+  annotations: Annotations
+  image_suffix: .jpg
+  # The sub-images as the dataset cuts them. The model is trained and run at this one scale and
+  # resamples nothing — the chain tiles at 512, and reconciling the two is the next ticket's
+  # problem, stated here rather than discovered there.
+  tile_px: 800
+  # Sentinel-1 GRD pixel spacing, and the number that turns a tolerance in metres into pixels.
+  resolution_m: 10
+
+subset:
+  # LS-SSDD is mostly open water by design. Every tile carrying a ship is kept; this is how many
+  # empty ones are kept beside them, per ship-bearing tile. One buys epochs on a free tier
+  # without training a detector that has never been shown the sea it will spend its life looking
+  # at. The held-out split is never subsetted — see docs/decisions.md.
+  empty_per_ship_tile: 1.0
+
+model:
+  # COCO weights. A free tier does not give enough hours to fit a ResNet-50 from scratch, and
+  # Kaggle needs its internet switch on to fetch them; set this false in a session without one.
+  pretrained: true
+  trainable_backbone_layers: 3
+  # One per level of the feature pyramid, in pixels: at 10 m, hulls of 40, 80, 160, 320 and
+  # 640 m. A stock detector starts at 32 px, which is a 320 m ship — larger than almost
+  # everything in the training set, so the proposals would be looking for what is not there.
+  anchor_sizes: [[4], [8], [16], [32], [64]]
+
+schedule:
+  # What a handful of free-tier evenings affords, not what the literature runs. Every epoch is
+  # checkpointed, so a schedule that is not finished is a schedule that is partly finished.
+  epochs: 12
+  # Two 800 px tiles through a ResNet-50 FPN is what fits beside the activations on a 16 GB
+  # accelerator. Raise it if the session gives more.
+  batch_size: 2
+  learning_rate: 0.005
+  momentum: 0.9
+  weight_decay: 0.0005
+  # Kaggle gives four CPU cores; two loaders keep the GPU fed without starving the main process.
+  workers: 2
+
+reporting:
+  # How far a detection may sit from a labelled ship and still be that ship. It is the fusion's
+  # own match tolerance, in metres, because scoring the detector by the rule that will later be
+  # applied to it measures what the chain needs rather than a proxy. It is the generous reading,
+  # and it is written here in the open for that reason. See docs/decisions.md.
+  tolerance_m: 200
+  # A detector has a precision at a confidence, not a precision. The run reports the table and
+  # leaves the choice of operating point to whoever is paying for the inspections.
+  thresholds: [0.05, 0.1, 0.25, 0.5, 0.75, 0.9]
+
+out:
+  checkpoints: /kaggle/working/checkpoints
+  # Enough to resume from, plus one spare. A free tier gives 20 GB of working space against
+  # checkpoints of a third of a gigabyte, and choosing the best epoch is a separate job done
+  # against the metrics below.
+  keep: 2
+  # Written beside the weights and readable without torch, a GPU or an unpickle: these numbers
+  # are the output of this level, and they should not need the framework to be read.
+  metrics: /kaggle/working/metrics.json
