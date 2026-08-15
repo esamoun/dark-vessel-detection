@@ -34,6 +34,9 @@ from torchvision.models.detection import FasterRCNN, fasterrcnn_resnet50_fpn
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.rpn import AnchorGenerator
 
+from darkvessel.detect.dataset import Box
+from darkvessel.detect.detector import PixelDetection
+
 # torchvision reserves 0 for the background, so there are two classes: not-a-ship, and a ship.
 SHIP = 1
 CLASSES = 2
@@ -118,3 +121,25 @@ def as_model_input(image: np.ndarray) -> Tensor:
     filters have seen, and two channels of zeros is not.
     """
     return torch.from_numpy(np.ascontiguousarray(image)).unsqueeze(0).repeat(3, 1, 1)
+
+
+def detections_from(output: dict[str, Tensor]) -> list[PixelDetection]:
+    """A model's boxes, as the points the rest of the chain deals in.
+
+    Through `Box.from_xyxy` and `Box.centre` rather than by unpacking the corners here, so that
+    the axis swap and the half-pixel between an edge coordinate and a pixel index are each
+    applied in the one place that owns them.
+
+    Beside `as_model_input` because it is the other half of the same boundary: one turns a tile
+    into what torchvision takes, the other turns what torchvision returns back into what this
+    project's contract states. It sat in `train.py` while scoring was the only caller; inference
+    is the second, and a second copy of that half-pixel is exactly the defect `Box` exists to
+    prevent.
+    """
+    return [
+        PixelDetection(row=row, col=col, score=float(score))
+        for box, score in zip(
+            output["boxes"].cpu().tolist(), output["scores"].cpu().tolist(), strict=True
+        )
+        for row, col in [Box.from_xyxy(box).centre()]
+    ]
