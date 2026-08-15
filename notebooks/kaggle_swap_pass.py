@@ -42,6 +42,17 @@ import numpy as np
 SCENE_SEA_DB = -21.84
 SCENE_SPREAD_DB = 2.30
 
+# Where the real scene's own distribution sits, so a candidate window can be judged here without
+# the 22 MB product being attached. Measured on data/real/kattegat-lane.tif with the holes
+# excluded, and only ever read — nothing below fits anything to them.
+SCENE_QUANTILES = {"p1": -29.54, "p50": -21.84, "p99": -17.25, "p99.99": 2.13, "max": 27.08}
+
+# What a ship is worth in decibels on that scene. Not chosen: these are the peak values of the
+# only two detections the threshold baseline matched against a declared vessel — a 24 m hull and
+# a 228 m one — read off outputs/kattegat-lane.gpkg. Two vessels is a thin anchor and it is
+# written here as thin rather than dressed up.
+SCENE_SHIP_DB = (8.20, 18.76)
+
 # Every fifth held-out tile — 600 of them, some 380 million sea pixels. Two moments need far
 # less; the whole split is not read because the reading is the slow part and nothing is gained.
 STRIDE = 5
@@ -242,6 +253,7 @@ def sea_histogram(root: Path = DATASET, layout=None) -> np.ndarray:
 
     sampled = held_out[::STRIDE]
     histogram = np.zeros(256, dtype=np.int64)
+    per_tile = []
 
     for ref in sampled:
         tile = ref.read()
@@ -252,10 +264,51 @@ def sea_histogram(root: Path = DATASET, layout=None) -> np.ndarray:
                 max(int(box.min_col) - MARGIN_PX, 0) : int(np.ceil(box.max_col)) + MARGIN_PX,
             ] = False
 
-        histogram += np.bincount(np.rint(tile.image[sea] * 255.0).astype(np.uint8), minlength=256)
+        water = tile.image[sea]
+        if water.size:
+            per_tile.append(_one_tile(water, tile.image[~sea] if tile.boxes else None))
+        histogram += np.bincount(np.rint(water * 255.0).astype(np.uint8), minlength=256)
 
     print(f"{histogram.sum():,} sea pixels over {len(sampled)} of {len(held_out)} held-out tiles")
-    return histogram
+    return histogram, np.array(per_tile)
+
+
+def _one_tile(water: np.ndarray, hulls: np.ndarray | None) -> tuple[float, float, float, float]:
+    """Where this tile's sea sits, how much it varies, how lopsided it is, and how bright its
+    ships are.
+
+    The fourth number is the one the second was supposed to do the job of. Matching the *spread*
+    of the sea sets the width of the window from how grainy the water is, and the two products
+    are not equally grainy: LS-SSDD's sea has a relative spread near 0.8, this chain's Sentinel-1
+    GRD near 0.27 in the same units, which is a difference in how many looks were averaged rather
+    than a difference in how the bytes were made. Fitting a window to that fits it to
+    multi-looking.
+
+    A hull is the other thing a detector sees, it is annotated on this side, and it was measured
+    on the real scene by the threshold baseline. Two anchors, both about brightness, neither
+    about grain.
+
+    p95 rather than the maximum: a maximum is one pixel and JPEG has been over it.
+
+    Measured within the tile and never across tiles, because the number this is matched against —
+    a scene's own spread in decibels — is a within-scene quantity. Five LS-SSDD acquisitions
+    pooled into one heap carry their differences in sea state, incidence angle and calibration
+    inside the spread, and matching that against one scene's speckle fits the window to a
+    difference between acquisitions rather than to the texture of water. It is the same mistake
+    as matching a robust spread against a plain one, wearing a different hat: the first run of
+    this measured 0.157 pooled and refused a window of 14.7 dB because of it.
+
+    The third number is Bowley's skew, from the quartiles. It answers the question the histogram
+    is drawn for: radar amplitude over homogeneous water is Rayleigh-like and leans right, and a
+    logarithmic stretch straightens it out. Near zero says the source was already in decibels;
+    clearly positive says it was linear amplitude, and the mapping has to invert through
+    sigma-nought before the affine.
+    """
+    first, middle, third = np.percentile(water, [25, 50, 75])
+    spread = float(np.median(np.abs(water - middle)) * 1.4826)
+    lean = float((third + first - 2 * middle) / (third - first)) if third > first else 0.0
+    ship = float(np.percentile(hulls, 95)) if hulls is not None and hulls.size else np.nan
+    return float(middle), spread, lean, ship
 
 
 def quantile(histogram: np.ndarray, at: float) -> int:
@@ -323,43 +376,68 @@ def measure(root: Path = DATASET, layout=None) -> tuple[float, float]:
     `layout` is for a mirror `discover` cannot read. Passing one skips the looking entirely.
     """
     print("== the sea the model was fitted on ==")
-    histogram = sea_histogram(root, layout)
-    mean, spread = moments(histogram)
+    histogram, per_tile = sea_histogram(root, layout)
+    middles, spreads, leans, ships = (per_tile[:, index] for index in range(4))
 
-    print(f"  median {mean:.4f}, robust spread {spread:.4f}  (of 1.0)")
+    # Median of the per-tile figures, not the figure of the pooled pixels. See `_one_tile`.
+    sea, spread = float(np.median(middles)), float(np.median(spreads))
+    pooled_sea, pooled_spread = moments(histogram)
+    hull, lean = float(np.nanmedian(ships)), float(np.median(leans))
+
+    print(f"  sea, within a tile: median {sea:.4f}, robust spread {spread:.4f}  (of 1.0)")
+    print(f"  sea, pooled:        median {pooled_sea:.4f}, robust spread {pooled_spread:.4f}")
     print(
-        f"  p1 {quantile(histogram, 0.01)}  p25 {quantile(histogram, 0.25)}  "
-        f"p75 {quantile(histogram, 0.75)}  p99 {quantile(histogram, 0.99)}  (of 255)"
+        f"  tile medians run {middles.min():.4f} to {middles.max():.4f} — the difference between "
+        "acquisitions, which pooling counts as sea texture and a tile-by-tile figure does not"
     )
+    print(
+        f"  ships, p95 inside their boxes: {hull:.4f}, over {int(np.isfinite(ships).sum())} tiles"
+    )
+    shape = "right-skewed, so the source was linear" if lean > 0.10 else "near symmetric"
+    print(f"  lean (Bowley, median over tiles) {lean:+.3f}  ->  {shape}")
 
-    print("\n== the shape: a hump away from zero means decibels, a spike at zero means linear ==")
+    print("\n== the shape, pooled over every sampled tile ==")
     sketch(histogram)
 
-    floor, ceiling = window(mean, spread)
-
-    # A reference measured over something that is not water produces a window too narrow to hold
-    # a scene, and nothing downstream would say so: the chain would run, return detections, and
-    # be wrong. Forty decibels is roughly what separates open sea from a hull on Sentinel-1, so a
-    # window that cannot hold half of that is measuring land, or a subset too small to have a
-    # distribution at all. Refused here rather than discovered three levels later.
-    if ceiling - floor < MINIMUM_SPAN_DB:
-        raise ValueError(
-            f"the reference sea is {mean:.4f} +/- {spread:.4f}, which fits a window of only "
-            f"{ceiling - floor:.1f} dB ({floor:.2f} to {ceiling:.2f}). Sea to ship on Sentinel-1 "
-            f"is nearer forty, so this is not a measurement of water — coast is the usual reason, "
-            "and `offshore` is what excludes it. Do not put this window in a config"
+    print("\n== candidates, and where this scene's own quantiles land under each ==")
+    candidates = {
+        "sea level + sea spread": window(sea, spread),
+        "sea level + ship brightness": by_anchors(sea, hull),
+    }
+    for name, (floor, ceiling) in candidates.items():
+        placed = "  ".join(
+            f"{label} {(db - floor) / (ceiling - floor):+.2f}"
+            for label, db in SCENE_QUANTILES.items()
         )
+        narrow = "   <-- implausible" if ceiling - floor < MINIMUM_SPAN_DB else ""
+        print(f"  {name}")
+        print(f"    {floor:7.2f} .. {ceiling:7.2f} dB   span {ceiling - floor:5.1f} dB{narrow}")
+        print(f"    {placed}")
 
-    print("\n== paste into configs/kattegat-lane.yaml, run.trained.stretch ==")
-    print(f"      floor_db: {floor:.2f}")
-    print(f"      ceiling_db: {ceiling:.2f}")
-    print(f"      sea_db: {SCENE_SEA_DB}")
     print(
-        f"\n(reference sea {mean:.4f} +/- {spread:.4f}, span {ceiling - floor:.1f} dB, "
-        "for docs/decisions.md)"
+        f"\n(sea {sea:.4f} +/- {spread:.4f} within a tile, ship p95 {hull:.4f}, lean {lean:+.3f}, "
+        f"over {len(per_tile)} tiles — send all of it back, the window is chosen from it)"
     )
 
-    return floor, ceiling
+    return candidates
+
+
+def by_anchors(sea: float, hull: float) -> tuple[float, float]:
+    """The window that puts this scene's water at LS-SSDD's water, and its hulls at LS-SSDD's.
+
+    Two points, both of them brightnesses and neither of them a variance — which is the whole
+    reason for it. What a detector separates is a hull from the water around it, so those are the
+    two levels that have to line up, and the width of the window falls out of them instead of
+    being set by whichever product happened to be averaged over more looks.
+
+    The ship end of the real scene is the mean of the two vessels the threshold baseline matched
+    against a declaration. Two hulls on one acquisition is the thinnest part of this argument,
+    and it is written down as thin rather than dressed up.
+    """
+    ship_db = sum(SCENE_SHIP_DB) / len(SCENE_SHIP_DB)
+    span = (ship_db - SCENE_SEA_DB) / (hull - sea)
+    floor = SCENE_SEA_DB - sea * span
+    return floor, floor + span
 
 
 def main(weights: bool = True) -> None:
