@@ -107,7 +107,50 @@ def package(source: Path, out: Path = PACKAGED) -> str:
     return digest
 
 
-def sea_histogram(root: Path = DATASET) -> np.ndarray:
+def discover(root: Path):
+    """Work out how this copy of LS-SSDD is laid out, and say so out loud.
+
+    The published set is `JPEGImages/` beside `Annotations/`, which is what `dataset.LS_SSDD`
+    describes. Mirrors are not: the one this was first run against splits the images into
+    `JPEGImages_sub_train` and `JPEGImages_sub_test` and nests the annotations two deep. A path
+    that does not match returns no tiles, and `catalogue` refuses rather than reporting an empty
+    dataset — but it cannot tell anyone which directory to use instead.
+
+    So this looks, and prints what it found. It guesses nothing in silence: every choice below is
+    on the console beside the alternatives it was chosen over, and a mirror this cannot read is
+    one the caller passes a `Layout` for by hand.
+
+    The test half is preferred where the images are split, because the held-out scenes are the
+    half this project reports its numbers over. Either half would answer the question — what the
+    sea looks like in this dataset — but only one of them is the half the model was scored on.
+    """
+    from darkvessel.detect.dataset import Layout
+
+    candidates = sorted(d for d in root.rglob("*") if d.is_dir() and "JPEGImages" in d.name)
+    if not candidates:
+        raise FileNotFoundError(f"no directory with 'JPEGImages' in its name under {root}")
+
+    images = next((d for d in candidates if "test" in d.name.lower()), candidates[0])
+    labels = next(root.rglob("*.xml"), None)
+    if labels is None:
+        raise FileNotFoundError(f"no .xml annotation anywhere under {root}")
+
+    suffix = next(
+        (f.suffix for f in sorted(images.iterdir()) if f.suffix.lower() != ".xml"), ".jpg"
+    )
+
+    print(f"images      {images.relative_to(root)}   (of {[d.name for d in candidates]})")
+    print(f"annotations {labels.parent.relative_to(root)}")
+    print(f"suffix      {suffix}")
+
+    return Layout(
+        images=str(images.relative_to(root)),
+        annotations=str(labels.parent.relative_to(root)),
+        image_suffix=suffix,
+    )
+
+
+def sea_histogram(root: Path = DATASET, layout=None) -> np.ndarray:
     """The 8-bit values of every sea pixel in the sampled held-out tiles, as 256 exact bins.
 
     Held out rather than training, because the training half is what the model was fitted *on*
@@ -120,7 +163,18 @@ def sea_histogram(root: Path = DATASET) -> np.ndarray:
     """
     from darkvessel.detect.dataset import catalogue, split_by_scene
 
-    _, held_out = split_by_scene(catalogue(root))
+    refs = catalogue(root, layout or discover(root))
+    scenes = sorted({ref.scene for ref in refs})
+    print(f"{len(refs):,} tiles, cut from scenes {scenes}")
+
+    _, held_out = split_by_scene(refs)
+    if not held_out:
+        # A mirror whose test directory holds scenes 1-10, or names them differently. Measuring
+        # the training half instead is a defensible answer to the question being asked; measuring
+        # nothing and reporting a window fitted to an empty histogram is not.
+        print("  none of these scenes are held out; measuring every tile found instead")
+        held_out = refs
+
     sampled = held_out[::STRIDE]
     histogram = np.zeros(256, dtype=np.int64)
 
@@ -194,15 +248,17 @@ def window(mean: float, spread: float) -> tuple[float, float]:
     return floor, floor + span
 
 
-def measure(root: Path = DATASET) -> tuple[float, float]:
+def measure(root: Path = DATASET, layout=None) -> tuple[float, float]:
     """The half of this pass that can only be done here, and the only half that is a measurement.
 
     Returns the window. Separate from `main` because the two halves are independent: the weights
     are a file that can be fetched any number of ways, and once they are on a disk this part is
     still undone. A session that already has the checkpoint runs this alone.
+
+    `layout` is for a mirror `discover` cannot read. Passing one skips the looking entirely.
     """
     print("== the sea the model was fitted on ==")
-    histogram = sea_histogram(root)
+    histogram = sea_histogram(root, layout)
     mean, spread = moments(histogram)
 
     print(f"  median {mean:.4f}, robust spread {spread:.4f}  (of 1.0)")
