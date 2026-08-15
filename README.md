@@ -11,11 +11,12 @@
 > It tiles a scene larger than one tile and reports a target sitting on a tile boundary exactly
 > once. The study area is now measured rather than picked, and sits on the Kattegat shipping lane:
 > the latest run has six commercial ships in one frame, four of them trailing a wake. The detector
-> is still the placeholder, and the run surfaced the next real problem — a ship making twelve
-> knots is imaged half a kilometre from where it is. The detector now has a training run that
-> checkpoints and resumes on a free tier, tested by killing it and starting it again; what it does
-> not yet have is a run, so there are no precision or recall numbers here and this section will
-> say so until there are. See [Approach](#approach) for what is real and
+> is still the placeholder *in the chain*, and the run surfaced the next real problem — a ship
+> making twelve knots is imaged half a kilometre from where it is. The detector itself is now
+> trained: twelve epochs on a free-tier GPU, interrupted after the first and resumed, finding
+> 1680 of 2378 ships on a held-out split of 3000 sub-images with 106 false alarms. It has not
+> been swapped into the chain yet, and the run oscillated rather than converged — both are
+> written down. See [Approach](#approach) for what is real and
 > what is not, [what the first run on the lane showed](#what-the-first-run-on-the-lane-showed--2026-08-14),
 > and [Training the detector](#training-the-detector).
 
@@ -38,7 +39,7 @@ The pipeline is built in four levels, each one shippable on its own.
 
 | Level | What it does | Status |
 | --- | --- | --- |
-| **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trains and resumes; no run has been made yet, so there are no numbers to report |
+| **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained: 0.94 precision at 0.71 recall on a held-out split of 3000 scenes, with the run's own instability documented |
 | **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene; awaiting the trained detector |
 | **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | runs on real Danish archives over a measured study area; the tolerance does not yet account for the azimuth shift of a moving ship |
 | **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | planned |
@@ -344,8 +345,40 @@ is already attached and never touches the local disk. What is in the repository 
 with [`notebooks/kaggle-train.ipynb`](notebooks/kaggle-train.ipynb) as a four-cell wrapper that
 clones, installs and calls it.
 
-**No run has been made yet, so this section reports no precision and no recall.** When one has,
-the numbers come out of the `metrics.json` the run writes and land here, whatever they say.
+### The first run — 2026-08-14
+
+12 epochs on a Kaggle T4, about 13 minutes each. The run was interrupted after the first epoch and
+the next session continued at the second, which is what the whole design is for. Numbers below are
+from the saved `metrics.json` of the final epoch, scored over the **entire** held-out split —
+scenes 11 to 15, 3000 sub-images, 2378 ships, empty tiles included.
+
+| Score threshold | Precision | Recall | Found | False | Missed |
+| --- | --- | --- | --- | --- | --- |
+| 0.25 | 0.578 | 0.867 | 2062 | 1507 | 316 |
+| 0.50 | 0.808 | 0.789 | 1877 | 445 | 501 |
+| **0.75** | **0.941** | **0.706** | 1680 | 106 | 698 |
+| 0.90 | 0.986 | 0.535 | 1272 | 18 | 1106 |
+
+It trained on 2246 of the 6000 sub-images cut from scenes 1 to 10: every one of the 1123 carrying
+a ship, plus 1123 of open water. Those 1123 tiles hold 3637 ships and the held-out split 2378 —
+6015 between them, which is the total LS-SSDD publishes, so nothing was dropped on the way in.
+
+Two things about this run are worth more than the table.
+
+**It did not converge, it oscillated.** The training loss fell from 0.181 to 0.136 and then sat
+there, while precision at a fixed threshold of 0.50 went 0.55, 0.74, 0.75, 0.41, 0.64, 0.84, 0.65,
+0.28, 0.80, 0.63, 0.53, 0.81 across the twelve epochs. Adjacent epochs differ by a factor of
+three. The learning rate is constant with no decay, so the model reaches the neighbourhood of a
+minimum in three epochs and bounces around it for nine more; what moves is the calibration of its
+scores rather than the quality of its detections. The loss curve says nothing about any of this —
+it is the held-out split, scored every epoch, that shows it. Epoch 9 was better than epoch 12
+(F1 0.817 against 0.807) and `keep: 2` had already deleted it.
+
+**The same config ran twice and produced two different detectors.** Kaggle's *Save Version*
+re-executes the whole notebook in a fresh machine, so the console log and the saved artefact came
+from two complete runs — and they disagreed on every epoch, because the seed named the data and
+not the model. The detection head is built fresh and drew from an unseeded generator. Fixed, and
+both findings are written up in [`docs/failures.md`](docs/failures.md).
 
 The labels are **LS-SSDD-v1.0**: 15 large Sentinel-1 IW acquisitions, VV, cut by its authors into
 9000 sub-images of 800 x 800, ships labelled by SAR experts against AIS and Google Earth. It is
@@ -383,11 +416,14 @@ true:
   rather than defaulting.
 
 The architecture is a stock Faster R-CNN with a two-class head, and its anchors are torchvision's
-own — which are the wrong range for this data and are meant to be. The smallest is 32 px, a
-320 m vessel at 10 m, longer than nearly everything in the training set. Fixing that belongs to
-the ticket that measures each adaptation against the configuration before it, and shipping the
-fix unmeasured would delete the configuration it has to be measured against. So the first run
-buys a baseline rather than a detector, and `anchor_sizes` is a config key.
+own. The smallest is 32 px, a 320 m vessel at 10 m, longer than nearly everything in the training
+set — so the expectation written here before the first run was that recall would be poor. It was
+not: 0.71 at a precision of 0.94. An anchor is where the region proposal network starts regressing
+from, not a filter on what it can return, and on the high-resolution level of the pyramid a 32 px
+anchor reaches hulls of a few pixels perfectly well. The prediction was wrong and the reasoning
+behind it was too strong; the decision to ship the stock sizes stands, because the ticket that
+adapts them has to measure each change against the configuration before it, and this is that
+configuration. `anchor_sizes` is a config key.
 
 The run is built for being interrupted rather than for finishing. Checkpoints are written every
 epoch, under a temporary name and moved into place in one step, so a kernel stopped halfway

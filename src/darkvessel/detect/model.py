@@ -57,6 +57,7 @@ IMAGENET_STD = [0.229, 0.224, 0.225]
 def detector_model(
     *,
     tile_px: int,
+    seed: int,
     anchor_sizes: tuple[tuple[int, ...], ...] = ANCHOR_SIZES,
     pretrained: bool = True,
     trainable_backbone_layers: int = 3,
@@ -68,6 +69,8 @@ def detector_model(
             inferred, so that the transform inside the model resamples nothing: rescaling radar
             amplitude changes what the detector sees, and that is a decision about a run rather
             than a convenience — the same argument `cli.py` makes about reprojecting a scene.
+        seed: The run's seed. Names the weights as well as the data, which it did not until a
+            run of the same config twice produced two different models.
         anchor_sizes: One tuple per pyramid level. Configurable because this is the number most
             likely to want moving once there are real numbers to move it against.
         pretrained: Start from COCO weights. A free tier gives too few epochs to train a
@@ -76,6 +79,13 @@ def detector_model(
         trainable_backbone_layers: How much of the backbone is unfrozen, from the top. Three of
             five is torchvision's default and is what the budget here affords.
     """
+    # Applied here, before anything is constructed, because the head below is initialised from
+    # scratch — two classes where COCO had 91 — and it draws from torch's global generator. Left
+    # unseeded, two sessions of the same config start from two different models and report
+    # different numbers, for a reason nothing in the config records. Found by running the same
+    # configuration twice: see docs/failures.md.
+    torch.manual_seed(seed)
+
     model = fasterrcnn_resnet50_fpn(
         weights="DEFAULT" if pretrained else None,
         weights_backbone="DEFAULT" if pretrained else None,

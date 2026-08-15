@@ -21,6 +21,7 @@ without a GPU. `train.py` holds the half that needs the framework.
 
 import hashlib
 import random
+import warnings
 import xml.etree.ElementTree as ElementTree
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+from rasterio.errors import NotGeoreferencedWarning
 
 # LS-SSDD's own split: sub-images cut from the first ten large scenes train, the last five are
 # held out. Kept as the dataset publishes it so that the numbers this repository reports can be
@@ -136,8 +138,19 @@ class TileRef:
     boxes: tuple[Box, ...]
 
     def read(self) -> LabelledTile:
-        """Open the sub-image and return it as amplitude in 0..1."""
-        with rasterio.open(self.image_path) as raster:
+        """Open the sub-image and return it as amplitude in 0..1.
+
+        A sub-image carries no georeferencing and is not supposed to: the detector works in
+        pixels, and the chain places its answers on the ground afterwards in `geo.py`. rasterio
+        warns about it once per file, which over 9000 tiles an epoch buries every line the run
+        actually wanted to say — so the one warning that is expected here is silenced, and only
+        that one.
+        """
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", NotGeoreferencedWarning)
+            raster = rasterio.open(self.image_path)
+
+        with raster:
             if raster.dtypes[0] != "uint8":
                 raise ValueError(
                     f"{self.image_path} is {raster.dtypes[0]}, and this reader takes the 8-bit "

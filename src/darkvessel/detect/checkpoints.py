@@ -63,6 +63,10 @@ class Checkpoints:
         self.directory = directory
         self.keep = keep
 
+    def path_for(self, epoch: int) -> Path:
+        """Where this epoch's state ends up. Not where it is written — see `writing`."""
+        return self.directory / f"epoch-{epoch:03d}.pt"
+
     def all(self) -> list[tuple[int, Path]]:
         """Every whole checkpoint in the directory, oldest first."""
         if not self.directory.exists():
@@ -92,7 +96,7 @@ class Checkpoints:
         A session that dies inside here leaves the directory exactly as it was, holding the last
         epoch that did finish.
         """
-        with atomically(self.directory / f"epoch-{epoch:03d}.pt") as partial:
+        with atomically(self.path_for(epoch)) as partial:
             yield partial
 
         self._prune()
