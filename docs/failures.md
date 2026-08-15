@@ -215,3 +215,72 @@ which is a level of its own, and now has its measurements.
 
 **What this run does establish.** The study area works. Six commercial ships in one frame, wakes
 visible on four of them, against an area where the largest vessel ever seen was 15 m.
+
+---
+
+## 2026-08-14 — The same config, run twice, produced two different detectors
+
+**What happened.** The first training run finished 12 epochs on a Kaggle T4 and the numbers were
+read off the console. The saved `metrics.json` then disagreed with that console log on every
+epoch — at epoch 12, score 0.50, the log said 1903 detections found against 1877 in the file;
+epoch 2's loss was 0.1554 on screen and 0.15260 in the file.
+
+**Why the two could not both be one run.** The journal entry and the printed lines come from a
+single measurement object inside `_report`: within one run they are the same numbers written
+twice, and there is no path where one says 1903 and the other 1877. Two sets of numbers meant two
+runs.
+
+**Where the second run came from.** Kaggle's *Save Version* is not a snapshot. It re-executes the
+whole notebook in a fresh machine, and the saved artefacts come from that execution — so a
+session watched interactively and the version saved from it are two complete runs of the same
+code. Worth knowing before reading any Kaggle output as a record of the session that produced it.
+
+**Why they diverged.** The config says one seed names the run. It named the *data*: the subset of
+empty tiles, the orientation of each tile, the order they arrive in. It did not name the model.
+The detection head is built fresh — two classes where COCO has 91 — from torch's global
+generator, which nothing seeded, and the anchor and proposal sampling inside each epoch draws
+from it too. Two runs therefore started from two different models and sampled differently
+throughout.
+
+**What it would have cost.** Nothing was wrong with either run; both are valid. What was wrong is
+that neither could be reproduced, and that the difference between them was recorded nowhere. A
+number in the README with no run behind it that can be re-created is a number nobody can check —
+including the next ticket, which is supposed to measure its changes against exactly these.
+
+**What was done instead.** `detector_model` seeds before it builds, so the head is a function of
+the run's seed. Each epoch seeds from the seed and the epoch number, the same derivation the
+augmentation uses, so a session resumed at epoch 7 samples what an uninterrupted run would have
+sampled there rather than restarting a stream. A test builds two heads from one seed and requires
+them equal, and two heads from different seeds and requires them different.
+
+**What it did not fix, and is a separate finding.** See below.
+
+---
+
+## 2026-08-14 — The detector did not converge, it oscillated, and the loss did not say so
+
+**What happened.** Over 12 epochs the training loss fell from 0.1809 to 0.1357 — 25%, and most of
+it in the first three epochs — while precision on the held-out split at a fixed score threshold
+of 0.50 went: 0.547, 0.741, 0.746, 0.410, 0.642, 0.844, 0.654, **0.283**, 0.800, 0.629, 0.529,
+0.808. Adjacent epochs differ by a factor of three. Epoch 8 collapses to a precision of 0.283
+while its recall stays at 0.897 — the model spends that epoch predicting far too much.
+
+**Why it is not noise.** The same shape appeared in both runs of the same configuration, on
+different initial weights: epoch 8 is the outlier in both. A defect that survives a change of
+seed is a property of the configuration, not of a draw.
+
+**What it is.** `learning_rate: 0.005`, constant, with no decay anywhere in the schedule. The
+model reaches the neighbourhood of a minimum within about three epochs and then bounces around it
+for nine more, and what moves epoch to epoch is not the quality of the detector but the
+calibration of its scores. The loss is nearly flat across all of it, which is why nothing in the
+training output gave the game away — it is the held-out split, scored every epoch, that showed it.
+
+**What it cost.** The last epoch is not the best epoch. Epoch 9 scored an F1 of 0.817 at a
+threshold of 0.75 against epoch 12's 0.807, and `keep: 2` had already deleted epoch 9's
+checkpoint by the time the run finished. The gap is small enough not to matter here, and it is
+exactly the cost the "keep the last, not the best" decision was written down to accept.
+
+**What has not been done.** No learning-rate schedule has been added. It changes what the numbers
+mean, so it belongs to a run that can be compared against this one rather than to a patch on top
+of it — and this baseline exists to be that comparison. Recorded here so that the next run starts
+from a diagnosis rather than from a surprise.

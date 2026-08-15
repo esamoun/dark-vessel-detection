@@ -70,7 +70,9 @@ def a_run(tmp_path: Path, epochs: int) -> dict:
     return {
         # Untrained, because a test that downloaded 160 MB of COCO weights is not a test anyone
         # runs. Nothing here depends on the model being any good.
-        "model": detector_model(tile_px=TILE_PX, pretrained=False, trainable_backbone_layers=5),
+        "model": detector_model(
+            tile_px=TILE_PX, seed=1, pretrained=False, trainable_backbone_layers=5
+        ),
         "training": training,
         "held_out": held_out,
         "checkpoints": Checkpoints(tmp_path / "run", keep=2),
@@ -88,6 +90,28 @@ def a_run(tmp_path: Path, epochs: int) -> dict:
         "device": torch.device("cpu"),
         "say": lambda line: None,
     }
+
+
+def a_head(seed: int):
+    """The classification layer of a freshly built detector, which is the part with no weights
+    to inherit: COCO predicts 91 classes and this predicts two, so the head is always new."""
+    model = detector_model(
+        tile_px=TILE_PX, seed=seed, pretrained=False, trainable_backbone_layers=5
+    )
+    return model.roi_heads.box_predictor.cls_score.weight
+
+
+def test_the_seed_names_the_weights_and_not_only_the_data() -> None:
+    """What a Kaggle rebuild found, pinned.
+
+    Saving a version re-runs the whole notebook in a fresh machine, so the same config ran twice
+    and reported two different sets of numbers — 1903 detections against 1877 at the same
+    threshold of the same epoch. The data pipeline was seeded throughout; the head was not, and
+    two runs therefore started from two different models. Nothing in the config recorded the
+    difference, which is the part that mattered. See docs/failures.md.
+    """
+    assert torch.equal(a_head(seed=20260814), a_head(seed=20260814))
+    assert not torch.equal(a_head(seed=20260814), a_head(seed=20260815))
 
 
 def test_a_second_session_continues_the_run_the_first_one_started(tmp_path: Path) -> None:

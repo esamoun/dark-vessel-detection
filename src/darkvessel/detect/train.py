@@ -110,16 +110,22 @@ def train(
 
         # Before the scoring, not after: an interrupted evaluation costs the numbers, and the
         # numbers can be recomputed from the weights.
-        with checkpoints.writing(epoch) as path:
+        with checkpoints.writing(epoch) as partial:
             torch.save(
                 {
                     "epoch": epoch,
                     "model": model.state_dict(),
                     "optimiser": optimiser.state_dict(),
                 },
-                path,
+                partial,
             )
-        say(f"epoch {epoch}: loss {loss:.4f}, checkpoint {checkpoints.directory.name}/{path.name}")
+        # `path_for`, not the path `writing` yielded: that one is the temporary name, and by
+        # here it has been renamed away. Reporting it told every run that its checkpoint was a
+        # `.partial` file — the one thing this module exists to make impossible.
+        landed = checkpoints.path_for(epoch)
+        say(
+            f"epoch {epoch}: loss {loss:.4f}, checkpoint {checkpoints.directory.name}/{landed.name}"
+        )
 
         _report(
             epoch,
@@ -191,6 +197,12 @@ def _one_epoch(
         # would have in the session that was interrupted.
         generator=torch.Generator().manual_seed(schedule.seed * 1000 + epoch),
     )
+
+    # Faster R-CNN samples which anchors and which proposals it learns from, out of torch's
+    # global generator. Seeded per epoch rather than once per session, and derived rather than
+    # carried, so that a session resumed at epoch 7 draws what an uninterrupted run would have
+    # drawn there — the same trick the augmentation uses, and for the same reason.
+    torch.manual_seed(schedule.seed * 1000 + epoch)
 
     model.train()
     total = 0.0

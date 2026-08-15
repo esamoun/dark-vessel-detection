@@ -291,9 +291,11 @@ def training_request_from(config: dict[str, Any], relative_to: Path) -> dict[str
     Nothing here imports torch, and that is what lets a test parse the shipped config on a laptop
     with no framework installed. The command below imports it, once it has something to run.
 
-    One seed, not several. The subset the run trains on, the way each tile is laid down and the
-    order they arrive in are all derived from it, so a run is named by that number and a resumed
-    session reproduces the interrupted one exactly.
+    One seed, not several. The subset the run trains on, the way each tile is laid down, the
+    order they arrive in, the weights the fresh detection head starts from and what the sampler
+    inside an epoch draws are all derived from it, so a run is named by that number — and two
+    runs of this file are the same experiment, which they were not until a Kaggle rebuild ran
+    the same config twice and got two different models. See docs/failures.md.
     """
     data, out = config["data"], config["out"]
     seed = int(config["training"]["seed"])
@@ -312,6 +314,7 @@ def training_request_from(config: dict[str, Any], relative_to: Path) -> dict[str
             empty_per_ship_tile=float(config["subset"]["empty_per_ship_tile"]), seed=seed
         ),
         "model": {
+            "seed": seed,
             "pretrained": bool(config["model"]["pretrained"]),
             "trainable_backbone_layers": int(config["model"]["trainable_backbone_layers"]),
             "anchor_sizes": tuple(tuple(level) for level in config["model"]["anchor_sizes"]),
