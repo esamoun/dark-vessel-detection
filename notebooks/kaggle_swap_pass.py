@@ -51,6 +51,12 @@ STRIDE = 5
 # reference spread with exactly the signal the window exists to preserve.
 MARGIN_PX = 4
 
+# Below this, the window is not describing a radar scene. Open sea to a hull on Sentinel-1 spans
+# something like forty decibels, and a reference that fits everything into less than half of that
+# has been measured over something other than water. The first run of this returned 11 dB, from a
+# held-out split whose coastal tiles were counted as sea.
+MINIMUM_SPAN_DB = 20.0
+
 # What counts as a tile rather than a label or a stray text file. LS-SSDD publishes JPEG; mirrors
 # have been seen carrying PNG, and the reader takes whatever rasterio opens as 8-bit.
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
@@ -175,6 +181,39 @@ def discover(root: Path):
     )
 
 
+def offshore(refs, root: Path):
+    """Keep the tiles that are open water, and drop the ones that are coast.
+
+    LS-SSDD's held-out half is not all sea. It is cut from whole Sentinel-1 acquisitions, so it
+    contains harbours, shoreline and the structures on them, and the dataset says so itself by
+    shipping `test_inshore.txt` beside `test_offshore.txt`.
+
+    Masking the annotated boxes removes ships. It does not remove land, and land in SAR is bright
+    — which is why the first run of this measured a "sea" whose spread was almost as large as its
+    median, over a histogram that decayed monotonically to white. That reference fitted a window
+    eleven decibels wide, against the forty that separate water from a hull, and it would have
+    crushed a seventh of the real scene to black. See docs/decisions.md.
+
+    Only the offshore half is measured, and that is the right half rather than merely the clean
+    one: the window exists to place *this chain's* scene, which is open water in the Kattegat,
+    where the model's sea was. Fitting it against a mixture of water and coast would match a
+    distribution the target scene does not have.
+    """
+    listing = next((p for p in root.rglob("*.txt") if "offshore" in p.name.lower()), None)
+    if listing is None:
+        print("  no offshore listing under this root; measuring every held-out tile, coast and all")
+        return refs
+
+    names = {Path(token).stem for token in listing.read_text().split() if token.strip()}
+    kept = [ref for ref in refs if ref.name in names]
+    print(f"  {listing.name}: {len(names):,} names, {len(kept):,} of {len(refs):,} tiles matched")
+
+    if not kept:
+        print("  none matched, so the listing names its tiles some other way; measuring them all")
+        return refs
+    return kept
+
+
 def sea_histogram(root: Path = DATASET, layout=None) -> np.ndarray:
     """The 8-bit values of every sea pixel in the sampled held-out tiles, as 256 exact bins.
 
@@ -193,6 +232,7 @@ def sea_histogram(root: Path = DATASET, layout=None) -> np.ndarray:
     print(f"{len(refs):,} tiles, cut from scenes {scenes}")
 
     _, held_out = split_by_scene(refs)
+    held_out = offshore(held_out, root)
     if not held_out:
         # A mirror whose test directory holds scenes 1-10, or names them differently. Measuring
         # the training half instead is a defensible answer to the question being asked; measuring
@@ -296,11 +336,28 @@ def measure(root: Path = DATASET, layout=None) -> tuple[float, float]:
     sketch(histogram)
 
     floor, ceiling = window(mean, spread)
+
+    # A reference measured over something that is not water produces a window too narrow to hold
+    # a scene, and nothing downstream would say so: the chain would run, return detections, and
+    # be wrong. Forty decibels is roughly what separates open sea from a hull on Sentinel-1, so a
+    # window that cannot hold half of that is measuring land, or a subset too small to have a
+    # distribution at all. Refused here rather than discovered three levels later.
+    if ceiling - floor < MINIMUM_SPAN_DB:
+        raise ValueError(
+            f"the reference sea is {mean:.4f} +/- {spread:.4f}, which fits a window of only "
+            f"{ceiling - floor:.1f} dB ({floor:.2f} to {ceiling:.2f}). Sea to ship on Sentinel-1 "
+            f"is nearer forty, so this is not a measurement of water — coast is the usual reason, "
+            "and `offshore` is what excludes it. Do not put this window in a config"
+        )
+
     print("\n== paste into configs/kattegat-lane.yaml, run.trained.stretch ==")
     print(f"      floor_db: {floor:.2f}")
     print(f"      ceiling_db: {ceiling:.2f}")
     print(f"      sea_db: {SCENE_SEA_DB}")
-    print(f"\n(reference sea {mean:.4f} +/- {spread:.4f}, for docs/decisions.md)")
+    print(
+        f"\n(reference sea {mean:.4f} +/- {spread:.4f}, span {ceiling - floor:.1f} dB, "
+        "for docs/decisions.md)"
+    )
 
     return floor, ceiling
 
