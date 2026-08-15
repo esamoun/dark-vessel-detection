@@ -19,6 +19,7 @@ docs/decisions.md.
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -53,9 +54,14 @@ def train(
     schedule: Schedule,
     reporting: Reporting,
     device: torch.device,
+    built: dict[str, Any],
     say: Callable[[str], None] = print,
 ) -> None:
     """Run the schedule, or as much of it as this session gets through.
+
+    `built` is what constructed `model` — its tile size, anchors and seed — and it is written
+    into every checkpoint so that whatever loads one can refuse a model built differently. It is
+    required rather than optional because the whole value of it is that no run can omit it.
 
     Picks up wherever the last session stopped. A run started fresh and a run resumed four times
     do the same epochs over the same tiles in the same order, because everything that would
@@ -115,6 +121,11 @@ def train(
                     "epoch": epoch,
                     "model": model.state_dict(),
                     "optimiser": optimiser.state_dict(),
+                    # Not weights, and that is exactly the point. Anchor sizes leave no trace in
+                    # a state dict — `AnchorGenerator` has no parameters — so a checkpoint that
+                    # does not name them loads cleanly into a model looking for ships of another
+                    # size and never says so. See docs/decisions.md.
+                    "built": built,
                 },
                 partial,
             )

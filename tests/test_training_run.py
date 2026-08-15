@@ -30,7 +30,7 @@ from darkvessel.cli import training_request_from  # noqa: E402
 from darkvessel.detect.checkpoints import Checkpoints, Journal  # noqa: E402
 from darkvessel.detect.dataset import Layout, catalogue, split_by_scene  # noqa: E402
 from darkvessel.detect.metrics import Reporting  # noqa: E402
-from darkvessel.detect.model import detector_model  # noqa: E402
+from darkvessel.detect.model import ANCHOR_SIZES, detector_model  # noqa: E402
 from darkvessel.detect.train import Schedule, train  # noqa: E402
 
 CONFIG = Path(__file__).resolve().parents[1] / "configs" / "train.yaml"
@@ -88,6 +88,15 @@ def a_run(tmp_path: Path, epochs: int) -> dict:
         ),
         "reporting": Reporting(tolerance_m=200.0, resolution_m=10.0, thresholds=(0.05, 0.5)),
         "device": torch.device("cpu"),
+        # What built the model above. Stated here rather than derived, because a fixture whose
+        # build block described a different model would be testing nothing.
+        "built": {
+            "tile_px": TILE_PX,
+            "anchor_sizes": ANCHOR_SIZES,
+            "seed": 1,
+            "pretrained": False,
+            "trainable_backbone_layers": 5,
+        },
         "say": lambda line: None,
     }
 
@@ -208,3 +217,21 @@ def test_the_shipped_config_reports_the_tolerance_the_fusion_will_use(tmp_path: 
 
     assert training["reporting"].tolerance_m == float(pipeline["fusion"]["match_tolerance_m"])
     assert training["reporting"].resolution_m == float(pipeline["imagery"]["resolution_m"])
+
+
+def test_the_checkpoint_records_what_built_it(tmp_path: Path) -> None:
+    """A checkpoint that does not say what built it can be loaded into the wrong model.
+
+    Anchor sizes are not weights — `AnchorGenerator` holds no parameters, and min_size/max_size
+    are attributes of the transform rather than tensors — so a state dict fitted under one set
+    loads without complaint under another and then looks for ships of the wrong size, quietly.
+    The build block is what lets the side that loads it refuse.
+    """
+    run = a_run(tmp_path, epochs=1)
+    train(**run)
+
+    _, path = Checkpoints(tmp_path / "run").latest()
+    state = torch.load(path, map_location="cpu", weights_only=True)
+
+    assert state["built"] == run["built"]
+    assert state["built"]["anchor_sizes"] == ANCHOR_SIZES
