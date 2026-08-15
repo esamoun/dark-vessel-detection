@@ -86,3 +86,69 @@ class DecibelStretch:
         filled = np.where(np.isnan(image), np.float32(self.sea_db), image)
         scaled = (filled - self.floor_db) / (self.ceiling_db - self.floor_db)
         return np.clip(scaled, 0.0, 1.0).astype(np.float32)
+
+
+@dataclass(frozen=True)
+class SeaReference:
+    """Where the sea stood in the images the model was fitted on, in the 0..1 it was handed.
+
+    A property of the training set rather than of any scene the chain later reads, measured over
+    the held-out tiles outside the annotated boxes and recorded in docs/decisions.md beside the
+    run that measured it. It is the one thing about LS-SSDD's processing that *is* recoverable:
+    the stretch its authors applied is gone, but the statistics the model was fitted under are
+    still sitting in the pixels.
+    """
+
+    mean: float
+    spread: float
+
+    def __post_init__(self) -> None:
+        if self.spread <= 0:
+            raise ValueError(
+                f"a reference spread of {self.spread} describes a sea with no variation in it, "
+                "and the window is fitted by dividing by it"
+            )
+
+
+def fit_window(*, sea_db: float, spread_db: float, reference: SeaReference) -> DecibelStretch:
+    """The window that puts this product's sea where the model's sea was.
+
+    Two moments, two parameters. Matching only the first would place the water correctly and
+    leave the contrast between a hull and the sea it sits in scaled by an arbitrary factor, which
+    is the half of the problem a detector actually keys on.
+
+    Called to *derive* the constants a config then carries, not on a run. Fitting per scene would
+    make this an adaptive stretch: the same hull would take a different value under a different
+    sea state, and a score threshold would stop meaning the same thing between two acquisitions.
+    See the module docstring.
+
+    One end of the answer is settled by the scene alone and the other is not. The floor comes out
+    near the sea less a few sigma whatever reference is supplied — on kattegat-lane.tif it lands
+    within a decibel of -29 across every plausible reference — while the ceiling ranges over
+    forty decibels. That asymmetry is the argument for measuring the reference rather than
+    choosing a window by eye: by eye, one end would have been right and the other anywhere.
+    """
+    span = spread_db / reference.spread
+    floor = sea_db - reference.mean * span
+    return DecibelStretch(floor_db=floor, ceiling_db=floor + span, sea_db=sea_db)
+
+
+def sea_level(image: np.ndarray) -> tuple[float, float]:
+    """This scene's sea, as a median and a spread in decibels, ignoring the holes.
+
+    Robust rather than the plain mean and standard deviation, for the reason `MAD_TO_SIGMA` is
+    here: a scene contains ships, and a ship stands forty decibels above the water.
+
+    This is the other half of the pair `fit_window` matches, and it is deliberately the same
+    estimator the reference is measured with. Matching a robust spread against a plain one would
+    fit the window to a difference in estimator rather than to a difference in sea.
+    """
+    finite = image[np.isfinite(image)]
+    if finite.size == 0:
+        raise ValueError(
+            "every pixel of this scene is nodata, so it has no sea to measure; the export "
+            "covered no water, or the product's fill value was read as data"
+        )
+
+    median = float(np.median(finite))
+    return median, float(np.median(np.abs(finite - median)) * MAD_TO_SIGMA)
