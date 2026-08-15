@@ -24,6 +24,7 @@ from darkvessel.data.scene import Scene
 from darkvessel.data.survey import survey as survey_traffic
 from darkvessel.data.synthetic import write_synthetic_inputs
 from darkvessel.data.tiling import Tiling
+from darkvessel.detect.amplitude import DecibelStretch
 from darkvessel.detect.checkpoints import Checkpoints, Journal
 from darkvessel.detect.dataset import Layout, Subset, catalogue, split_by_scene
 from darkvessel.detect.detector import Detector
@@ -104,11 +105,16 @@ def _run(config_path: Path) -> int:
     ais = None if declared is None else load_ais((relative_to / declared).resolve(), crs=scene.crs)
     fusion = fusion_settings_from(config)
 
+    # Built and checked before the detector, so a tiling the model cannot run at is refused
+    # before three hundred megabytes of weights are read off the disk.
+    tiling = _tiling_from(config["tiling"])
+    check_tile_size(run_config, tiling)
+
     detections = run_pipeline(
         scene=scene,
         ais=ais,
-        detector=_detector_from(run_config),
-        tiling=_tiling_from(config["tiling"]),
+        detector=_detector_from(run_config, relative_to),
+        tiling=tiling,
         **fusion,
     )
     output = (relative_to / run_config["output"]).resolve()
@@ -460,9 +466,69 @@ def _tiling_from(tiling_config: dict[str, Any]) -> Tiling:
     )
 
 
-def _detector_from(run_config: dict[str, Any]) -> Detector:
+def trained_request_from(run_config: dict[str, Any], relative_to: Path) -> dict[str, Any]:
+    """What the trained detector takes from a config file.
+
+    Separate from the command that builds it for the reason `training_request_from` is, with the
+    constraint drawn the other way round: that one is the stage needing a GPU, this is the stage
+    needing the framework to be installed at all. Read here, nothing about a run's spelling
+    depends on torch, so a laptop with no detector extra still checks every key of it.
+
+    `tile_px` and `anchor_sizes` are restated in the config rather than read off the checkpoint,
+    because the first trained checkpoint predates `train.py` recording them. Where a checkpoint
+    does carry its build block, `TrainedDetector` refuses a disagreement rather than preferring
+    one side of it.
+    """
+    trained = run_config["trained"]
+    stretch = trained["stretch"]
+
+    return {
+        "checkpoint": (relative_to / trained["checkpoint"]).resolve(),
+        "tile_px": int(trained["tile_px"]),
+        "anchor_sizes": tuple(
+            tuple(int(size) for size in level) for level in trained["anchor_sizes"]
+        ),
+        "score_threshold": float(trained["score_threshold"]),
+        "stretch": DecibelStretch(
+            floor_db=float(stretch["floor_db"]),
+            ceiling_db=float(stretch["ceiling_db"]),
+            sea_db=float(stretch["sea_db"]),
+        ),
+    }
+
+
+def check_tile_size(run_config: dict[str, Any], tiling: Tiling) -> None:
+    """Refuse a run whose tiles are not the size its detector was built for.
+
+    The same shape of refusal `_check_working_crs` makes, and for the same reason. Torchvision
+    resizes each tile to the size the model declares, silently, and resampling radar amplitude is
+    a decision rather than a convenience: it changes what the detector sees, and the precision
+    and recall reported for this model were measured at one scale and not the other.
+
+    The stand-in has no opinion about tile size, so it is not asked.
+    """
+    if run_config["detector"] != "trained":
+        return
+
+    tile_px = int(run_config["trained"]["tile_px"])
+    if tiling.size_px != tile_px:
+        raise ValueError(
+            f"the chain cuts {tiling.size_px} px tiles and the detector was built for {tile_px} "
+            "px; the model would resize between the two, which changes what it sees. Set "
+            "tiling.size_px to the model's, or run a model built for this tiling"
+        )
+
+
+def _detector_from(run_config: dict[str, Any], relative_to: Path) -> Detector:
     """Build the detector named by the config. This is the injection point."""
     name = run_config["detector"]
     if name == "bright-pixel":
         return BrightPixelDetector(threshold=float(run_config["threshold"]))
-    raise ValueError(f"unknown detector {name!r}; known detectors: 'bright-pixel'")
+    if name == "trained":
+        # Imported here rather than at the top of the module, the way `_train` imports torch: the
+        # chain's acceptance condition is that it installs and runs with no framework, and a run
+        # with the stand-in must not pull two gigabytes of CUDA wheels to threshold bright pixels.
+        from darkvessel.detect.trained import TrainedDetector
+
+        return TrainedDetector(**trained_request_from(run_config, relative_to))
+    raise ValueError(f"unknown detector {name!r}; known detectors: 'bright-pixel', 'trained'")
