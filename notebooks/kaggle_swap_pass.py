@@ -194,13 +194,17 @@ def window(mean: float, spread: float) -> tuple[float, float]:
     return floor, floor + span
 
 
-def main() -> None:
-    print("== weights ==")
-    package(find_checkpoint())
+def measure(root: Path = DATASET) -> tuple[float, float]:
+    """The half of this pass that can only be done here, and the only half that is a measurement.
 
-    print("\n== the sea the model was fitted on ==")
-    histogram = sea_histogram()
+    Returns the window. Separate from `main` because the two halves are independent: the weights
+    are a file that can be fetched any number of ways, and once they are on a disk this part is
+    still undone. A session that already has the checkpoint runs this alone.
+    """
+    print("== the sea the model was fitted on ==")
+    histogram = sea_histogram(root)
     mean, spread = moments(histogram)
+
     print(f"  median {mean:.4f}, robust spread {spread:.4f}  (of 1.0)")
     print(
         f"  p1 {quantile(histogram, 0.01)}  p25 {quantile(histogram, 0.25)}  "
@@ -215,6 +219,27 @@ def main() -> None:
     print(f"      floor_db: {floor:.2f}")
     print(f"      ceiling_db: {ceiling:.2f}")
     print(f"      sea_db: {SCENE_SEA_DB}")
+    print(f"\n(reference sea {mean:.4f} +/- {spread:.4f}, for docs/decisions.md)")
+
+    return floor, ceiling
+
+
+def main(weights: bool = True) -> None:
+    """Both halves, with the weights skipped where they have already been fetched.
+
+    A missing checkpoint is reported and stepped over rather than raised. The measurement is the
+    part of this pass that needs the dataset attached and cannot be repeated later on a laptop;
+    letting a file that is already downloaded stop it would be the wrong way round.
+    """
+    if weights:
+        print("== weights ==")
+        try:
+            package(find_checkpoint())
+        except FileNotFoundError as absent:
+            print(f"  skipped: {absent}")
+        print()
+
+    measure()
 
 
 if __name__ == "__main__":
