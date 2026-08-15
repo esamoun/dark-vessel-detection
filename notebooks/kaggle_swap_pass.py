@@ -51,6 +51,10 @@ STRIDE = 5
 # reference spread with exactly the signal the window exists to preserve.
 MARGIN_PX = 4
 
+# What counts as a tile rather than a label or a stray text file. LS-SSDD publishes JPEG; mirrors
+# have been seen carrying PNG, and the reader takes whatever rasterio opens as 8-bit.
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
+
 DATASET = Path("/kaggle/input/ls-ssdd-v10/LS-SSDD-v1.0-OPEN")
 PACKAGED = Path("/kaggle/working/epoch-012.pt")
 
@@ -123,30 +127,51 @@ def discover(root: Path):
     The test half is preferred where the images are split, because the held-out scenes are the
     half this project reports its numbers over. Either half would answer the question — what the
     sea looks like in this dataset — but only one of them is the half the model was scored on.
+
+    Directories are found by what they *contain*, never by what they are called. The first
+    version of this looked for a directory named `JPEGImages` and picked one that held a single
+    subdirectory of the same name — the mirror nests every folder twice — so it reported a suffix
+    of nothing and handed `catalogue` a directory where it expected a tile. A name is a hint; a
+    file with an image extension in it is evidence.
     """
     from darkvessel.detect.dataset import Layout
 
-    candidates = sorted(d for d in root.rglob("*") if d.is_dir() and "JPEGImages" in d.name)
-    if not candidates:
-        raise FileNotFoundError(f"no directory with 'JPEGImages' in its name under {root}")
+    # One pass. Everything below is decided from which directories hold which kind of file, so
+    # walking the tree twice to ask two questions about the same entries buys nothing.
+    pictures: dict[Path, int] = {}
+    suffixes: dict[Path, str] = {}
+    labels: dict[Path, int] = {}
+    for entry in root.rglob("*"):
+        if not entry.is_file():
+            continue
+        if entry.suffix.lower() in IMAGE_SUFFIXES:
+            pictures[entry.parent] = pictures.get(entry.parent, 0) + 1
+            suffixes.setdefault(entry.parent, entry.suffix)
+        elif entry.suffix.lower() == ".xml":
+            labels[entry.parent] = labels.get(entry.parent, 0) + 1
 
-    images = next((d for d in candidates if "test" in d.name.lower()), candidates[0])
-    labels = next(root.rglob("*.xml"), None)
-    if labels is None:
+    if not pictures:
+        raise FileNotFoundError(
+            f"nothing under {root} has an image extension {sorted(IMAGE_SUFFIXES)}; this is not "
+            "a copy of LS-SSDD, or it is still unpacking"
+        )
+    if not labels:
         raise FileNotFoundError(f"no .xml annotation anywhere under {root}")
 
-    suffix = next(
-        (f.suffix for f in sorted(images.iterdir()) if f.suffix.lower() != ".xml"), ".jpg"
-    )
+    held_out = [d for d in pictures if "test" in d.name.lower()]
+    images = max(held_out or list(pictures), key=lambda d: pictures[d])
+    annotations = max(labels, key=lambda d: labels[d])
 
-    print(f"images      {images.relative_to(root)}   (of {[d.name for d in candidates]})")
-    print(f"annotations {labels.parent.relative_to(root)}")
-    print(f"suffix      {suffix}")
+    for directory, count in sorted(pictures.items()):
+        mark = "->" if directory == images else "  "
+        print(f"  {mark} {directory.relative_to(root)}  {count:,} images")
+    print(f"annotations {annotations.relative_to(root)}  ({labels[annotations]:,} xml)")
+    print(f"suffix      {suffixes[images]}")
 
     return Layout(
         images=str(images.relative_to(root)),
-        annotations=str(labels.parent.relative_to(root)),
-        image_suffix=suffix,
+        annotations=str(annotations.relative_to(root)),
+        image_suffix=suffixes[images],
     )
 
 
