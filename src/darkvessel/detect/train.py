@@ -26,9 +26,8 @@ from tqdm import tqdm
 
 from darkvessel.detect.checkpoints import Checkpoints, Journal
 from darkvessel.detect.dataset import Box, TileRef, symmetry_for
-from darkvessel.detect.detector import PixelDetection
 from darkvessel.detect.metrics import NOTHING, Attempt, Reporting, measure
-from darkvessel.detect.model import SHIP, as_model_input
+from darkvessel.detect.model import SHIP, as_model_input, detections_from
 
 
 @dataclass(frozen=True)
@@ -249,7 +248,7 @@ def _score(
         for images, targets in tqdm(loader, desc="held out", leave=False):
             outputs = model([image.to(device) for image in images])
             for output, target in zip(outputs, targets, strict=True):
-                attempt = attempt + measure(_detections_from(output), _ships_in(target), tolerance)
+                attempt = attempt + measure(detections_from(output), _ships_in(target), tolerance)
 
     return attempt
 
@@ -289,22 +288,6 @@ def _as_batch(batch: list[tuple]) -> tuple[tuple, tuple]:
     """Detectors take a list of images of their own sizes, not one stacked tensor."""
     images, targets = zip(*batch, strict=True)
     return images, targets
-
-
-def _detections_from(output: dict[str, torch.Tensor]) -> list[PixelDetection]:
-    """A model's boxes, as the points the rest of the chain deals in.
-
-    Through `Box.from_xyxy` and `Box.centre` rather than by unpacking the corners here, so that
-    the axis swap and the half-pixel between an edge coordinate and a pixel index are each
-    applied in the one place that owns them.
-    """
-    return [
-        PixelDetection(row=row, col=col, score=float(score))
-        for box, score in zip(
-            output["boxes"].cpu().tolist(), output["scores"].cpu().tolist(), strict=True
-        )
-        for row, col in [Box.from_xyxy(box).centre()]
-    ]
 
 
 def _ships_in(target: dict[str, torch.Tensor]) -> list[Box]:
