@@ -35,7 +35,7 @@ import yaml
 from affine import Affine
 from shapely import Point
 
-from darkvessel.cli import fusion_settings_from, main
+from darkvessel.cli import check_tile_size, fusion_settings_from, main, trained_request_from
 from darkvessel.data.scene import Scene
 from darkvessel.data.synthetic import BOUNDARY_TARGET, SIZE_PX, write_synthetic_inputs
 from darkvessel.data.tiling import Tiling
@@ -593,3 +593,67 @@ def test_a_scene_outside_the_declared_working_crs_is_refused(tmp_path: Path) -> 
     # wrong reason, and never crashes on its own.
     with pytest.raises(ValueError, match="working CRS"):
         main(["run", "--config", str(config)])
+
+
+# The trained detector's half of a run config. Its window is a placeholder with round numbers:
+# what the shipped one is, and how it was arrived at, belongs in configs/ and docs/decisions.md.
+TRAINED_RUN = {
+    "detector": "trained",
+    "trained": {
+        "checkpoint": "../models/epoch-012.pt",
+        "tile_px": 800,
+        "anchor_sizes": [[32], [64], [128], [256], [512]],
+        "score_threshold": 0.75,
+        "stretch": {"floor_db": -30.0, "ceiling_db": 10.0, "sea_db": -21.84},
+    },
+}
+
+
+def test_a_trained_run_is_read_without_the_framework_installed(tmp_path):
+    """Every key of a shipped config goes through a function a test can call, or it becomes the
+    one key nothing in the suite ever parses — the argument `export_request_from` already makes.
+    Here it is sharper: the framework this config names is an optional extra, so a test that had
+    to import torch to check a spelling would not run in CI at all.
+    """
+    request = trained_request_from(TRAINED_RUN, tmp_path)
+
+    assert request["checkpoint"] == (tmp_path / "../models/epoch-012.pt").resolve()
+    assert request["tile_px"] == 800
+    assert request["anchor_sizes"] == ((32,), (64,), (128,), (256,), (512,))
+    assert request["score_threshold"] == 0.75
+    assert request["stretch"].floor_db == -30.0
+    assert request["stretch"].sea == pytest.approx(0.204, abs=1e-3)
+
+
+def test_a_tiling_the_model_was_not_built_for_is_refused():
+    """Torchvision would resize each tile to the size the model declares, silently, and
+    resampling radar amplitude changes what the detector sees. The same refusal
+    `_check_working_crs` makes about a reprojection, for the same reason."""
+    with pytest.raises(ValueError, match="800"):
+        check_tile_size(TRAINED_RUN, Tiling(size_px=512, overlap_px=64))
+
+
+def test_the_tiling_the_model_was_built_for_is_accepted():
+    check_tile_size(TRAINED_RUN, Tiling(size_px=800, overlap_px=64))
+
+
+def test_the_stand_in_is_not_asked_what_tile_size_it_wants():
+    """The threshold detector has no opinion about tile size, so it is not consulted."""
+    check_tile_size(
+        {"detector": "bright-pixel", "threshold": 0.5}, Tiling(size_px=144, overlap_px=32)
+    )
+
+
+def test_the_shipped_real_config_names_a_tiling_its_detector_can_run_at():
+    """The one config in this package nothing else in the suite runs — every other stage of it
+    needs Earth Engine credentials before it can even fail."""
+    path = Path(__file__).resolve().parents[1] / "configs" / "kattegat-lane.yaml"
+    config = yaml.safe_load(path.read_text())
+
+    check_tile_size(
+        config["run"],
+        Tiling(
+            size_px=int(config["tiling"]["size_px"]),
+            overlap_px=int(config["tiling"]["overlap_px"]),
+        ),
+    )
