@@ -378,6 +378,7 @@ def _train(config_path: Path) -> int:
         schedule=Schedule(**request["schedule"]),
         reporting=request["reporting"],
         device=device,
+        built={"tile_px": request["tile_px"], **request["model"]},
     )
     print(f"metrics in {request['journal'].path}")
     return 0
