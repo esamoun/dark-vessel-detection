@@ -11,7 +11,14 @@ rejected rather than approximated.
 import numpy as np
 import pytest
 
-from darkvessel.detect.amplitude import DecibelStretch, SeaReference, fit_window, sea_level
+from darkvessel.detect.amplitude import (
+    DecibelStretch,
+    SeaReference,
+    fit_window,
+    sea_level,
+    without_holes,
+)
+from darkvessel.detect.detector import PixelDetection
 
 # Round numbers, so every expectation below is arithmetic a reader can do by eye: forty decibels
 # wide, and the sea eight of those forty above the floor.
@@ -127,3 +134,46 @@ def test_holes_do_not_count_as_sea():
 def test_a_scene_with_no_water_left_in_it_is_refused():
     with pytest.raises(ValueError, match="nodata"):
         sea_level(np.full((4, 4), np.nan, dtype=np.float32))
+
+
+def _tile_with_a_hole_at(row: int, col: int) -> np.ndarray:
+    image = np.full((4, 4), -22.0, dtype=np.float32)
+    image[row, col] = np.nan
+    return image
+
+
+def test_a_detection_centred_in_a_hole_is_dropped():
+    kept = without_holes([PixelDetection(row=1.0, col=1.0, score=0.9)], _tile_with_a_hole_at(1, 1))
+    assert kept == []
+
+
+def test_a_detection_on_water_survives():
+    detection = PixelDetection(row=2.0, col=2.0, score=0.9)
+    assert without_holes([detection], _tile_with_a_hole_at(1, 1)) == [detection]
+
+
+def test_the_pixel_a_fractional_centre_falls_in_is_the_one_that_is_checked():
+    """1.4 addresses a point inside pixel 1, which is the hole; 1.6 is inside pixel 2, which is
+    not. The half added before flooring is the one `tiling.Core.contains` adds, for the same
+    reason: comparing an index against an edge without it is a silent half-pixel error."""
+    image = _tile_with_a_hole_at(1, 1)
+    assert without_holes([PixelDetection(row=1.4, col=1.4, score=0.9)], image) == []
+    assert len(without_holes([PixelDetection(row=1.6, col=1.6, score=0.9)], image)) == 1
+
+
+def test_order_and_scores_are_left_alone():
+    """The guard drops; it does not reorder, rescore or deduplicate. Claiming a target once is
+    `tiling.Tile.claim`'s job and it is done by ownership, not here."""
+    image = _tile_with_a_hole_at(0, 0)
+    detections = [
+        PixelDetection(row=3.0, col=1.0, score=0.4),
+        PixelDetection(row=1.0, col=2.0, score=0.9),
+    ]
+    assert without_holes(detections, image) == detections
+
+
+def test_a_detection_outside_the_tile_is_not_treated_as_a_hole():
+    """A box can be regressed past the edge of the tile it was proposed in. That is a detection
+    the tiling will discard as belonging to no core, and it is not this guard's to judge."""
+    detection = PixelDetection(row=-1.0, col=9.0, score=0.9)
+    assert without_holes([detection], _tile_with_a_hole_at(1, 1)) == [detection]
