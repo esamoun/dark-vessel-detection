@@ -19,9 +19,12 @@ crash, it returns plausible detections in plausible places with scores — so th
 of the seam a laptop tests in a second, beside `dataset.py` and `checkpoints.py`.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
+
+from darkvessel.detect.detector import PixelDetection
 
 # Turns a median absolute deviation into the standard deviation of the Gaussian that would have
 # produced it. Used instead of a plain standard deviation because a scene contains ships, and a
@@ -152,3 +155,36 @@ def sea_level(image: np.ndarray) -> tuple[float, float]:
 
     median = float(np.median(finite))
     return median, float(np.median(np.abs(finite - median)) * MAD_TO_SIGMA)
+
+
+def without_holes(detections: Sequence[PixelDetection], image: np.ndarray) -> list[PixelDetection]:
+    """Drop anything reported from a pixel the product declared as nodata.
+
+    The second of two independent mechanisms, and it is not redundant with the first. Filling a
+    hole at sea level stops its boundary from being a feature; this stops the hole itself from
+    ever being reported as a target — whatever the fill is, and whatever a later change to the
+    fill might make it. Either can be removed without silently disabling the other, which is why
+    they are two functions and not one.
+
+    Takes the image as the scene gave it, holes still NaN, so it has to be applied before the
+    stretch fills them rather than after. That is why `DecibelStretch.__call__` returns a copy.
+
+    A detection outside the tile is left alone. A regressed box can land past an edge, and what
+    happens to it is `Tile.claim`'s decision — it belongs to no core and is discarded there. This
+    guard answers one question only, and a detection it cannot place is not a hole.
+
+    The half added before flooring turns a fractional pixel index, which addresses a pixel
+    centre, into the pixel it falls in. It is the same half `tiling.Core.contains` adds, for the
+    same reason: comparing an index against an edge without it is a silent half-pixel error at
+    every boundary in the scene.
+    """
+    rows, cols = image.shape
+    kept = []
+    for detection in detections:
+        row = int(np.floor(detection.row + 0.5))
+        col = int(np.floor(detection.col + 0.5))
+        if 0 <= row < rows and 0 <= col < cols and np.isnan(image[row, col]):
+            continue
+        kept.append(detection)
+
+    return kept
