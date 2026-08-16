@@ -843,3 +843,113 @@ equal to the width cannot occur in a set counting from zero. Either one settles 
 annotations are not all in one frame, which is refused. Neither present means the question cannot
 be answered from the data, which is also refused — naming the setting that answers it, rather
 than defaulting to the reading that happens to be more common.
+
+---
+
+## 2026-08-16 — The window between decibels and amplitude: one end measured, one end swept
+
+**Decision.** `−29.84 dB` maps to 0.0 and `+10.16 dB` to 1.0, fixed in
+`configs/kattegat-lane.yaml` and applied by `amplitude.DecibelStretch`. This supersedes the open
+question left on 2026-08-14.
+
+**The end that was measured.** LS-SSDD's sea sits at **0.2000** in the 0..1 the reader produces.
+Measured over 2,234 offshore held-out tiles — scenes 11 to 15, the published split — outside the
+annotated boxes with a 4 px margin, tile by tile rather than pooled. Putting this scene's sea
+(−21.84 dB, robust) at that value fixes the floor once the width is known.
+
+Two corrections were needed to get that number, and both were found by the number being wrong.
+The first measurement gave a sea of 0.235 ± 0.209 — a spread almost as large as its median, over
+a histogram decaying monotonically to white. That is land: the held-out half is cut from whole
+acquisitions and contains harbours and shoreline, and the dataset ships `test_inshore.txt` beside
+`test_offshore.txt` to say so. Masking the annotated boxes removes ships, not coast. The second
+was pooling: five acquisitions heaped together carry their differences in sea state and
+calibration inside the spread.
+
+**The end that could not be measured, and why.** Matching the *spread* of the two seas sets the
+width of the window from how grainy each product is. LS-SSDD's sea has a relative spread near
+0.8; the Sentinel-1 GRD this chain exports is near 0.27 in the same units. That ratio of three is
+a difference in how many looks were averaged, not in how the bytes were made, and no statistic of
+dispersion can separate the one from the other. Anchoring on ship brightness instead fails the
+other way: with hulls at their 95th percentile it asks for a window of a hundred decibels, which
+puts the whole scene in the bottom fifth of the range.
+
+**How the width was chosen.** Swept from 25 to 60 dB and scored against what is known — the
+vessels this scene's AIS declares — with the tolerance the fusion already applies.
+`notebooks/sweep_window.py` reproduces it. Every width from 25 to 45 recovers all six hulls
+standing in the frame; 50 and above start losing them. 40 dB is the middle of what works.
+
+**What this is worth.** One free parameter, chosen on one scene, and reported on the same scene.
+It is tuning on the evaluation, it is written here as that, and the numbers that carry weight
+remain the held-out LS-SSDD table. What it is not is a number chosen by eye: the plateau has
+measured edges and the choice sits between them.
+
+---
+
+## 2026-08-16 — The chain cuts at the size the model was scored at
+
+**Decision.** `configs/kattegat-lane.yaml` tiles at 800/64 rather than 512/64, and
+`cli.check_tile_size` refuses a run where the two disagree.
+
+**Why.** The model is built with `min_size = max_size = 800`, so a 512 px tile would be resized
+to 800 by the transform inside it. This project refuses to resample radar amplitude elsewhere in
+as many words — `_check_working_crs` will not reproject a scene for the same reason — and a
+silent resize inside a model is worse than a loud one at the boundary.
+
+**Why not build the model at 512 instead.** It would also resample nothing: the network is fully
+convolutional and its anchors are in input pixels, so hulls keep their native size. It was
+rejected because the chain would then run at a scale the model has never been scored at, and this
+ticket exists to measure the model's contribution rather than assume it. An unmeasured variable
+introduced into exactly that comparison is the one thing it cannot afford.
+
+**What made it possible.** `Tiling` returns all nine tiles of this 1727 x 1845 scene at exactly
+800 x 800, with no short tile at the far edge. A 736 px edge tile would have been resized by the
+transform this decision exists to keep idle, and the decision would have been worth nothing.
+
+---
+
+## 2026-08-16 — A nodata hole is filled at the sea and guarded afterwards
+
+**Decision.** `DecibelStretch` fills NaN at `sea_db` before applying the window, and
+`without_holes` discards any detection whose centre falls in a hole.
+
+**Why two mechanisms.** `scene.py` writes nodata as NaN precisely because every comparison
+against NaN is false, which immunises a threshold detector. A convolutional network has no such
+immunity: one NaN propagates through every convolution that touches it and empties the tile, with
+no crash and no warning. Six per cent of the first real scene is nodata.
+
+Filling at the floor instead — the obvious choice, and simpler to state — would paint that six
+per cent as a perfectly black patch with a hard edge, and a hard edge is a strong feature for a
+detector. The risk moves from the hole to its outline rather than going away. Filling at the sea
+leaves almost no contrast at the boundary.
+
+The fill is not sufficient on its own, so the guard sits behind it and answers a different
+question: not "what does a hole look like" but "may a hole be reported". Each can be removed
+without silently disabling the other, which is why they are two functions and not one.
+
+**What was rejected.** Synthetic speckle in the holes. It would put the fill fully inside the
+training distribution, and it invents amplitude — which this project already refuses on the
+augmentation side, where a contrast jitter is described as producing a ship made of a different
+material.
+
+---
+
+## 2026-08-16 — Where the trained weights live, and what names them
+
+**Decision.** `models/epoch-012.pt`, outside git. `.gitignore` already ignores `*.pt`, so no new
+rule was needed. The repository carries the path, the provenance and the digest, not 330 MB.
+
+**Provenance.** Epoch 12 of the training run of 2026-08-14, `configs/train.yaml` at seed
+20260814, brought down from that notebook version's Kaggle output.
+`sha256 396b0cc1b2d3886dfd027571f6357657bbd1062dac2eb11129ee39c9d0f3e467`. It carries the
+optimiser state, which inference does not read.
+
+Epoch 9 scored better — F1 0.817 against epoch 12's 0.807 — and `keep: 2` had deleted it before
+the run finished. That is exactly the cost the "keep the last, not the best" decision was written
+down to accept, and this is it being paid.
+
+**What the checkpoint does not say.** What built it. `AnchorGenerator` holds no parameters and
+`min_size`/`max_size` are attributes of the transform, so a state dict fitted under one set of
+anchors loads into a model looking for another without a word. `train.py` now writes its build
+block into every checkpoint; this one predates that, so `configs/kattegat-lane.yaml` restates the
+values and `TrainedDetector` accepts a checkpoint with no block while refusing one that
+disagrees.

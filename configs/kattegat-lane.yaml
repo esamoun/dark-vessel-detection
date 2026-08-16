@@ -43,11 +43,15 @@ imagery:
     start: 2026-08-09T00:00:00+00:00
     end: 2026-08-09T12:00:00+00:00
 
-# 512 px is the figure that follows from a detector's memory, and this is a scene large enough
-# for it to mean something: about 1740 x 1730 px as exported, four tiles per axis and sixteen in
-# all, with real seams. `configs/pipeline.yaml` runs 144/32 because its scene is 256 px.
+# 800 px, because that is the size the model was trained and scored at. Tiling returns all nine
+# of them at exactly 800 x 800 over this 1727 x 1845 scene, with no short tile at the far edge —
+# which is the condition that makes it work: a 736 px edge tile would be resized by the very
+# transform inside the model that this choice exists to keep idle, and resampling radar amplitude
+# is a decision rather than a convenience. `cli.check_tile_size` refuses a mismatch rather than
+# letting torchvision resize quietly. `configs/pipeline.yaml` runs 144/32 because its scene is
+# 256 px. See docs/decisions.md.
 tiling:
-  size_px: 512
+  size_px: 800
   overlap_px: 64
 
 fusion:
@@ -92,6 +96,34 @@ run:
   # first: without the file this run has nothing to search, and a run with nothing to search says
   # `unsearched` rather than calling every detection dark.
   ais: ../data/real/kattegat-lane-ais.csv
-  output: ../outputs/kattegat-lane.gpkg
-  detector: bright-pixel   # still the stand-in: this run tests the chain, not the detector
-  threshold: 0.0         # S1 GRD comes back in dB, not the 0..1 of the synthetic scene
+  output: ../outputs/kattegat-lane-trained.gpkg
+  detector: trained
+  trained:
+    # Not in the repository — 330 MB of weights, and *.pt is ignored. Epoch 12 of the run of
+    # 2026-08-14, brought down from its Kaggle output; the run, the epoch and the file's
+    # sha256 are in docs/decisions.md. `keep: 2` had already deleted epoch 9, which scored
+    # slightly better.
+    checkpoint: ../models/epoch-012.pt
+    # What built the model these weights came from. Restated here because this checkpoint
+    # predates train.py recording its own build block; they are configs/train.yaml's, at seed
+    # 20260814. A checkpoint that does carry the block is checked against these and refused on
+    # a disagreement — anchors leave no trace in a state dict, so nothing else would catch it.
+    tile_px: 800
+    anchor_sizes: [[32], [64], [128], [256], [512]]
+    # Precision 0.941 against recall 0.706 on the held-out LS-SSDD split. Every detection this
+    # chain does not match against AIS becomes a dark vessel, which is a claim someone may be
+    # sent out on: a miss costs a ship nobody looked at, a false alarm costs an inspection and
+    # an accusation. The training run reports the whole table so this can be moved on numbers.
+    score_threshold: 0.75
+    # The window between the decibels this scene is in and the amplitude the model was fitted
+    # on. The floor is measured: LS-SSDD's offshore held-out sea sits at 0.2000, and putting
+    # this scene's sea (-21.84 dB) there fixes it once the width is known. The width could not
+    # be measured — see docs/decisions.md — so it was swept from 25 to 60 dB against the
+    # vessels this scene's AIS declares, and 40 dB is the middle of the range that recovers all
+    # six of them. Fixed here rather than refitted per scene: refitted, it would be a percentile
+    # stretch under another name and a score threshold would stop meaning the same thing from
+    # one acquisition to the next.
+    stretch:
+      floor_db: -29.84
+      ceiling_db: 10.16
+      sea_db: -21.84
