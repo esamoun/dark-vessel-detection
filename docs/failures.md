@@ -284,3 +284,52 @@ exactly the cost the "keep the last, not the best" decision was written down to 
 mean, so it belongs to a run that can be compared against this one rather than to a patch on top
 of it — and this baseline exists to be that comparison. Recorded here so that the next run starts
 from a diagnosis rather than from a surprise.
+
+---
+
+## 2026-08-16 — The chain calls a declared, transponder-on vessel dark because SAR moves it
+
+**What happened.** The trained detector was swapped into the chain and appeared to miss four of
+the six declared vessels standing inside the real scene — hulls of 274, 244, 233 and 140 m,
+which are the last things a detector should lose. The threshold baseline missed the same four.
+Two detectors failing identically on the largest targets in the image is not a detector problem.
+
+**What is actually there.** Nothing at the declared positions: within 100 m of each, the scene
+peaks at −8.7, −11.7, −12.1 and −10.3 dB against a sea of about −18 dB. Six to nine decibels
+above the water is clutter, not a hull. Searched wider, every one of the four has an unmistakable
+return of 14 to 27 dB — between **420 and 490 m away, and almost purely north–south**. Easting
+offsets never exceed 30 m.
+
+**Why.** Azimuth displacement of moving targets. A target with a radial velocity is imaged
+displaced along the satellite's track by roughly `R · v_r / V_sat`, and Sentinel-1's near-polar
+orbit puts that track almost exactly north–south. Each vessel's velocity was taken from its own
+AIS reports around the acquisition, and the ratio of northing offset to easting velocity is
+consistent across all six:
+
+| MMSI | Length | v east (m/s) | Offset north | Ratio m/(m/s) |
+| --- | --- | --- | --- | --- |
+| 636026410 | 274 m | +3.98 | −440 m | −111 |
+| 667002360 | 244 m | −4.25 | +420 m | −99 |
+| 636021202 | 233 m | +4.40 | −490 m | −111 |
+| 538002621 | 228 m | −0.01 | **0 m** | — |
+| 255805577 | 140 m | −4.62 | +450 m | −97 |
+| 219025245 | 24 m | −1.30 | +120 m | −92 |
+
+The fourth row is the control and it settles the argument: the one vessel with no east–west
+velocity is displaced by nothing at all.
+
+**What it costs.** The chain matches at 200 m. The two vessels it matched are exactly the two
+whose displacement stayed under that — the stationary 228 m hull and the slow 24 m one. The other
+four are declared, their transponders are on, they are plainly visible, and the chain calls them
+*dark*. That is this project's central claim being manufactured by geometry: any vessel under way
+with more than about 2 m/s of east–west velocity will be denounced.
+
+It is systematic rather than occasional, and it scales the wrong way — the traffic this study
+area was chosen for is exactly the traffic that moves. The 14 dark detections the threshold
+baseline reported on this scene rest on it too.
+
+**What was done.** Nothing yet, deliberately. The fix belongs to the fusion stage, not to the
+detector, and the ticket that swapped the detector in is not allowed to modify another stage. It
+is recorded here with the measurements, and carried into a ticket of its own. What the swap
+ticket reports instead is the detector scored against the positions the radar actually shows,
+which is a statement about the detector and not about the matching.
