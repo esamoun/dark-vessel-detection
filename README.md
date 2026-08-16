@@ -449,9 +449,68 @@ pip install -e ".[detector]"
 darkvessel train --config configs/train.yaml   # locally: proves it starts, then use Kaggle
 ```
 
-The reasoning behind each of these, and the gap that is still open — the model is fitted on 8-bit
-amplitude while the chain exports decibels, which is a mapping that has to be chosen deliberately
-before the detector can be swapped in — is in [`docs/decisions.md`](docs/decisions.md).
+The reasoning behind each of these is in [`docs/decisions.md`](docs/decisions.md).
+
+## Swapping it into the chain — 2026-08-16
+
+The trained model now satisfies the same `detector` parameter the threshold stand-in satisfies,
+and no other stage changed. That is what the seam was built for, and this is where it paid.
+
+```bash
+darkvessel run --config configs/kattegat-lane.yaml
+```
+
+Nine seconds on an 8 GB M1 laptop: nine tiles of 800 px, no GPU.
+
+### What it found, against the baseline
+
+Six vessels declared themselves inside this scene at the instant it was acquired. Both detectors
+are scored below against where those six actually appear **in the radar image**, which is not
+always where they declared themselves — see the caveat under it.
+
+| | Detections | Hulls found | Detections on no hull |
+| --- | --- | --- | --- |
+| Threshold at 0 dB | 16 | 6 / 6 | 2 |
+| **Trained, score 0.75** | **6** | **6 / 6** | **0** |
+
+The baseline was not blind — it found all six. It reported them sixteen times: the stack of nine
+detections inside one 200 m square in the north-west was a single bright hull counted nine times,
+because a threshold has no notion of what a vessel is and reports every connected bright region
+it meets. The trained model reports each hull once and adds nothing.
+
+### The caveat, and it is a large one
+
+Scoring against radar positions rather than declared ones is not a convenience. Four of the six
+vessels are imaged **420 to 490 m from where AIS puts them**, almost purely north–south, because
+Sentinel-1 displaces moving targets along its track. The chain matches at 200 m, so it calls
+those four *dark* — declared vessels, transponders on, plainly visible, denounced by geometry.
+
+The two it does match are exactly the two whose displacement stays under the tolerance, and the
+one vessel in the scene with no east–west velocity is displaced by nothing at all. The full
+measurement, including the control, is in [`docs/failures.md`](docs/failures.md).
+
+So `darkvessel run` prints `2 matched, 4 dark` on this scene and four of those four are wrong.
+Fixing it belongs to the fusion stage rather than to the detector, and it is a ticket of its own.
+Level 2 is what is claimed here: the model is in the chain and its contribution is measured. What
+a dark vessel *count* is worth on this scene is not, and this section says so rather than
+printing the number as a finding.
+
+### The window between decibels and amplitude
+
+The gap recorded on 2026-08-14 is closed. The chain exports calibrated decibels, the model was
+fitted on 8-bit amplitude over 255, and the stretch between them is not recoverable from the
+dataset — so it was chosen, and half of it was chosen by measurement.
+
+LS-SSDD's sea sits at **0.2000**, measured over 2,234 offshore held-out tiles outside the
+annotated boxes. Putting this scene's sea (−21.84 dB) there fixes one end of the window. The
+other end could not be measured: matching the *spread* of the two seas would set the width from
+how grainy each product is, and LS-SSDD's sea is three times grainier than this GRD — a
+difference in multi-looking, not in stretch. So the width was swept from 25 to 60 dB against the
+declared vessels; every width from 25 to 45 recovers all six hulls and 50 upwards starts losing
+them. 40 dB is the middle of what works, and the shipped window is −29.84 to +10.16 dB.
+
+That is one free parameter tuned on the scene it is then reported on. It is written down as that.
+The numbers that carry weight are still the held-out LS-SSDD table above.
 
 ## Licence
 
