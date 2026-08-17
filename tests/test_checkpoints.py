@@ -113,3 +113,57 @@ def test_a_journal_is_written_by_the_same_rule_the_weights_are(tmp_path: Path) -
 
     assert journal.entries() == [{"epoch": 1, "recall": 0.31}]
     assert [path.name for path in (tmp_path / "run").iterdir()] == ["metrics.json"]
+
+
+def test_a_journal_says_which_run_produced_it(tmp_path: Path) -> None:
+    """Five rungs of a ladder are five metrics files, and a file that does not name its run
+    compares to nothing. See docs/superpowers/specs/2026-08-17-small-target-adaptation-design.md."""
+    journal = Journal(tmp_path / "run" / "metrics.json")
+    journal.describe({"schedule": {"learning_rate": 0.005, "lr_schedule": "cosine"}})
+    journal.record({"epoch": 1, "training_loss": 0.2})
+
+    reread = Journal(tmp_path / "run" / "metrics.json")
+
+    assert reread.run() == {"schedule": {"learning_rate": 0.005, "lr_schedule": "cosine"}}
+    assert reread.entries() == [{"epoch": 1, "training_loss": 0.2}]
+
+
+def test_a_journal_from_a_run_that_never_described_itself_says_so(tmp_path: Path) -> None:
+    journal = Journal(tmp_path / "run" / "metrics.json")
+    journal.record({"epoch": 1})
+
+    assert journal.run() is None
+
+
+def test_the_metrics_of_a_run_that_predates_the_run_block_still_read_back(tmp_path: Path) -> None:
+    """The first trained run wrote a bare list. A session already in flight when this shape
+    changed must not be stranded by it — the resume logic reads this file every time it starts.
+    What the bare list cannot do is serve as a rung, and `ladder.py` refuses it there instead."""
+    path = tmp_path / "run" / "metrics.json"
+    path.parent.mkdir(parents=True)
+    path.write_text('[{"epoch": 1, "training_loss": 0.18}]')
+
+    journal = Journal(path)
+
+    assert journal.entries() == [{"epoch": 1, "training_loss": 0.18}]
+    assert journal.run() is None
+
+
+def test_describing_a_run_a_second_time_with_the_same_identity_is_allowed(tmp_path: Path) -> None:
+    """Which is the ordinary case: a resumed session describes itself again."""
+    journal = Journal(tmp_path / "run" / "metrics.json")
+    journal.describe({"seed": 20260814})
+    journal.describe({"seed": 20260814})
+
+    assert journal.run() == {"seed": 20260814}
+
+
+def test_resuming_a_run_under_a_different_configuration_is_refused(tmp_path: Path) -> None:
+    """The failure this closes is the quiet one: a config edited between two Kaggle sessions
+    produces a single metrics file whose first six epochs and last six epochs came from two
+    different experiments, and nothing in the file says so."""
+    journal = Journal(tmp_path / "run" / "metrics.json")
+    journal.describe({"seed": 20260814, "schedule": {"learning_rate": 0.005}})
+
+    with pytest.raises(ValueError, match="learning_rate"):
+        journal.describe({"seed": 20260814, "schedule": {"learning_rate": 0.001}})
