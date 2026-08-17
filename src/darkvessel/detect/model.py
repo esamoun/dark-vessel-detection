@@ -4,10 +4,10 @@ Two adaptations drive the design: vessels are a few pixels wide at 10 m resoluti
 high-resolution levels of the feature pyramid carry the signal; and pretrained backbones expect
 three colour channels where the input is single- or dual-polarisation radar amplitude.
 
-Neither is made here. This is a stock Faster R-CNN with a two-class head, and the adaptations
-belong to the ticket that measures them — each against the configuration before it, on the same
-held-out split. Shipping them now with no measurement behind them would delete the baseline that
-comparison needs.
+Neither is made by default. This is a stock Faster R-CNN with a two-class head, and each
+adaptation arrives as an argument that is off unless a config asks for it — because an adaptation
+belongs to the run that measures it, against the configuration before it, on the same held-out
+split. Turning one on here would delete the baseline that comparison needs.
 
 So the anchors below are torchvision's own, and they are almost certainly wrong for this data:
 the smallest is 32 px, which at 10 m is a vessel 320 m long, longer than all but the largest
@@ -15,12 +15,17 @@ container ships and therefore larger than nearly every ship in the training set.
 prediction about the first run's recall rather than a defect to fix here, and `anchor_sizes` is
 a config key so that changing it is one line and a second run.
 
-What *is* done here is the channel count, because without it nothing runs at all: ImageNet
-backbones take three channels and Sentinel-1 VV is one, so the amplitude is repeated across all
-three. Repetition is the null adaptation — it keeps the pretrained first-layer filters
-meaningful, since a grey image is a thing they have seen — and it is not what the ticket means
-by an input stage adapted to radar polarisation, which is a dual-polarisation stem trained as
-one. That is still to come.
+What cannot be deferred is the channel count, because without an answer to it nothing runs at
+all: ImageNet backbones take three channels and Sentinel-1 VV is one. `STEMS` below names the two
+answers this module has. The default repeats the amplitude across all three, which is the null
+adaptation — it keeps the pretrained first-layer filters meaningful, since a grey image is a
+thing they have seen. The other takes the one channel it is given, with the pretrained stem folded
+down onto it: every weight outside that first convolution is the repeat's own, and inside the tile
+the folded stem computes what the repeat computes. The two part company only over what lies
+outside the tile — see `_fold_stem` — so a run that asks for the single stem measures what
+training does with one bank of kernels rather than a different initialisation. Neither is the
+dual-polarisation stem the ticket asked for, and that one is not coming: there is no
+dual-polarisation data to fit it on and none to run it over.
 
 This module is the only one in `detect/` that imports torch, along with `train.py`. Everything
 that can be got wrong quietly — the split, the subset, the augmentations, the counting, the
@@ -50,6 +55,15 @@ ANCHOR_SIZES = ((32,), (64,), (128,), (256,), (512,))
 # ones. Nothing about radar argues for changing them.
 ASPECT_RATIOS = (0.5, 1.0, 2.0)
 
+# How many channels each input stage takes. "repeat" is the baseline the ladder starts from: one
+# polarisation copied three times, which is the minimum a three-channel ImageNet backbone accepts
+# and is not an adaptation to anything. "single" is the adaptation — one channel of radar
+# amplitude, with the pretrained stem folded down onto it.
+#
+# There is no "dual". LS-SSDD is VV and the scene this chain exports is VV, so a dual-polarisation
+# stem has no data to be fitted on and none to be run on. See docs/failures.md.
+STEMS = {"repeat": 3, "single": 1}
+
 # What the pretrained backbone was normalised with. Kept as ImageNet's rather than recomputed
 # over LS-SSDD, because the weights being adapted were fitted under these and a detector trained
 # for a handful of epochs has not got the budget to move the backbone far from them.
@@ -62,8 +76,13 @@ def detector_model(
     tile_px: int,
     seed: int,
     anchor_sizes: tuple[tuple[int, ...], ...] = ANCHOR_SIZES,
+    stem: str = "repeat",
     pretrained: bool = True,
     trainable_backbone_layers: int = 3,
+    rpn_batch_size_per_image: int = 256,
+    rpn_positive_fraction: float = 0.5,
+    box_batch_size_per_image: int = 512,
+    box_positive_fraction: float = 0.25,
 ) -> FasterRCNN:
     """A Faster R-CNN sized for ships of a few pixels on Sentinel-1.
 
@@ -76,12 +95,28 @@ def detector_model(
             run of the same config twice produced two different models.
         anchor_sizes: One tuple per pyramid level. Configurable because this is the number most
             likely to want moving once there are real numbers to move it against.
+        stem: `"repeat"` or `"single"`. The single-channel stem is built from the repeat's own
+            weights and reproduces what the repeat produces inside the tile, differing only at the
+            padded edge, so the rung that introduces it measures what training does with it rather
+            than a different starting point.
         pretrained: Start from COCO weights. A free tier gives too few epochs to train a
             ResNet-50 from scratch; set it false only where the session has no network to fetch
             them with.
         trainable_backbone_layers: How much of the backbone is unfrozen, from the top. Three of
             five is torchvision's default and is what the budget here affords.
+        rpn_batch_size_per_image: How many anchors the region proposal network computes its loss
+            over. Torchvision's default is 256. Lowering it is the lever on this data: with a
+            handful of ships to a tile there are nowhere near 128 positive anchors to be had, so
+            the remaining slots fill with background whatever `rpn_positive_fraction` asks for.
+        rpn_positive_fraction: A **ceiling** on how much of that batch may be positive, not a
+            target — the sampler takes `min(available, requested)`. Stated here because the
+            distinction is what rung 4 of the ladder turns on.
+        box_batch_size_per_image: The same, for the second-stage head.
+        box_positive_fraction: The same, for the second-stage head.
     """
+    if stem not in STEMS:
+        raise ValueError(f"unknown stem {stem!r}; this project has {sorted(STEMS)} and no dual")
+
     # Applied here, before anything is constructed, because the head below is initialised from
     # scratch — two classes where COCO had 91 — and it draws from torch's global generator. Left
     # unseeded, two sessions of the same config start from two different models and report
@@ -89,6 +124,7 @@ def detector_model(
     # configuration twice: see docs/failures.md.
     torch.manual_seed(seed)
 
+    channels = STEMS[stem]
     model = fasterrcnn_resnet50_fpn(
         weights="DEFAULT" if pretrained else None,
         weights_backbone="DEFAULT" if pretrained else None,
@@ -99,10 +135,16 @@ def detector_model(
             sizes=anchor_sizes,
             aspect_ratios=(ASPECT_RATIOS,) * len(anchor_sizes),
         ),
-        image_mean=IMAGENET_MEAN,
-        image_std=IMAGENET_STD,
+        # The single-channel stem absorbs the normalisation into its own weights, so the transform
+        # in front of it has nothing left to do.
+        image_mean=IMAGENET_MEAN if channels == 3 else [0.0],
+        image_std=IMAGENET_STD if channels == 3 else [1.0],
         min_size=tile_px,
         max_size=tile_px,
+        rpn_batch_size_per_image=rpn_batch_size_per_image,
+        rpn_positive_fraction=rpn_positive_fraction,
+        box_batch_size_per_image=box_batch_size_per_image,
+        box_positive_fraction=box_positive_fraction,
     )
 
     # The COCO head predicts 91 classes. Ships are one of them, and reusing that column would be
@@ -111,16 +153,66 @@ def detector_model(
     model.roi_heads.box_predictor = FastRCNNPredictor(
         model.roi_heads.box_predictor.cls_score.in_features, CLASSES
     )
+
+    # After the head, and that ordering is load-bearing. Building a `Conv2d` draws from the global
+    # generator, so folding the stem before the head above would give the two stems different
+    # heads — and the rung that introduces the stem would be measuring an initialisation.
+    if channels == 1:
+        _fold_stem(model)
+
     return model
 
 
-def as_model_input(image: np.ndarray) -> Tensor:
-    """One tile of amplitude in 0..1, as the three-channel image the backbone expects.
+def _fold_stem(model: FasterRCNN) -> None:
+    """Replace the three-channel `conv1` with the one-channel convolution that computes the same
+    thing inside the tile.
 
-    Repeated rather than averaged or padded with zeros: a grey image is something the pretrained
-    filters have seen, and two channels of zeros is not.
+    The repeat path is `y = Σ_c W_c · (x − m_c) / s_c`, where `m` and `s` are ImageNet's per-channel
+    statistics and `x` is one polarisation of amplitude copied three times. Summing the kernels
+    over the channel axis, each divided by its own standard deviation, gives a one-channel weight
+    that reproduces the first term; the second is a constant per output channel, which is a bias.
+
+    Inside the tile, and not at its edge: `conv1` pads with three rings of zeros, which under the
+    repeat stem are zeros in normalised space and stand for raw amplitude `m_c`, a different value
+    per channel, and under this one are a raw zero. Nothing reconciles those two conventions — a
+    single padding value would have to satisfy `v · A_k = B_k` for every output channel at once,
+    and the ratios differ per channel. So the two agree beyond three positions of the border and
+    differ within it, which is a convention about what lies outside a tile rather than a difference
+    in what the model has been given to start from.
+
+    The bias would be redundant in a stock ResNet, where the batch norm behind `conv1` recentres
+    whatever arrives. It is not redundant here: at the trainable-layer counts this project uses,
+    `bn1` is a `FrozenBatchNorm2d` applying fixed statistics, so a constant offset propagates
+    through the entire backbone instead of being absorbed.
     """
-    return torch.from_numpy(np.ascontiguousarray(image)).unsqueeze(0).repeat(3, 1, 1)
+    conv1 = model.backbone.body.conv1
+    weight = conv1.weight.data
+    mean = torch.tensor(IMAGENET_MEAN).view(1, 3, 1, 1)
+    std = torch.tensor(IMAGENET_STD).view(1, 3, 1, 1)
+
+    folded = torch.nn.Conv2d(
+        in_channels=1,
+        out_channels=conv1.out_channels,
+        kernel_size=conv1.kernel_size,
+        stride=conv1.stride,
+        padding=conv1.padding,
+        bias=True,
+    )
+    folded.weight.data = (weight / std).sum(dim=1, keepdim=True)
+    folded.bias.data = -(weight * mean / std).sum(dim=(1, 2, 3))
+
+    model.backbone.body.conv1 = folded
+
+
+def as_model_input(image: np.ndarray, stem: str = "repeat") -> Tensor:
+    """One tile of amplitude in 0..1, as the image this model's stem expects.
+
+    Repeated rather than averaged or padded with zeros, under the repeat stem: a grey image is
+    something the pretrained filters have seen, and two channels of zeros is not. Under the single
+    stem there is nothing to repeat — the fold has already put the three kernels into one.
+    """
+    tile = torch.from_numpy(np.ascontiguousarray(image)).unsqueeze(0)
+    return tile.repeat(STEMS[stem], 1, 1)
 
 
 def detections_from(output: dict[str, Tensor]) -> list[PixelDetection]:
