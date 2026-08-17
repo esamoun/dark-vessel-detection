@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Any
 
 import geopandas as gpd
-import yaml
 from pyproj import CRS
 
+from darkvessel.config import load_config
 from darkvessel.data.ais import load_ais, slice_for, write_ais
 from darkvessel.data.area import Bounds
 from darkvessel.data.dma import danish_maritime_authority
@@ -91,7 +91,7 @@ def _synthesise(directory: Path) -> int:
 
 
 def _run(config_path: Path) -> int:
-    config = yaml.safe_load(config_path.read_text())
+    config = load_config(config_path)
     run_config = config["run"]
     # Paths are read relative to the config file, so a config is portable and a run is defined
     # entirely by that one file plus the data it points at.
@@ -241,7 +241,7 @@ def _ais(config_path: Path) -> int:
     the chain runs from the result as often as it likes. What this writes is the file `run.ais`
     names, so a run stays one command against one config file.
     """
-    config = yaml.safe_load(config_path.read_text())
+    config = load_config(config_path)
     request = ais_request_from(config, config_path.parent)
     path = request.pop("path")
 
@@ -295,7 +295,7 @@ def survey_request_from(config: dict[str, Any]) -> dict[str, Any]:
 
 def _survey(config_path: Path) -> int:
     """Measure where the traffic is, and rank every rectangle the study area could be."""
-    config = yaml.safe_load(config_path.read_text())
+    config = load_config(config_path)
     request = survey_request_from(config)
     report = request.pop("report")
 
@@ -383,7 +383,7 @@ def _train(config_path: Path) -> int:
     from darkvessel.detect.model import detector_model
     from darkvessel.detect.train import Schedule, train
 
-    config = yaml.safe_load(config_path.read_text())
+    config = load_config(config_path)
     request = training_request_from(config, config_path.parent)
 
     refs = catalogue(request["root"], request["layout"])
@@ -434,7 +434,7 @@ def export_request_from(config: dict[str, Any], relative_to: Path) -> dict[str, 
 
 def _export(config_path: Path) -> int:
     """Fetch the scene the config names. The one command in this package that needs a network."""
-    config = yaml.safe_load(config_path.read_text())
+    config = load_config(config_path)
     request = export_request_from(config, config_path.parent)
 
     scene = export_scene(
