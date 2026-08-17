@@ -29,6 +29,7 @@ from darkvessel.detect.checkpoints import Checkpoints, Journal
 from darkvessel.detect.dataset import Layout, Subset, catalogue, split_by_scene
 from darkvessel.detect.detector import Detector
 from darkvessel.detect.geo import write_detections
+from darkvessel.detect.ladder import Rung, judge, table
 from darkvessel.detect.metrics import Reporting
 from darkvessel.detect.threshold import BrightPixelDetector
 from darkvessel.fusion.azimuth import Geometry
@@ -69,6 +70,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     train_command.add_argument("--config", type=Path, required=True)
 
+    compare_command = commands.add_parser(
+        "compare", help="read the rungs of a ladder of training runs against one another"
+    )
+    compare_command.add_argument("--config", type=Path, required=True)
+
     args = parser.parse_args(argv)
 
     if args.command == "synthesise":
@@ -81,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
         return _survey(args.config)
     if args.command == "train":
         return _train(args.config)
+    if args.command == "compare":
+        return _compare(args.config)
     return _run(args.config)
 
 
@@ -410,6 +418,58 @@ def _train(config_path: Path) -> int:
         built={"tile_px": request["tile_px"], **request["model"]},
     )
     print(f"metrics in {request['journal'].path}")
+    return 0
+
+
+def ladder_request_from(config: dict[str, Any], relative_to: Path) -> list[dict[str, Any]]:
+    """The rungs a ladder config names, with their metrics files resolved.
+
+    Separate from the command for the reason `training_request_from` is: this file names five
+    paths, and the last of them does not exist until five sessions on a rented GPU have finished.
+    A mistyped key surfacing then would be the most expensive way to find it.
+    """
+    return [
+        {
+            "label": str(rung["label"]),
+            "changed": str(rung["changed"]),
+            "metrics": (relative_to / rung["metrics"]).resolve(),
+        }
+        for rung in config["ladder"]["rungs"]
+    ]
+
+
+def _compare(config_path: Path) -> int:
+    """Read the ladder and say which rungs stand.
+
+    A rung whose metrics file is not there has not been run yet, which is the ordinary state of
+    this file for most of the ticket. The comparison reports it as pending and stops there rather
+    than skipping it — a ladder read across a gap would measure a change against the wrong
+    configuration and would not look any different.
+    """
+    config = load_config(config_path)
+    window = int(config["ladder"].get("window", 4))
+
+    rungs = []
+    for requested in ladder_request_from(config, config_path.parent):
+        if not requested["metrics"].exists():
+            print(f"{requested['label']}: not run yet ({requested['metrics']})")
+            break
+
+        journal = Journal(requested["metrics"])
+        rungs.append(
+            Rung(
+                label=requested["label"],
+                changed=requested["changed"],
+                run=journal.run(),
+                epochs=journal.entries(),
+            )
+        )
+
+    if not rungs:
+        print("no rung of this ladder has been run yet")
+        return 0
+
+    print(table(judge(rungs, window=window)))
     return 0
 
 
