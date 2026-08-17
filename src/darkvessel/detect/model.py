@@ -184,6 +184,14 @@ def _fold_stem(model: FasterRCNN) -> None:
     whatever arrives. It is not redundant here: at the trainable-layer counts this project uses,
     `bn1` is a `FrozenBatchNorm2d` applying fixed statistics, so a constant offset propagates
     through the entire backbone instead of being absorbed.
+
+    The trainability is carried across rather than left to default. At three trainable layers
+    torchvision unfreezes `layer4`, `layer3` and `layer2` and nothing else, so the stem this
+    replaces is frozen — while a fresh `Conv2d` arrives trainable, and `train.py` builds its
+    optimiser from whatever has `requires_grad`. Left alone, the single-stem run would train 3,200
+    parameters the repeat run never touches, which is the confound this stem exists to remove
+    reappearing on the trainability axis. The bias follows the weight for the same reason: the
+    baseline has no such parameter at all.
     """
     conv1 = model.backbone.body.conv1
     weight = conv1.weight.data
@@ -200,6 +208,8 @@ def _fold_stem(model: FasterRCNN) -> None:
     )
     folded.weight.data = (weight / std).sum(dim=1, keepdim=True)
     folded.bias.data = -(weight * mean / std).sum(dim=(1, 2, 3))
+    folded.weight.requires_grad_(conv1.weight.requires_grad)
+    folded.bias.requires_grad_(conv1.weight.requires_grad)
 
     model.backbone.body.conv1 = folded
 

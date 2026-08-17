@@ -2,9 +2,11 @@
 
 LS-SSDD is VV and the scene this chain exports is VV, so the dual-polarisation stem issue #11
 asks for has no data on either side — see docs/failures.md. What is delivered instead is an
-honest single-channel stem, and what is asserted here is that it starts life as exactly the model
-the three-channel repeat starts life as. Without that, the rung would be comparing two different
-initialisations and reporting the difference as an adaptation.
+honest single-channel stem, and what is asserted here is how much of the three-channel repeat it
+starts life as: every weight outside the first convolution is the repeat's own, and inside the
+tile the folded stem computes what the repeat computes, the two differing only over the padded
+edge. Without that much, the rung would be comparing two different initialisations and reporting
+the difference as an adaptation.
 
 Skipped where torch is not installed, which includes CI.
 """
@@ -16,7 +18,7 @@ torch = pytest.importorskip(
     "torch", reason="the detector extra is not installed: pip install -e '.[detector]'"
 )
 
-from darkvessel.detect.model import as_model_input, detector_model  # noqa: E402
+from darkvessel.detect.model import _fold_stem, as_model_input, detector_model  # noqa: E402
 
 TILE_PX = 64
 
@@ -38,7 +40,9 @@ def stem_output(stem: str, image: np.ndarray):
     """What `conv1` produces, through the model's own transform.
 
     Through the transform rather than around it because the normalisation is half of what the fold
-    absorbs, and a test that skipped it would pass with the bias missing.
+    absorbs. Handed the same raw tile, the repeat computes `Σ_c W_c·x` and this one computes
+    `(Σ_c W_c/s_c)·x + b'`; those are not the same function, so a comparison that skipped the
+    transform would not be comparing the two stems at all.
     """
     model = a_model(stem)
     with torch.no_grad():
@@ -101,9 +105,41 @@ def test_the_single_channel_stem_takes_one_channel() -> None:
 
 
 def test_the_bias_the_fold_needs_is_there() -> None:
-    """`bn1` is frozen at these settings, so it applies fixed statistics instead of recentring the
-    batch. Drop the bias and the two paths differ by a constant through the whole backbone."""
+    """In a run that starts from COCO weights, `bn1` is a `FrozenBatchNorm2d` applying fixed
+    statistics rather than recentring the batch — so a constant offset propagates through the whole
+    backbone instead of being absorbed, and the two paths differ by it everywhere. The fixture
+    here is untrained and gets an ordinary `BatchNorm2d`, so what is asserted is the bias itself
+    rather than what production does without it."""
     assert a_model("single").backbone.body.conv1.bias is not None
+
+
+def test_the_folded_stem_inherits_the_trainability_of_the_stem_it_replaces() -> None:
+    """The other half of "same model at initialisation": the same parameters being *trained*.
+
+    A run of this project starts from COCO weights with three trainable layers, and torchvision
+    unfreezes `layer4`, `layer3` and `layer2` and nothing else — so the stem the fold replaces has
+    `requires_grad` false. A fresh `Conv2d` arrives with it true, and `train.py` builds its
+    optimiser from whatever carries the flag, so a folded stem that did not inherit it would hand
+    the single-stem arm 3,200 parameters the repeat arm never touches.
+
+    The freezing is stood in for by setting the flag by hand rather than reached through
+    `detector_model`, because it cannot be reached without `pretrained=True`: on the untrained path
+    torchvision is passed no trainable-layer count and defaults to unfreezing all five, and a test
+    that downloaded 160 MB of COCO weights is not a test anyone runs.
+    """
+    frozen = a_model("repeat")
+    frozen.backbone.body.conv1.weight.requires_grad_(False)
+    _fold_stem(frozen)
+
+    assert not frozen.backbone.body.conv1.weight.requires_grad
+    assert not frozen.backbone.body.conv1.bias.requires_grad
+
+    # The converse, so that what is pinned is the inheritance rather than a constant.
+    unfrozen = a_model("repeat")
+    _fold_stem(unfrozen)
+
+    assert unfrozen.backbone.body.conv1.weight.requires_grad
+    assert unfrozen.backbone.body.conv1.bias.requires_grad
 
 
 def test_one_tile_reaches_the_model_with_the_channels_its_stem_expects() -> None:
