@@ -14,6 +14,7 @@ import rasterio
 from affine import Affine
 
 ACQUIRED_AT_TAG = "ACQUIRED_AT"
+ORBIT_PASS_TAG = "ORBIT_PASS"
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,11 @@ class Scene:
     transform: Affine
     crs: str
     acquired_at: datetime
+    # Which way the satellite was travelling. Written by the export, and read here because it is
+    # half of what decides where a moving vessel gets drawn — see `fusion/azimuth.py`. None for a
+    # scene that has no orbit behind it, which is the synthetic one: the correction then has
+    # nothing to compute from and is not applied, rather than being applied from a default.
+    orbit_pass: str | None = None
 
     def __post_init__(self) -> None:
         if self.image.ndim != 2:
@@ -51,6 +57,10 @@ class Scene:
                 transform=dataset.transform,
                 crs=dataset.crs.to_string(),
                 acquired_at=datetime.fromisoformat(acquired_at),
+                # Absent rather than guessed. A missing pass is a scene the azimuth correction
+                # declines to touch, which is right: guessing it wrong reverses the direction
+                # every vessel is moved in, and a reversed correction is worse than none.
+                orbit_pass=dataset.tags().get(ORBIT_PASS_TAG),
             )
 
 

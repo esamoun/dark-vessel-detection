@@ -31,6 +31,7 @@ from darkvessel.detect.detector import Detector
 from darkvessel.detect.geo import write_detections
 from darkvessel.detect.metrics import Reporting
 from darkvessel.detect.threshold import BrightPixelDetector
+from darkvessel.fusion.azimuth import Geometry
 from darkvessel.fusion.interpolate import INTERPOLATED, REPORTED
 from darkvessel.fusion.match import DARK, MATCHED
 from darkvessel.pipeline import run as run_pipeline
@@ -115,6 +116,7 @@ def _run(config_path: Path) -> int:
         ais=ais,
         detector=_detector_from(run_config, relative_to),
         tiling=tiling,
+        geometry=geometry_from(config, scene.orbit_pass),
         **fusion,
     )
     output = (relative_to / run_config["output"]).resolve()
@@ -173,6 +175,27 @@ def _verdict(
             "dark by default rather than by evidence: check the ingestion covered the area"
         )
     return verdict
+
+
+def geometry_from(config: dict[str, Any], orbit_pass: str | None) -> Geometry | None:
+    """The orbit geometry the azimuth correction needs, or None where it cannot be had.
+
+    The pass comes off the scene, never out of the config: it is a property of the acquisition,
+    and a config that could name a different one would let a run correct every vessel in the
+    wrong direction. The incidence angle comes out of the config, because the products this chain
+    exports do not carry it yet — see `fusion/azimuth.py` and docs/decisions.md.
+
+    A scene with no pass tag gets no correction. That is the synthetic scene, which has no
+    satellite behind it, and any real product exported before the tag existed.
+    """
+    if orbit_pass is None:
+        return None
+
+    settings = config["fusion"].get("azimuth")
+    if settings is None or not settings.get("correct", True):
+        return None
+
+    return Geometry(orbit_pass=orbit_pass, incidence_deg=float(settings["incidence_deg"]))
 
 
 def fusion_settings_from(config: dict[str, Any]) -> dict[str, Any]:

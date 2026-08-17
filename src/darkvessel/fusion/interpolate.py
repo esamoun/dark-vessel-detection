@@ -62,10 +62,27 @@ def positions_at(
     # Columns named rather than inferred from the rows, so that a slice a filter emptied comes
     # back as an empty answer of the right shape instead of a frame with nothing in it at all.
     frame = pd.DataFrame(
-        placed, columns=["mmsi", "length_m", "position_basis", "position_age_s", "geometry"]
+        placed,
+        columns=[
+            "mmsi",
+            "length_m",
+            "position_basis",
+            "position_age_s",
+            "velocity_east_ms",
+            "velocity_north_ms",
+            "geometry",
+        ],
     )
     return gpd.GeoDataFrame(
-        frame.astype({"mmsi": "string", "length_m": "float64", "position_age_s": "float64"}),
+        frame.astype(
+            {
+                "mmsi": "string",
+                "length_m": "float64",
+                "position_age_s": "float64",
+                "velocity_east_ms": "float64",
+                "velocity_north_ms": "float64",
+            }
+        ),
         geometry=gpd.GeoSeries(frame["geometry"].to_list(), index=frame.index, crs=ais.crs),
         crs=ais.crs,
     )
@@ -143,12 +160,21 @@ def _between(
     after: pd.Series,
     acquisition: pd.Timestamp,
 ) -> dict:
-    """A position on the straight line between the two reports either side of the acquisition."""
+    """A position on the straight line between the two reports either side of the acquisition.
+
+    The velocity comes out of the same two reports, because it is the slope of the line the
+    position sits on and deriving it a second way would let the two disagree. It is what the
+    azimuth correction needs: a moving vessel is drawn displaced along the satellite's track, and
+    how far depends on how fast it is closing on the radar. See `fusion/azimuth.py`.
+    """
     span = after["timestamp"] - before["timestamp"]
     travelled = (acquisition - before["timestamp"]) / span
+    seconds = span.total_seconds()
     return {
         "mmsi": mmsi,
         "position_basis": INTERPOLATED,
+        "velocity_east_ms": (after.geometry.x - before.geometry.x) / seconds,
+        "velocity_north_ms": (after.geometry.y - before.geometry.y) / seconds,
         # How tight the bracket was. An interpolated position is a construction, and the nearest
         # real observation behind it is what says how much the construction is worth.
         "position_age_s": min(
@@ -169,11 +195,18 @@ def _from_report(mmsi: str, report: pd.Series, acquisition: pd.Timestamp) -> dic
     and speed derived from two earlier points, manufactures a position where no measurement
     exists — the same class of confidently wrong answer as matching against a stale one, and
     harder to see because the result looks like a placement rather than a fallback.
+
+    The velocity is NaN for the same reason, and that is not the same as zero. A vessel placed
+    from one report is a vessel whose course this chain does not know, so the azimuth correction
+    declines to move it rather than correcting it by nothing — which would be a claim that it was
+    stationary, and would put a fast vessel back exactly where the radar did not draw it.
     """
     return {
         "mmsi": mmsi,
         "position_basis": REPORTED,
         "position_age_s": abs((report["timestamp"] - acquisition).total_seconds()),
+        "velocity_east_ms": float("nan"),
+        "velocity_north_ms": float("nan"),
         "geometry": report.geometry,
     }
 
