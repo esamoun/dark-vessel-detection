@@ -107,23 +107,81 @@ class Checkpoints:
 
 
 class Journal:
-    """The numbers a run reported, in a file that needs nothing to read.
+    """The numbers a run reported, and which run reported them, in a file that needs nothing to
+    read.
 
-    Written beside the weights and not inside them: the point of this ticket is a precision and a
-    recall, and a reader should not need torch, a GPU or an unpickle to see them. Rewritten whole
-    each time rather than appended to, so that a session killed mid-write cannot leave half a
-    line that the next session reads back as a number.
+    Written beside the weights and not inside them: the point of a training level is a precision
+    and a recall, and a reader should not need torch, a GPU or an unpickle to see them. Rewritten
+    whole each time rather than appended to, so that a session killed mid-write cannot leave half
+    a line that the next session reads back as a number.
+
+    The run block was added for the ladder in issue #11, where five metrics files have to be
+    compared against one another. Without it they are five anonymous tables, and nothing stops a
+    comparison between a run scored at a 200 m tolerance and one scored at 300 m.
     """
 
     def __init__(self, path: Path) -> None:
         self.path = path
 
     def entries(self) -> list[dict[str, Any]]:
-        if not self.path.exists():
-            return []
-        return list(json.loads(self.path.read_text()))
+        """One entry per epoch that was scored, in the order they ran."""
+        return self._document()["epochs"]
+
+    def run(self) -> dict[str, Any] | None:
+        """What configuration produced these numbers. None for a run that never said."""
+        return self._document()["run"]
+
+    def describe(self, run: dict[str, Any]) -> None:
+        """Name the run, once, before the first epoch is recorded.
+
+        A resumed session calls this again with the same identity, which is allowed. A resumed
+        session calling it with a *different* identity means a config was edited between two
+        sessions, and the file would then hold two experiments under one name with nothing saying
+        so — that is refused rather than merged.
+        """
+        document = self._document()
+        if document["run"] is not None and document["run"] != run:
+            differing = _differences(document["run"], run)
+            raise ValueError(
+                f"{self.path.name} was written by a run described differently: {differing}. "
+                "Resuming under an edited config would put two experiments in one file"
+            )
+
+        document["run"] = run
+        self._write(document)
 
     def record(self, entry: dict[str, Any]) -> None:
-        history = [*self.entries(), entry]
+        document = self._document()
+        document["epochs"] = [*document["epochs"], entry]
+        self._write(document)
+
+    def _document(self) -> dict[str, Any]:
+        if not self.path.exists():
+            return {"run": None, "epochs": []}
+
+        loaded = json.loads(self.path.read_text())
+        # A bare list is what runs before 2026-08-17 wrote. Read rather than refused, because the
+        # resume path reads this file at the start of every session and a format change must not
+        # strand a run already in flight. `ladder.py` is where an unnamed run is refused.
+        if isinstance(loaded, list):
+            return {"run": None, "epochs": list(loaded)}
+
+        return {"run": loaded.get("run"), "epochs": list(loaded.get("epochs", []))}
+
+    def _write(self, document: dict[str, Any]) -> None:
         with atomically(self.path) as partial:
-            partial.write_text(json.dumps(history, indent=2))
+            partial.write_text(json.dumps(document, indent=2))
+
+
+def _differences(before: dict[str, Any], after: dict[str, Any], prefix: str = "") -> str:
+    """The keys that disagree, named, so the refusal above says what was edited."""
+    changed = []
+    for key in sorted(set(before) | set(after)):
+        here, there = before.get(key), after.get(key)
+        if here == there:
+            continue
+        if isinstance(here, dict) and isinstance(there, dict):
+            changed.append(_differences(here, there, f"{prefix}{key}."))
+        else:
+            changed.append(f"{prefix}{key}: {here!r} -> {there!r}")
+    return ", ".join(changed)
