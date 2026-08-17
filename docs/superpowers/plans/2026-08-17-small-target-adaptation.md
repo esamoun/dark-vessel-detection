@@ -584,18 +584,6 @@ def test_the_first_rung_is_kept_because_there_is_nothing_to_compare_it_against()
     assert verdicts[0].band is None
 
 
-def test_a_rung_that_clears_the_band_is_kept() -> None:
-    previous = a_rung("R0", [0.5, 0.875, 0.5, 0.5])  # band 0.375, final 0.5
-    later = a_rung("R1", [0.875, 0.875, 0.875, 0.875])  # final 0.875, gain 0.375
-
-    verdicts = judge([previous, later])
-
-    assert verdicts[1].band == pytest.approx(0.375)
-    assert verdicts[1].gain == pytest.approx(0.375)
-    # Exactly equal, so this one is the boundary and it goes the other way. See below.
-    assert verdicts[1].kept is False
-
-
 def test_a_rung_whose_gain_exactly_equals_the_band_is_rejected() -> None:
     """The boundary, pinned. A gain that only just reaches the noise the previous rung was
     already showing is noise, and `>=` here would let every rung through on a bad week."""
