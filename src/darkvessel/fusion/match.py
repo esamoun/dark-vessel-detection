@@ -18,7 +18,10 @@ from datetime import datetime, timedelta
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+from pyproj import Transformer
+from shapely import Point
 
+from darkvessel.fusion.azimuth import Geometry
 from darkvessel.fusion.interpolate import positions_at
 
 MATCHED = "matched"
@@ -36,6 +39,7 @@ def classify(
     acquired_at: datetime,
     tolerance_m: float,
     max_gap: timedelta,
+    geometry: Geometry | None = None,
 ) -> gpd.GeoDataFrame:
     """Mark each detection matched or dark against the declared positions.
 
@@ -47,9 +51,18 @@ def classify(
     `ais` of None is not an empty AIS slice. An empty slice is a search that returned nothing,
     and its detections are honestly dark; None is no search at all, and its detections are
     `unsearched`, carrying no radius because no radius was applied.
+
+    `geometry` is the orbit the scene was acquired from. Given one, each declared position is
+    moved to where the radar would have drawn the vessel before anything is compared — a moving
+    target is imaged displaced along the satellite's track, and on the first real scene that put
+    four declared vessels 420 to 490 m from their detections and had the chain report all four as
+    dark. Left out, no correction is applied and the run matches against the positions as placed,
+    which is what the synthetic scene wants: it has no orbit.
     """
     searched = ais is not None
-    declared = _positions_at_acquisition(ais, acquired_at, detections.crs, max_gap)
+    declared = _drawn_by_the_radar(
+        _positions_at_acquisition(ais, acquired_at, detections.crs, max_gap), geometry
+    )
 
     classified = detections.copy()
     classified["status"] = DARK if searched else UNSEARCHED
@@ -68,6 +81,11 @@ def classify(
     classified["declarations_searched"] = float(len(declared)) if searched else np.nan
     classified["position_basis"] = pd.Series(pd.NA, index=classified.index, dtype="string")
     classified["position_age_s"] = np.nan
+    # How far the declaration had to be moved to sit where the radar drew it. On the layer for
+    # the same reason the tolerance is: a match made across four hundred metres of azimuth
+    # correction and one made across none are different claims, and only one of them depends on
+    # a geometry someone chose.
+    classified["azimuth_shift_m"] = np.nan
     classified["acquired_at"] = acquired_at
 
     for detection_idx, declared_idx, distance_m in _closest_pairs(
@@ -83,8 +101,61 @@ def classify(
         classified.loc[detection_idx, "position_age_s"] = declared.loc[
             declared_idx, "position_age_s"
         ]
+        classified.loc[detection_idx, "azimuth_shift_m"] = declared.loc[
+            declared_idx, "azimuth_shift_m"
+        ]
 
     return classified
+
+
+def _drawn_by_the_radar(declared: gpd.GeoDataFrame, geometry: Geometry | None) -> gpd.GeoDataFrame:
+    """Move each declared position to where the radar would have drawn that vessel.
+
+    A vessel with no velocity behind it is left alone and its shift is NaN rather than zero. The
+    two are different claims: zero says the chain worked out that this vessel was not moving,
+    NaN says it does not know. A position placed from a single report is the second, and moving
+    it by nothing would put a fast ship back exactly where the radar did not draw it while
+    looking, in the layer, like a correction that had been applied.
+    """
+    moved = declared.copy()
+    if geometry is None or moved.empty:
+        moved["azimuth_shift_m"] = np.nan
+        return moved
+
+    latitude = _latitude_of(moved)
+    shifts = [
+        geometry.displacement(east, north, latitude)
+        if np.isfinite(east) and np.isfinite(north)
+        else None
+        for east, north in zip(moved["velocity_east_ms"], moved["velocity_north_ms"], strict=True)
+    ]
+
+    moved["azimuth_shift_m"] = [
+        float(np.hypot(*shift)) if shift is not None else np.nan for shift in shifts
+    ]
+    moved.geometry = gpd.GeoSeries(
+        [
+            point if shift is None else Point(point.x + shift[0], point.y + shift[1])
+            for point, shift in zip(moved.geometry, shifts, strict=True)
+        ],
+        index=moved.index,
+        crs=declared.crs,
+    )
+    return moved
+
+
+def _latitude_of(positions: gpd.GeoDataFrame) -> float:
+    """One latitude for the whole scene, taken from the middle of the declarations.
+
+    The ground track's bearing changes with latitude, but over an eighteen-kilometre box it
+    changes by hundredths of a degree — far less than the incidence angle this correction is
+    already approximating. One latitude, taken once, rather than a reprojection per vessel.
+    """
+    centre = positions.geometry.union_all().centroid
+    _, latitude = Transformer.from_crs(positions.crs, "EPSG:4326", always_xy=True).transform(
+        centre.x, centre.y
+    )
+    return float(latitude)
 
 
 def _positions_at_acquisition(

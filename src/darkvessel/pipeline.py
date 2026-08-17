@@ -14,6 +14,7 @@ from darkvessel.data.tiling import Tiling
 from darkvessel.detect.detector import Detector
 from darkvessel.detect.geo import to_ground
 from darkvessel.detect.infer import detect_scene
+from darkvessel.fusion.azimuth import Geometry
 from darkvessel.fusion.match import classify
 
 
@@ -25,6 +26,7 @@ def run(
     tiling: Tiling,
     tolerance_m: float,
     max_gap: timedelta,
+    geometry: Geometry | None = None,
 ) -> gpd.GeoDataFrame:
     """Run the chain over one scene and return its detections, georeferenced.
 
@@ -35,9 +37,12 @@ def run(
         tiling: How the scene is cut up for the detector, and put back together afterwards.
         tolerance_m: How far a declared position may sit from a detection and still explain it.
         max_gap: The widest bracket of AIS reports a position may be interpolated across.
+        geometry: The orbit the scene was acquired from, which decides how far a moving vessel is
+            drawn from where it actually was. None applies no correction — the right answer for a
+            synthetic scene, which has no satellite behind it.
 
     Returns:
         A GeoDataFrame in the scene's CRS, one row per detection.
     """
     detections = to_ground(detect_scene(scene.image, detector, tiling), scene)
-    return classify(detections, ais, scene.acquired_at, tolerance_m, max_gap)
+    return classify(detections, ais, scene.acquired_at, tolerance_m, max_gap, geometry)
