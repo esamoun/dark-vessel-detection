@@ -17,8 +17,9 @@ the code path that uses it. An untested resume is a worse trade than a slower ep
 docs/decisions.md.
 """
 
+import json
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 import torch
@@ -42,6 +43,30 @@ class Schedule:
     weight_decay: float
     workers: int
     seed: int
+    # "constant" is what the first run used and what the ladder's baseline keeps. The failure log
+    # records what it cost: twelve epochs that reached the neighbourhood of a minimum in three and
+    # bounced around it for nine, while the training loss stayed nearly flat and said nothing.
+    lr_schedule: str = "constant"
+
+
+def _scheduler(
+    optimiser: torch.optim.Optimizer, schedule: Schedule
+) -> "torch.optim.lr_scheduler.LRScheduler | None":
+    """How the rate moves across the schedule, or None if it does not.
+
+    Cosine rather than steps because twelve epochs is not many and a `StepLR` would introduce two
+    free parameters — where the step falls and how far it drops — that nothing here could justify.
+    No warmup for the same reason: it is a third knob, and it becomes a rung of its own if the
+    first three epochs turn out to need it.
+    """
+    if schedule.lr_schedule == "constant":
+        return None
+    if schedule.lr_schedule == "cosine":
+        return torch.optim.lr_scheduler.CosineAnnealingLR(optimiser, T_max=schedule.epochs)
+
+    raise ValueError(
+        f"unknown lr_schedule {schedule.lr_schedule!r}; this project has 'constant' and 'cosine'"
+    )
 
 
 def train(
@@ -75,12 +100,47 @@ def train(
     generator's position in a stream.
     """
     model.to(device)
+
+    # Written before the first epoch, so a metrics file says which configuration produced it. Five
+    # rungs of a ladder are five of these files, and one that does not name its run compares to
+    # nothing. `describe` refuses a resume under an edited config rather than merging two
+    # experiments into one file — including a resumed session's `built`, whose anchor sizes are
+    # tuples here and lists once `describe` has round-tripped them through JSON once already.
+    # Round-tripped here too, so the two are compared as what they will both be on disk rather
+    # than one of them a moment before it gets there.
+    #
+    # `epochs` is left out of the schedule block on purpose. It is the one field of `Schedule`
+    # this design expects to change between sessions of the same run — extending training past
+    # what a first pass asked for is a longer schedule, not a different experiment — and every
+    # other field of `schedule` still locks: change the rate, the batch size or which schedule
+    # decays it and this refuses exactly as it does for `built`.
+    schedule_identity = {key: value for key, value in asdict(schedule).items() if key != "epochs"}
+    journal.describe(
+        json.loads(
+            json.dumps(
+                {
+                    "built": built,
+                    "stem": stem,
+                    "schedule": schedule_identity,
+                    "reporting": {
+                        "tolerance_m": reporting.tolerance_m,
+                        "resolution_m": reporting.resolution_m,
+                        "thresholds": list(reporting.thresholds),
+                    },
+                    "training_tiles": len(training),
+                    "held_out_tiles": len(held_out),
+                }
+            )
+        )
+    )
+
     optimiser = torch.optim.SGD(
         [parameter for parameter in model.parameters() if parameter.requires_grad],
         lr=schedule.learning_rate,
         momentum=schedule.momentum,
         weight_decay=schedule.weight_decay,
     )
+    scheduler = _scheduler(optimiser, schedule)
 
     resumed = checkpoints.latest()
     if resumed is not None:
@@ -88,6 +148,11 @@ def train(
         state = torch.load(path, map_location=device, weights_only=True)
         model.load_state_dict(state["model"])
         optimiser.load_state_dict(state["optimiser"])
+        # A scheduler left out of the checkpoint restarts from the top, and the resumed session
+        # trains its remaining epochs at rates an uninterrupted run would never have used. None
+        # in a checkpoint written by a constant-rate run, which is why this is guarded twice.
+        if scheduler is not None and state.get("scheduler") is not None:
+            scheduler.load_state_dict(state["scheduler"])
         say(f"resuming after epoch {epoch}, from {path.name}")
 
         # The epoch whose weights survived the session that wrote them but whose score did not.
@@ -98,6 +163,7 @@ def train(
             _report(
                 epoch,
                 loss=None,
+                learning_rate=None,
                 attempt=_score(model, held_out, schedule, reporting, device, stem=stem),
                 held_out=held_out,
                 reporting=reporting,
@@ -116,7 +182,15 @@ def train(
     )
 
     for epoch in range(first, schedule.epochs + 1):
+        # Read before the step below, so the journal records the rate this epoch was trained at
+        # rather than the rate the next one will be.
+        rate = optimiser.param_groups[0]["lr"]
         loss = _one_epoch(model, optimiser, training, epoch, schedule, device, stem=stem)
+
+        # Stepped before the checkpoint is written, so what lands on the disk with epoch N is the
+        # state a session resuming at epoch N+1 needs, and that session loads it and starts.
+        if scheduler is not None:
+            scheduler.step()
 
         # Before the scoring, not after: an interrupted evaluation costs the numbers, and the
         # numbers can be recomputed from the weights.
@@ -126,6 +200,7 @@ def train(
                     "epoch": epoch,
                     "model": model.state_dict(),
                     "optimiser": optimiser.state_dict(),
+                    "scheduler": scheduler.state_dict() if scheduler is not None else None,
                     # Not weights, and that is exactly the point. Anchor sizes leave no trace in
                     # a state dict — `AnchorGenerator` has no parameters — so a checkpoint that
                     # does not name them loads cleanly into a model looking for ships of another
@@ -139,12 +214,14 @@ def train(
         # `.partial` file — the one thing this module exists to make impossible.
         landed = checkpoints.path_for(epoch)
         say(
-            f"epoch {epoch}: loss {loss:.4f}, checkpoint {checkpoints.directory.name}/{landed.name}"
+            f"epoch {epoch}: loss {loss:.4f}, rate {rate:.5f}, "
+            f"checkpoint {checkpoints.directory.name}/{landed.name}"
         )
 
         _report(
             epoch,
             loss=loss,
+            learning_rate=rate,
             attempt=_score(model, held_out, schedule, reporting, device, stem=stem),
             held_out=held_out,
             reporting=reporting,
@@ -157,6 +234,7 @@ def _report(
     epoch: int,
     *,
     loss: float | None,
+    learning_rate: float | None,
     attempt: Attempt,
     held_out: Sequence[TileRef],
     reporting: Reporting,
@@ -167,12 +245,14 @@ def _report(
 
     `loss` is None for an epoch scored from a checkpoint rather than at the end of its own pass:
     the number was lost with the session that computed it, and a zero there would be a training
-    loss nobody measured.
+    loss nobody measured. `learning_rate` is None for the same reason and at the same time: the
+    rate that epoch trained at was never read, and a value here would be a rate nobody trained at.
     """
     journal.record(
         {
             "epoch": epoch,
             "training_loss": loss,
+            "learning_rate": learning_rate,
             "held_out_tiles": len(held_out),
             "held_out_ships": attempt.ships,
             "at": [
