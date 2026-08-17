@@ -55,9 +55,14 @@ def train(
     reporting: Reporting,
     device: torch.device,
     built: dict[str, Any],
+    stem: str = "repeat",
     say: Callable[[str], None] = print,
 ) -> None:
     """Run the schedule, or as much of it as this session gets through.
+
+    `stem` is the input stage `model` was built with, and it has to be the one the tiles are cut
+    for: a single-channel model takes one channel and the repeat takes three, and the tiles are
+    made here rather than by the caller.
 
     `built` is what constructed `model` — its tile size, anchors and seed — and it is written
     into every checkpoint so that whatever loads one can refuse a model built differently. It is
@@ -93,7 +98,7 @@ def train(
             _report(
                 epoch,
                 loss=None,
-                attempt=_score(model, held_out, schedule, reporting, device),
+                attempt=_score(model, held_out, schedule, reporting, device, stem=stem),
                 held_out=held_out,
                 reporting=reporting,
                 journal=journal,
@@ -111,7 +116,7 @@ def train(
     )
 
     for epoch in range(first, schedule.epochs + 1):
-        loss = _one_epoch(model, optimiser, training, epoch, schedule, device)
+        loss = _one_epoch(model, optimiser, training, epoch, schedule, device, stem=stem)
 
         # Before the scoring, not after: an interrupted evaluation costs the numbers, and the
         # numbers can be recomputed from the weights.
@@ -140,7 +145,7 @@ def train(
         _report(
             epoch,
             loss=loss,
-            attempt=_score(model, held_out, schedule, reporting, device),
+            attempt=_score(model, held_out, schedule, reporting, device, stem=stem),
             held_out=held_out,
             reporting=reporting,
             journal=journal,
@@ -194,11 +199,13 @@ def _one_epoch(
     epoch: int,
     schedule: Schedule,
     device: torch.device,
+    *,
+    stem: str = "repeat",
 ) -> float:
     """One pass over the training tiles. Returns the mean loss, which is the run's only sign of
     life between one held-out score and the next."""
     loader = DataLoader(
-        _Tiles(training, epoch=epoch, seed=schedule.seed),
+        _Tiles(training, epoch=epoch, seed=schedule.seed, stem=stem),
         batch_size=schedule.batch_size,
         shuffle=True,
         num_workers=schedule.workers,
@@ -237,6 +244,8 @@ def _score(
     schedule: Schedule,
     reporting: Reporting,
     device: torch.device,
+    *,
+    stem: str = "repeat",
 ) -> Attempt:
     """Run the held-out split and count what came back.
 
@@ -245,7 +254,7 @@ def _score(
     has not earned.
     """
     loader = DataLoader(
-        _Tiles(held_out),
+        _Tiles(held_out, stem=stem),
         batch_size=schedule.batch_size,
         shuffle=False,
         num_workers=schedule.workers,
@@ -270,12 +279,22 @@ class _Tiles(Dataset):
     `epoch` is what decides the augmentation, and passing None turns it off — which is what the
     held-out split gets. Scoring an augmented split would measure the model against eight views
     of a tile and report the average as if it were one.
+
+    `stem` decides how many channels a tile is handed over in, and has to be the one the model
+    was built with.
     """
 
-    def __init__(self, refs: Sequence[TileRef], epoch: int | None = None, seed: int = 0) -> None:
+    def __init__(
+        self,
+        refs: Sequence[TileRef],
+        epoch: int | None = None,
+        seed: int = 0,
+        stem: str = "repeat",
+    ) -> None:
         self.refs = refs
         self.epoch = epoch
         self.seed = seed
+        self.stem = stem
 
     def __len__(self) -> int:
         return len(self.refs)
@@ -289,7 +308,7 @@ class _Tiles(Dataset):
             -1, 4
         )
 
-        return as_model_input(tile.image), {
+        return as_model_input(tile.image, self.stem), {
             "boxes": boxes,
             "labels": torch.full((len(tile.boxes),), SHIP, dtype=torch.int64),
         }
