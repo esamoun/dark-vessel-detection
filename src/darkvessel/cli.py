@@ -571,6 +571,10 @@ def trained_request_from(run_config: dict[str, Any], relative_to: Path) -> dict[
         "anchor_sizes": tuple(
             tuple(int(size) for size in level) for level in trained["anchor_sizes"]
         ),
+        # Optional where the rest of this block is required, because every run config written
+        # before the single-channel stem existed names a checkpoint trained on three repeated
+        # channels, and reading silence as anything else would break all of them.
+        "stem": str(trained.get("stem", "repeat")),
         "score_threshold": float(trained["score_threshold"]),
         "stretch": DecibelStretch(
             floor_db=float(stretch["floor_db"]),

@@ -42,6 +42,7 @@ class TrainedDetector:
         score_threshold: float,
         tile_px: int,
         anchor_sizes: tuple[tuple[int, ...], ...],
+        stem: str = "repeat",
         device: torch.device | None = None,
     ) -> None:
         """Load the weights and put the model into the state it answers from.
@@ -58,22 +59,28 @@ class TrainedDetector:
                 before anything here is loaded.
             anchor_sizes: One tuple per pyramid level. Checked against the checkpoint's own
                 record, because anchors leave no trace in a state dict.
+            stem: The input stage the checkpoint was trained with. Checked against its record
+                too, and defaulting to the repeat because every checkpoint written before stems
+                existed was trained on three repeated channels.
             device: Where to run. The GPU if there is one.
         """
         state = torch.load(checkpoint, map_location="cpu", weights_only=True)
-        _check_built(state.get("built"), tile_px=tile_px, anchor_sizes=anchor_sizes)
+        _check_built(state.get("built"), tile_px=tile_px, anchor_sizes=anchor_sizes, stem=stem)
 
         # `pretrained=False` because every weight is about to be overwritten by the load below,
         # and because fetching COCO weights would put a network on the path of a command that
         # must not need one. The seed is irrelevant for the same reason: the head it initialises
         # does not survive.
-        model = detector_model(tile_px=tile_px, seed=0, anchor_sizes=anchor_sizes, pretrained=False)
+        model = detector_model(
+            tile_px=tile_px, seed=0, anchor_sizes=anchor_sizes, stem=stem, pretrained=False
+        )
         model.load_state_dict(state["model"])
 
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device).eval()
         self.stretch = stretch
         self.score_threshold = score_threshold
+        self.stem = stem
 
     def __call__(self, image: np.ndarray) -> list[PixelDetection]:
         """One tile of decibels, as targets in that tile's own pixel coordinates.
@@ -83,7 +90,7 @@ class TrainedDetector:
         filling in place.
         """
         with torch.no_grad():
-            tile = as_model_input(self.stretch(image)).to(self.device)
+            tile = as_model_input(self.stretch(image), self.stem).to(self.device)
             output = self.model([tile])[0]
 
         found = [
@@ -99,6 +106,7 @@ def _check_built(
     *,
     tile_px: int,
     anchor_sizes: tuple[tuple[int, ...], ...],
+    stem: str = "repeat",
 ) -> None:
     """Refuse a checkpoint built for a detector other than the one being constructed.
 
@@ -123,6 +131,15 @@ def _check_built(
             f"the checkpoint was built with anchor_sizes {recorded} and this run asks for "
             f"{asked}; anchors are not weights, so this would load cleanly and then look for "
             "ships of the wrong size without saying so"
+        )
+
+    # Absent from every checkpoint written before 2026-08-17, all of which were trained on three
+    # repeated channels — so silence means "repeat" rather than "unknown".
+    recorded_stem = built.get("stem", "repeat")
+    if recorded_stem != stem:
+        raise ValueError(
+            f"the checkpoint was built with the {recorded_stem!r} stem and this run asks for "
+            f"{stem!r}; the two take a different number of channels"
         )
 
 
