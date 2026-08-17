@@ -26,6 +26,7 @@ torch = pytest.importorskip(
 
 from test_dataset import FIXTURE, write_dataset  # noqa: E402
 
+import darkvessel.detect.train as train_module  # noqa: E402
 from darkvessel.cli import training_request_from  # noqa: E402
 from darkvessel.detect.checkpoints import Checkpoints, Journal  # noqa: E402
 from darkvessel.detect.dataset import Layout, catalogue, split_by_scene  # noqa: E402
@@ -57,7 +58,7 @@ def a_small_labelled_dataset(root: Path) -> Path:
     )
 
 
-def a_run(tmp_path: Path, epochs: int) -> dict:
+def a_run(tmp_path: Path, epochs: int, lr_schedule: str = "constant") -> dict:
     """Everything one session of `train` needs, built fresh — model included.
 
     The model is fresh on purpose. A resumed session in the real world is a new process on a new
@@ -85,6 +86,7 @@ def a_run(tmp_path: Path, epochs: int) -> dict:
             weight_decay=0.0005,
             workers=0,
             seed=1,
+            lr_schedule=lr_schedule,
         ),
         "reporting": Reporting(tolerance_m=200.0, resolution_m=10.0, thresholds=(0.05, 0.5)),
         "device": torch.device("cpu"),
@@ -188,6 +190,70 @@ def test_a_finished_epoch_reports_a_precision_and_a_recall_on_the_held_out_split
     assert entry["held_out_ships"] == 1
     assert [point["score"] for point in entry["at"]] == [0.05, 0.5]
     assert set(entry["at"][0]) == {"score", "precision", "recall", "found", "false", "missed"}
+
+
+def test_a_resumed_session_continues_the_learning_rate_schedule(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The failure a schedule introduces, and the one this design cannot afford.
+
+    Everything about a run is derived from the seed and the epoch number rather than carried in a
+    generator's position, so a session resumed at epoch 3 does what an uninterrupted run would
+    have done there. A learning-rate scheduler is the first piece of state in this loop that does
+    not work that way: left out of the checkpoint it restarts from the top, the resumed session
+    trains its remaining epochs at the wrong rate, and nothing anywhere says so.
+
+    So an interrupted run and an uninterrupted one are required to report the same rates. Both
+    declare the same four-epoch schedule throughout — cosine anneals over the schedule it is
+    told, so a session that only found out at epoch 3 that the run was ever meant to be four
+    epochs long would already be annealing over the wrong horizon; a resume has to mean the same
+    schedule picked back up, not a shorter one stretched afterwards. The kill is injected between
+    epoch 2's checkpoint and epoch 3's training, the same way `test_checkpoints.py` raises inside
+    `checkpoints.writing` — a session that never got to run epoch 3 at all.
+    """
+    straight = tmp_path / "straight"
+    train(**(a_run(straight, epochs=4, lr_schedule="cosine")))
+    uninterrupted = [
+        entry["learning_rate"] for entry in Journal(straight / "run" / "metrics.json").entries()
+    ]
+
+    killed = tmp_path / "killed"
+    real_one_epoch = train_module._one_epoch
+
+    def dies_before_epoch_three(model, optimiser, training, epoch, schedule, device, **kwargs):
+        if epoch == 3:
+            raise KeyboardInterrupt
+        return real_one_epoch(model, optimiser, training, epoch, schedule, device, **kwargs)
+
+    monkeypatch.setattr(train_module, "_one_epoch", dies_before_epoch_three)
+    with pytest.raises(KeyboardInterrupt):
+        train(**(a_run(killed, epochs=4, lr_schedule="cosine")))
+    monkeypatch.undo()
+
+    train(**(a_run(killed, epochs=4, lr_schedule="cosine")))
+    resumed = [
+        entry["learning_rate"] for entry in Journal(killed / "run" / "metrics.json").entries()
+    ]
+
+    assert len(uninterrupted) == 4
+    assert resumed == pytest.approx(uninterrupted)
+
+
+def test_a_constant_schedule_reports_the_one_rate_it_trained_at(tmp_path: Path) -> None:
+    """The baseline of the ladder, and the shape the failure log's diagnosis rests on: the rate
+    never moved, which is why twelve epochs bounced instead of settling."""
+    train(**(a_run(tmp_path, epochs=2)))
+
+    rates = [
+        entry["learning_rate"] for entry in Journal(tmp_path / "run" / "metrics.json").entries()
+    ]
+
+    assert rates == [0.001, 0.001]
+
+
+def test_a_schedule_this_project_does_not_have_is_refused_by_name(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="lr_schedule"):
+        train(**(a_run(tmp_path, epochs=1, lr_schedule="exponential")))
 
 
 def test_the_shipped_training_config_is_the_one_the_command_parses() -> None:
