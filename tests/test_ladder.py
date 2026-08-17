@@ -9,9 +9,15 @@ What is pinned is the boundary. A rung whose gain exactly equals the noise band 
 that single `>` rather than `>=` is the difference between a ladder and a narration of noise.
 """
 
+from pathlib import Path
+
 import pytest
 
+from darkvessel.cli import ladder_request_from
+from darkvessel.config import load_config
 from darkvessel.detect.ladder import Rung, band, best_f1, judge, table
+
+CONFIGS = Path(__file__).resolve().parents[1] / "configs"
 
 REPORTING = {"tolerance_m": 200.0, "resolution_m": 10.0, "thresholds": [0.5, 0.75]}
 
@@ -166,3 +172,24 @@ def test_the_table_names_every_rung_and_says_which_were_kept() -> None:
 
     assert "R0" in rendered and "R1" in rendered
     assert "kept" in rendered and "rejected" in rendered
+
+
+def test_the_shipped_ladder_config_is_the_one_the_command_parses() -> None:
+    """The same gap `training_request_from` exists to close. This file names five paths that will
+    not all exist until five Kaggle sessions have run, and a mistyped key in it would surface only
+    to whoever came back with the last of them."""
+    rungs = ladder_request_from(load_config(CONFIGS / "ladder.yaml"), CONFIGS)
+
+    assert [rung["label"] for rung in rungs] == ["R0", "R1", "R2", "R3", "R4"]
+    assert all(rung["changed"] for rung in rungs)
+    assert all(rung["metrics"].is_absolute() for rung in rungs)
+
+
+def test_every_rung_of_the_shipped_ladder_reads_its_metrics_from_its_own_file() -> None:
+    """Two rungs pointing at one file would compare a run against itself and report a gain of
+    zero, which reads as a rejection and would be recorded as one."""
+    rungs = ladder_request_from(load_config(CONFIGS / "ladder.yaml"), CONFIGS)
+
+    paths = [rung["metrics"] for rung in rungs]
+
+    assert len(set(paths)) == len(paths)

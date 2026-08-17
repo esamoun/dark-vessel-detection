@@ -36,6 +36,7 @@ from affine import Affine
 from shapely import Point
 
 from darkvessel.cli import check_tile_size, fusion_settings_from, main, trained_request_from
+from darkvessel.config import load_config
 from darkvessel.data.scene import Scene
 from darkvessel.data.synthetic import BOUNDARY_TARGET, SIZE_PX, write_synthetic_inputs
 from darkvessel.data.tiling import Tiling
@@ -525,7 +526,9 @@ def test_the_gap_a_config_allows_decides_what_is_interpolated_across(tmp_path: P
     assert (written["status"] == "dark").sum() == 2
 
 
-@pytest.mark.parametrize("shipped", sorted(CONFIGS.glob("*.yaml")), ids=lambda path: path.name)
+@pytest.mark.parametrize(
+    "shipped", sorted(CONFIGS.rglob("*.yaml")), ids=lambda path: str(path.name)
+)
 def test_every_shipped_config_names_the_fusion_settings_a_run_needs(shipped: Path) -> None:
     """The same gap `export_request_from` exists to close, on the settings fusion reads.
 
@@ -534,14 +537,14 @@ def test_every_shipped_config_names_the_fusion_settings_a_run_needs(shipped: Pat
     credentials, so a missing key there surfaces only to someone who has already authenticated
     and waited. Both go through the command's own parsing here instead.
 
-    Every file in `configs/` is covered, and the ones that are not runs have to say what they are
-    instead. Filtering them out silently would let a run config that had lost its `run:` key drop
-    out of this test without anything noticing.
+    Every file under `configs/` is covered, rungs of the ladder included — they are one directory
+    down, and `rglob` rather than `glob` is what keeps them from dropping out of this test in
+    silence. Files that are not runs have to say what they are instead.
     """
-    config = yaml.safe_load(shipped.read_text())
+    config = load_config(shipped)
     if "run" not in config:
-        assert "survey" in config or "training" in config, (
-            f"{shipped.name} describes neither a run, a survey nor a training"
+        assert "survey" in config or "training" in config or "ladder" in config, (
+            f"{shipped.name} describes neither a run, a survey, a training nor a ladder"
         )
         return
 

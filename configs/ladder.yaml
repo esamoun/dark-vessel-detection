@@ -1,0 +1,33 @@
+# The ladder of issue #11: five runs that differ by one line each, and the rule that decides
+# which of them stand. Read it with:  darkvessel compare --config configs/ladder.yaml
+#
+# A rung whose metrics file is not there yet has not been run. The comparison reports it as
+# pending and stops, rather than comparing across the gap.
+#
+# The rule, and why it is what it is, is in docs/decisions.md — written and committed before the
+# first of these runs, because a threshold chosen after seeing the numbers is not a threshold.
+
+ladder:
+  # How many of a rung's last epochs the noise band is measured over.
+  window: 4
+
+  rungs:
+    - label: R0
+      changed: nothing — configs/train.yaml as it stands, under the corrected seeding
+      metrics: ../docs/runs/r0-baseline.json
+
+    - label: R1
+      changed: cosine decay of the learning rate
+      metrics: ../docs/runs/r1-cosine.json
+
+    - label: R2
+      changed: anchor_sizes to [[4], [8], [16], [32], [64]]
+      metrics: ../docs/runs/r2-anchors.json
+
+    - label: R3
+      changed: single-channel stem
+      metrics: ../docs/runs/r3-stem.json
+
+    - label: R4
+      changed: the RPN sampler, at the value the census dictates
+      metrics: ../docs/runs/r4-sampler.json
