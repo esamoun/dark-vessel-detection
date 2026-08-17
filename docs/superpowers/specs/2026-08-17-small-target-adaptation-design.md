@@ -181,11 +181,38 @@ arithmetic. If it shows that the coarse levels match nothing across 3637 ships, 
 named candidate for a later rung and is recorded in `decisions.md` as reasoned and deferred. It
 does not join rung 2, because a rung that changes two things measures neither.
 
-## The single-channel stem, identical at initialisation
+## The single-channel stem, and what "identical at initialisation" turned out to mean
 
 `detector_model` gains `stem: "repeat" | "single"`. The single-channel path is constructed so that
-the model at initialisation is numerically identical to the three-channel repeat, and that is
-load-bearing rather than decorative: it is what makes rung 3 a measurement of one thing.
+rung 3 measures the stem rather than a different draw of the weights, and that is load-bearing
+rather than decorative.
+
+**This section originally claimed the two models were numerically identical at initialisation.
+They are not, and the correction is recorded here rather than quietly applied.** The fold is
+exact; zero padding is not. `conv1` pads with three rings of zeros, and under the repeat stem the
+tile is normalised *before* the convolution — so those zeros stand for raw amplitude `m_c`, a
+different value in each of the three channels. Under the folded stem the transform is the
+identity, so they stand for a raw zero. Reconciling them would need a single padding value `v`
+satisfying `v · A_k = B_k` for every output channel `k` at once, where `A_k` and `B_k` are the
+padded taps summed with and without the means; those ratios differ per channel, so no such `v`
+exists.
+
+Measured on random weights: `conv1`'s output agrees to **1.5e-06** outside a three-pixel margin
+and disagrees by most of the signal inside it, at 64 px and at 256 px alike — a fixed border, not
+one that shrinks with tile size. Cropping does not rescue a *feature* map: the FPN's top-down path
+carries `C5`, whose receptive field is the whole tile, into every level. The mechanism was
+confirmed rather than assumed by setting the means to zero, which makes a padded zero mean the
+same raw value in both paths: the two whole backbones then agree to 3.8e-04 on a scale of 142,
+which is float32 accumulation over fifty layers.
+
+So the property the design rests on is stated in two halves, and both are tested:
+
+1. **Every parameter and buffer outside `conv1` is identical.** This is the half that matters —
+   it is what stops rung 3 from being a comparison of two random draws, and it is what pins the
+   construction order described below.
+2. **`conv1` reproduces the three-channel stem away from the tile edge.** The kernels carry the
+   same values and the same normalisation; what differs is the convention for what lies outside
+   the tile, which is a boundary convention rather than a different starting point.
 
 The current path repeats `x` across three channels, the transform normalises per channel, and
 `conv1` sums:
@@ -209,8 +236,10 @@ offset propagates instead of being absorbed. Dropping `b'` would leave the two p
 a constant through the whole backbone.
 
 What rung 3 therefore measures is not a different starting point. It is what training does with
-one bank of 7×7×1 kernels instead of three, which is the question, and nothing else. A CPU test
-asserts the equality on random input.
+one bank of 7×7×1 kernels instead of three, plus a change in what the model treats as lying
+outside a tile. The second of those is small, real, and named — and neither of the two paddings is
+the physically correct one, since the tile edge is simply where the tile stops. Two CPU tests
+assert the two halves stated above.
 
 The stem goes into the `built` block, so it travels in the checkpoint, so `trained.py` and the
 guard in `checkpoints.py` follow it with no new code — the refusal written for anchor sizes covers

@@ -1129,7 +1129,9 @@ git commit -m "feat: read the ladder from a file, and refuse to read it across a
   - `STEMS: dict[str, int]` — `{"repeat": 3, "single": 1}`
   - `train(..., stem: str = "repeat")` — Task 6 adds the scheduler to the same signature
 
-**The arithmetic, and why the order of construction matters.** The current path repeats `x` across three channels, the transform normalises per channel, and `conv1` sums: `y = Σ_c W_c·(x − m_c)/s_c`. A one-channel `conv1` with `W'[k,0,i,j] = Σ_c W[k,c,i,j]/s_c` and `b'[k] = −Σ_c (m_c/s_c)·Σ_ij W[k,c,i,j]`, with the transform set to `image_mean=[0.0], image_std=[1.0]`, produces the same `y` exactly.
+**The arithmetic, and why the order of construction matters.** The current path repeats `x` across three channels, the transform normalises per channel, and `conv1` sums: `y = Σ_c W_c·(x − m_c)/s_c`. A one-channel `conv1` with `W'[k,0,i,j] = Σ_c W[k,c,i,j]/s_c` and `b'[k] = −Σ_c (m_c/s_c)·Σ_ij W[k,c,i,j]`, with the transform set to `image_mean=[0.0], image_std=[1.0]`, produces the same `y` **wherever the kernel does not reach the tile's zero padding**.
+
+> **Correction, made during execution.** This task originally asserted an unqualified equality, and it is false on a three-pixel border. `conv1` pads with zeros; under the repeat stem those zeros are zeros *in normalised space* and stand for raw amplitude `m_c`, different per channel, while under the folded stem they are raw zeros. No single padding value reconciles the two. Measured: agreement to 1.5e-06 outside a three-pixel margin, disagreement by most of the signal inside it, at 64 px and 256 px alike. The FPN's top-down path spreads the border difference across every feature map, so there is no interior of a feature map on which the two agree. The design document carries the full finding. What the task asserts instead is two properties: every parameter and buffer outside `conv1` is identical — which is what pins the construction order and stops rung 3 being a comparison of two draws — and `conv1` reproduces the three-channel stem away from the tile edge. Step 1's test list below reflects the correction.
 
 The fold must happen **after** the box predictor is replaced. `detector_model` seeds the global generator and then builds; constructing an extra `Conv2d` consumes from that generator, so folding before the predictor is built would give the two stems different heads and rung 3 would measure an initialisation.
 
@@ -1171,8 +1173,13 @@ def a_model(stem: str):
     ).eval()
 
 
-def features(stem: str, image: np.ndarray):
-    """The top of the feature pyramid, through the model's own transform.
+# `conv1` pads with three rings of zeros, so its output is contaminated within three positions of
+# the edge. Three at the output's stride is a safe over-estimate of the two it strictly needs.
+MARGIN_PX = 3
+
+
+def stem_output(stem: str, image: np.ndarray):
+    """What `conv1` produces, through the model's own transform.
 
     Through the transform rather than around it because the normalisation is half of what the
     fold absorbs, and a test that skipped it would pass with the bias missing.
@@ -1180,15 +1187,53 @@ def features(stem: str, image: np.ndarray):
     model = a_model(stem)
     with torch.no_grad():
         images, _ = model.transform([as_model_input(image, stem)], None)
-        return model.backbone(images.tensors)["0"]
+        return model.backbone.body.conv1(images.tensors)
 
 
-def test_the_single_channel_stem_is_the_three_channel_one_at_initialisation() -> None:
-    """The property rung 3 rests on. Same weights, same normalisation, same output — so what the
-    rung measures is what training does with one bank of 7x7x1 kernels instead of three."""
+def a_parameter_map(model) -> dict:
+    """Every parameter and buffer of a model, by name."""
+    return {**dict(model.named_parameters()), **dict(model.named_buffers())}
+
+
+def test_only_the_stem_differs_between_the_two_models_at_initialisation() -> None:
+    """The property rung 3 actually rests on: the two models are not two draws.
+
+    `detector_model` seeds the global generator and then builds, and constructing a `Conv2d` draws
+    from it — so folding the stem before the fresh two-class head is built would give the two
+    models different heads, and the rung would be measuring an initialisation rather than a stem.
+    Everything outside `conv1` is required to be identical, which is what pins that ordering.
+    """
+    repeat, single = a_parameter_map(a_model("repeat")), a_parameter_map(a_model("single"))
+
+    outside = [name for name in repeat if not name.startswith("backbone.body.conv1")]
+    # The comparison would be worth nothing if the filter had matched everything.
+    assert outside
+
+    for name in outside:
+        assert torch.equal(repeat[name], single[name]), name
+
+
+def test_the_folded_stem_computes_the_three_channel_stem_away_from_the_tile_edge() -> None:
+    """What the fold delivers, and the boundary that stops it being everything.
+
+    `conv1` pads with three rings of zeros. Under the repeat stem the tile is normalised before the
+    convolution, so those zeros stand for raw amplitude `m_c` — a different value in each channel.
+    Under the folded stem the transform is the identity, so they stand for a raw zero. No single
+    padding value reconciles the two: it would have to satisfy `v · A_k = B_k` for every output
+    channel at once, and those ratios differ per channel.
+
+    So what the fold buys is the interior, and the interior is what rung 3 needs: the kernels carry
+    the same values and the same normalisation, and only the convention for what lies outside the
+    tile differs. It is asserted on `conv1`'s own output rather than on a feature map because the
+    FPN's top-down path carries C5 — whose receptive field is the whole tile — into every level,
+    so no interior of a feature map agrees.
+    """
     image = np.random.default_rng(0).random((TILE_PX, TILE_PX)).astype(np.float32)
+    interior = (..., slice(MARGIN_PX, -MARGIN_PX), slice(MARGIN_PX, -MARGIN_PX))
 
-    assert torch.allclose(features("repeat", image), features("single", image), atol=1e-5)
+    assert torch.allclose(
+        stem_output("repeat", image)[interior], stem_output("single", image)[interior], atol=1e-5
+    )
 
 
 def test_the_single_channel_stem_takes_one_channel() -> None:
