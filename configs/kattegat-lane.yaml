@@ -57,6 +57,21 @@ tiling:
 fusion:
   match_tolerance_m: 200
   interpolation_max_gap_s: 600
+  # A vessel under way is drawn hundreds of metres from where it is, along the satellite's track,
+  # because its own motion adds Doppler the processor reads as position. On this scene four
+  # declared hulls of 140 to 274 m were imaged 420 to 490 m away and every one was reported dark.
+  # See docs/failures.md for the measurement, including the vessel with no cross-track velocity
+  # and no displacement at all.
+  #
+  # The direction comes off the product's ORBIT_PASS tag. The magnitude needs the incidence
+  # angle, which the product does not carry — so it is declared here. 38.5 degrees is the middle
+  # of a Sentinel-1 IW swath, and it is an approximation stated in the open rather than hidden:
+  # across the swath the correction runs from 50 to 90 metres per m/s, and at the near edge it
+  # under-corrects enough to leave two of the six vessels unmatched. When the export records the
+  # real angle, this key takes it.
+  azimuth:
+    correct: true
+    incidence_deg: 38.5
 
 # The declarations to match against, from the Danish Maritime Authority's daily archive for the
 # day the scene was acquired. `darkvessel ais --config configs/kattegat-lane.yaml` fetches them;

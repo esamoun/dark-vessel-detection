@@ -478,22 +478,37 @@ detections inside one 200 m square in the north-west was a single bright hull co
 because a threshold has no notion of what a vessel is and reports every connected bright region
 it meets. The trained model reports each hull once and adds nothing.
 
-### The caveat, and it is a large one
+### Why the radar's positions are not the declared ones
 
 Scoring against radar positions rather than declared ones is not a convenience. Four of the six
 vessels are imaged **420 to 490 m from where AIS puts them**, almost purely north–south, because
-Sentinel-1 displaces moving targets along its track. The chain matches at 200 m, so it calls
-those four *dark* — declared vessels, transponders on, plainly visible, denounced by geometry.
+Sentinel-1 displaces moving targets along its own track: a vessel closing on the radar adds
+Doppler of its own, and nothing in the processing can tell that apart from Doppler caused by
+position. The two the chain originally matched are exactly the two whose displacement stayed
+inside the 200 m tolerance, and the one vessel with no east–west velocity is displaced by nothing
+at all. The measurement, including that control, is in [`docs/failures.md`](docs/failures.md).
 
-The two it does match are exactly the two whose displacement stays under the tolerance, and the
-one vessel in the scene with no east–west velocity is displaced by nothing at all. The full
-measurement, including the control, is in [`docs/failures.md`](docs/failures.md).
+### Correcting it — matched vessels, 2 → 5
 
-So `darkvessel run` prints `2 matched, 4 dark` on this scene and four of those four are wrong.
-Fixing it belongs to the fusion stage rather than to the detector, and it is a ticket of its own.
-Level 2 is what is claimed here: the model is in the chain and its contribution is measured. What
-a dark vessel *count* is worth on this scene is not, and this section says so rather than
-printing the number as a finding.
+The declaration is now moved to where the radar would have drawn the vessel, before matching,
+using the velocity the AIS track already carries. The tolerance stays at 200 m — widening it
+instead would buy the four accusations back by making every match looser, and a genuinely dark
+vessel passing near a declared one would be quietly explained away.
+
+| | Matched | Dark |
+| --- | --- | --- |
+| No correction | 2 | 4 |
+| Corrected | **5** | 1 |
+
+The direction comes off the product's `ORBIT_PASS` tag. The magnitude needs the incidence angle,
+which the product does not carry, so `fusion.azimuth.incidence_deg` declares it — 38.5°, the
+middle of an IW swath, and an approximation stated in the open.
+
+The sixth vessel is not recovered, and it is not recoverable by tuning: 34° gives four matches,
+38.5° and 43° give five, 46° over-corrects back to four. The residual is in the bearing or in
+where a detection's centroid falls, and six vessels found with a pixel-resolution peak finder
+cannot separate those. Picking the incidence angle that made the sixth match would be fitting the
+geometry to the answer, which is the one thing this correction must not do.
 
 ### The window between decibels and amplitude
 

@@ -953,3 +953,40 @@ anchors loads into a model looking for another without a word. `train.py` now wr
 block into every checkpoint; this one predates that, so `configs/kattegat-lane.yaml` restates the
 values and `TrainedDetector` accepts a checkpoint with no block while refusing one that
 disagrees.
+
+---
+
+## 2026-08-16 — The declaration is moved into the radar's frame, not the tolerance widened
+
+**Decision.** Before matching, each declared position is displaced along the satellite's ground
+track by `fusion/azimuth.py`, using the velocity the AIS track already gives. The match tolerance
+stays at 200 m.
+
+**Why not widen the tolerance.** It is the obvious repair and it is the wrong one. Widening to
+600 m would buy back the four false accusations by making every match looser, so a genuinely
+dark vessel passing within half a kilometre of a declared one would be quietly explained away. It
+trades a false alarm for a miss, and it hides the physics behind a bigger number. Moving the
+declaration keeps the tolerance meaning what it says: how far a detection may sit from where the
+vessel *should have been drawn*.
+
+**What the correction is made of.** The direction is the ground track, which follows from
+Sentinel-1's inclination and the latitude, and the pass direction is already on every product
+this chain exports — it just was not being read. The magnitude is slant range over platform
+speed, times the sine that turns a ground velocity into a line-of-sight one.
+
+**The part that is approximated, in the open.** Slant range needs the incidence angle, and the
+product does not carry it. `fusion.azimuth.incidence_deg` declares it, defaulting to 38.5° — the
+middle of an IW swath. Across the swath the constant runs from 50 to 90 seconds, so this is not a
+detail: it is a fifth of the correction.
+
+**What it recovers, measured.** On the Kattegat scene, matched vessels go from 2 to 5 of the 6
+standing in frame. The sixth is not recoverable at any incidence angle in the swath: 34° gives 4,
+38.5° and 43° give 5, and 46° over-corrects back to 4. So the residual is not in the magnitude —
+it is in the bearing, or in where a detection's centroid falls, and six vessels with a
+pixel-resolution peak finder cannot separate those. Recorded as unresolved rather than tuned
+away: choosing the incidence angle that made the sixth match would be fitting the geometry to the
+answer, which is the one thing this correction must not do.
+
+**What is still owed.** Earth Engine publishes a per-pixel `angle` band on COPERNICUS/S1_GRD. The
+export should record it, so a scene carries its own incidence angle instead of accepting the
+middle of the swath. Written down here rather than left as a gap.

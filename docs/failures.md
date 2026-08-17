@@ -328,7 +328,7 @@ It is systematic rather than occasional, and it scales the wrong way — the tra
 area was chosen for is exactly the traffic that moves. The 14 dark detections the threshold
 baseline reported on this scene rest on it too.
 
-**What was done.** Nothing yet, deliberately. The fix belongs to the fusion stage, not to the
+**What was done.** Corrected on 2026-08-16 — see docs/decisions.md. Originally recorded as: nothing yet, deliberately. The fix belongs to the fusion stage, not to the
 detector, and the ticket that swapped the detector in is not allowed to modify another stage. It
 is recorded here with the measurements, and carried into a ticket of its own. What the swap
 ticket reports instead is the detector scored against the positions the radar actually shows,
