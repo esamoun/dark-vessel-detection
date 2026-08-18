@@ -1,0 +1,14 @@
+# Rung 3: one channel of radar amplitude instead of three copies of it.
+#
+# The stem is built to produce exactly what the repeat produces at initialisation, so what this
+# rung measures is what training does with one bank of kernels rather than a different starting
+# point. See docs/decisions.md.
+
+extends: r2-anchors.yaml
+
+model:
+  stem: single
+
+out:
+  checkpoints: /kaggle/working/checkpoints-r3
+  metrics: /kaggle/working/metrics-r3-stem.json

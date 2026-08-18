@@ -28,6 +28,7 @@ from test_dataset import FIXTURE, write_dataset  # noqa: E402
 
 import darkvessel.detect.train as train_module  # noqa: E402
 from darkvessel.cli import training_request_from  # noqa: E402
+from darkvessel.config import load_config  # noqa: E402
 from darkvessel.detect.checkpoints import Checkpoints, Journal  # noqa: E402
 from darkvessel.detect.dataset import Layout, catalogue, split_by_scene  # noqa: E402
 from darkvessel.detect.metrics import Reporting  # noqa: E402
@@ -35,6 +36,7 @@ from darkvessel.detect.model import ANCHOR_SIZES, detector_model  # noqa: E402
 from darkvessel.detect.train import Schedule, train  # noqa: E402
 
 CONFIG = Path(__file__).resolve().parents[1] / "configs" / "train.yaml"
+LADDER = CONFIG.parent / "ladder"
 
 TILE_PX = 64
 
@@ -359,3 +361,51 @@ def test_the_checkpoint_records_what_built_it(tmp_path: Path) -> None:
 
     assert state["built"] == run["built"]
     assert state["built"]["anchor_sizes"] == ANCHOR_SIZES
+
+
+def test_the_ladder_has_the_four_rungs_the_plan_names() -> None:
+    """First, because the three tests below are parametrised over this directory and would all
+    pass vacuously on an empty one — which is exactly the state the repository is in before this
+    task, and exactly the way a missing rung would go unnoticed after it."""
+    assert sorted(path.name for path in LADDER.glob("*.yaml")) == [
+        "r1-cosine.yaml",
+        "r2-anchors.yaml",
+        "r3-stem.yaml",
+        "r4-sampler.yaml",
+    ]
+
+
+@pytest.mark.parametrize("rung", sorted(LADDER.glob("*.yaml")), ids=lambda path: path.name)
+def test_every_rung_of_the_ladder_is_a_training_config_the_command_parses(rung: Path) -> None:
+    """Each of these is run on a machine rented by the hour, days apart. A mistyped key in the
+    fourth would surface after three evenings had already been spent."""
+    request = training_request_from(load_config(rung), rung.parent)
+
+    assert request["schedule"]["epochs"] > 0
+    assert request["model"]["stem"] in {"repeat", "single"}
+
+
+@pytest.mark.parametrize("rung", sorted(LADDER.glob("*.yaml")), ids=lambda path: path.name)
+def test_every_rung_writes_its_checkpoints_and_its_metrics_somewhere_of_its_own(
+    rung: Path,
+) -> None:
+    """The trap this closes is quiet and expensive. Rungs share a working directory on Kaggle, and
+    a rung that inherited the previous one's checkpoint directory would find a finished schedule
+    there and do nothing at all — reporting the previous rung's numbers as its own."""
+    request = training_request_from(load_config(rung), rung.parent)
+    baseline = training_request_from(load_config(CONFIG), CONFIG.parent)
+
+    assert request["checkpoints"].directory != baseline["checkpoints"].directory
+    assert request["journal"].path != baseline["journal"].path
+
+
+def test_the_rungs_of_the_ladder_do_not_share_a_working_directory() -> None:
+    requests = [
+        training_request_from(load_config(rung), rung.parent) for rung in LADDER.glob("*.yaml")
+    ]
+
+    directories = [request["checkpoints"].directory for request in requests]
+    metrics = [request["journal"].path for request in requests]
+
+    assert len(set(directories)) == len(directories)
+    assert len(set(metrics)) == len(metrics)

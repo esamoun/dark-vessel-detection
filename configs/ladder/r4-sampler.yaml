@@ -1,0 +1,15 @@
+# Rung 4: the foreground/background imbalance, at the loss.
+#
+# The number below is a placeholder until notebooks/anchor_census.py has run — the census counts
+# how many positive anchors a tile actually offers, and this is set to what it reports rather than
+# to a guess. Do not run this rung before the census, and record the census figure in
+# docs/decisions.md beside the value chosen here.
+
+extends: r3-stem.yaml
+
+model:
+  rpn_batch_size_per_image: 32
+
+out:
+  checkpoints: /kaggle/working/checkpoints-r4
+  metrics: /kaggle/working/metrics-r4-sampler.json

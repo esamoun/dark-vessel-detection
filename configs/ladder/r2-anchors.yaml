@@ -1,0 +1,15 @@
+# Rung 2: anchors for ships of a few pixels.
+#
+# The stock smallest anchor is 32 px, a 320 m vessel at 10 m, longer than nearly everything in the
+# training set. These are 40 m upwards. Extends rung 1 because the ladder is greedy: each rung
+# starts from the last one that was kept. If R1 is rejected, this line is repointed at
+# ../train.yaml and the edit goes into docs/failures.md with the rejection.
+
+extends: r1-cosine.yaml
+
+model:
+  anchor_sizes: [[4], [8], [16], [32], [64]]
+
+out:
+  checkpoints: /kaggle/working/checkpoints-r2
+  metrics: /kaggle/working/metrics-r2-anchors.json

@@ -355,6 +355,11 @@ def training_request_from(config: dict[str, Any], relative_to: Path) -> dict[str
             "pretrained": bool(config["model"]["pretrained"]),
             "trainable_backbone_layers": int(config["model"]["trainable_backbone_layers"]),
             "anchor_sizes": tuple(tuple(level) for level in config["model"]["anchor_sizes"]),
+            "stem": str(config["model"]["stem"]),
+            "rpn_batch_size_per_image": int(config["model"]["rpn_batch_size_per_image"]),
+            "rpn_positive_fraction": float(config["model"]["rpn_positive_fraction"]),
+            "box_batch_size_per_image": int(config["model"]["box_batch_size_per_image"]),
+            "box_positive_fraction": float(config["model"]["box_positive_fraction"]),
         },
         "schedule": {
             "epochs": int(config["schedule"]["epochs"]),
@@ -362,6 +367,7 @@ def training_request_from(config: dict[str, Any], relative_to: Path) -> dict[str
             "learning_rate": float(config["schedule"]["learning_rate"]),
             "momentum": float(config["schedule"]["momentum"]),
             "weight_decay": float(config["schedule"]["weight_decay"]),
+            "lr_schedule": str(config["schedule"]["lr_schedule"]),
             "workers": int(config["schedule"]["workers"]),
             "seed": seed,
         },
@@ -416,6 +422,7 @@ def _train(config_path: Path) -> int:
         reporting=request["reporting"],
         device=device,
         built={"tile_px": request["tile_px"], **request["model"]},
+        stem=request["model"]["stem"],
     )
     print(f"metrics in {request['journal'].path}")
     return 0

@@ -58,6 +58,20 @@ model:
   # to [[4], [8], [16], [32], [64]] — 40 m upwards — is that work's first experiment, not this
   # one's. See docs/decisions.md.
   anchor_sizes: [[32], [64], [128], [256], [512]]
+  # The input stage. "repeat" copies one polarisation across the three channels an ImageNet
+  # backbone accepts, which is the minimum that runs at all and is not an adaptation to anything.
+  # "single" takes one channel and folds the pretrained stem onto it. There is no dual-polarisation
+  # stem, because LS-SSDD is VV and the scene this chain exports is VV — see docs/failures.md.
+  stem: repeat
+  # How many anchors the region proposal network computes its loss over, and the ceiling on how
+  # much of that may be positive. A ceiling, not a target: the sampler takes min(available,
+  # requested), and on a tile holding three ships of four pixels there are nowhere near 128
+  # positive anchors to be had. Torchvision's own defaults, kept as the baseline the ladder
+  # measures against; notebooks/anchor_census.py is what says where to move them.
+  rpn_batch_size_per_image: 256
+  rpn_positive_fraction: 0.5
+  box_batch_size_per_image: 512
+  box_positive_fraction: 0.25
 
 schedule:
   # What a handful of free-tier evenings affords, not what the literature runs. Every epoch is
@@ -69,6 +83,10 @@ schedule:
   learning_rate: 0.005
   momentum: 0.9
   weight_decay: 0.0005
+  # "constant" is what the first run used, and docs/failures.md records what it cost: the model
+  # reached the neighbourhood of a minimum in three epochs and bounced around it for nine more,
+  # while the loss stayed flat and said nothing. "cosine" is the ladder's first rung.
+  lr_schedule: constant
   # Kaggle gives four CPU cores; two loaders keep the GPU fed without starving the main process.
   workers: 2
 

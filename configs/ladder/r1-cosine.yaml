@@ -1,0 +1,14 @@
+# Rung 1 of the ladder in issue #11: the learning rate decays.
+#
+# Not one of the ticket's three adaptations, and here for the reason docs/failures.md gives: the
+# baseline oscillated by more than any of the three is likely to be worth, so without this every
+# later comparison measures the draw. Measured against R0 like any other rung.
+
+extends: ../train.yaml
+
+schedule:
+  lr_schedule: cosine
+
+out:
+  checkpoints: /kaggle/working/checkpoints-r1
+  metrics: /kaggle/working/metrics-r1-cosine.json
