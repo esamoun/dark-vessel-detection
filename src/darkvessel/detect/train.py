@@ -17,7 +17,6 @@ the code path that uses it. An untested resume is a worse trade than a slower ep
 docs/decisions.md.
 """
 
-import json
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -30,6 +29,11 @@ from darkvessel.detect.checkpoints import Checkpoints, Journal
 from darkvessel.detect.dataset import Box, TileRef, symmetry_for
 from darkvessel.detect.metrics import NOTHING, Attempt, Reporting, measure
 from darkvessel.detect.model import SHIP, as_model_input, detections_from
+
+# The two names `Schedule.lr_schedule` accepts. Kept as the one list both `__post_init__` and
+# `_scheduler` read, so there is one place that decides what this project has rather than two
+# lists that could quietly drift apart.
+_LR_SCHEDULES = ("constant", "cosine")
 
 
 @dataclass(frozen=True)
@@ -48,6 +52,17 @@ class Schedule:
     # bounced around it for nine, while the training loss stayed nearly flat and said nothing.
     lr_schedule: str = "constant"
 
+    def __post_init__(self) -> None:
+        # Refused here rather than where `_scheduler` builds one, so a config with a mistyped
+        # schedule name is caught the moment it is read rather than partway into a GPU session —
+        # by which point `describe` has already written a run block for a run that never began,
+        # and the corrected config is then refused *against* the typo it is fixing.
+        if self.lr_schedule not in _LR_SCHEDULES:
+            raise ValueError(
+                f"unknown lr_schedule {self.lr_schedule!r}; this project has "
+                f"{' and '.join(repr(name) for name in _LR_SCHEDULES)}"
+            )
+
 
 def _scheduler(
     optimiser: torch.optim.Optimizer, schedule: Schedule
@@ -61,12 +76,8 @@ def _scheduler(
     """
     if schedule.lr_schedule == "constant":
         return None
-    if schedule.lr_schedule == "cosine":
-        return torch.optim.lr_scheduler.CosineAnnealingLR(optimiser, T_max=schedule.epochs)
-
-    raise ValueError(
-        f"unknown lr_schedule {schedule.lr_schedule!r}; this project has 'constant' and 'cosine'"
-    )
+    # The only other name `Schedule.__post_init__` lets through.
+    return torch.optim.lr_scheduler.CosineAnnealingLR(optimiser, T_max=schedule.epochs)
 
 
 def train(
@@ -104,34 +115,24 @@ def train(
     # Written before the first epoch, so a metrics file says which configuration produced it. Five
     # rungs of a ladder are five of these files, and one that does not name its run compares to
     # nothing. `describe` refuses a resume under an edited config rather than merging two
-    # experiments into one file — including a resumed session's `built`, whose anchor sizes are
-    # tuples here and lists once `describe` has round-tripped them through JSON once already.
-    # Round-tripped here too, so the two are compared as what they will both be on disk rather
-    # than one of them a moment before it gets there.
-    #
-    # `epochs` is left out of the schedule block on purpose. It is the one field of `Schedule`
-    # this design expects to change between sessions of the same run — extending training past
-    # what a first pass asked for is a longer schedule, not a different experiment — and every
-    # other field of `schedule` still locks: change the rate, the batch size or which schedule
-    # decays it and this refuses exactly as it does for `built`.
-    schedule_identity = {key: value for key, value in asdict(schedule).items() if key != "epochs"}
+    # experiments into one file — `epochs` included: under a cosine schedule the rate for every
+    # remaining epoch is a function of how long the schedule was declared to be, so resuming under
+    # a different length is a different experiment, not a longer one, and a checkpoint that
+    # finished at `eta_min` would otherwise restart at a learning rate of zero and stay there,
+    # silently.
     journal.describe(
-        json.loads(
-            json.dumps(
-                {
-                    "built": built,
-                    "stem": stem,
-                    "schedule": schedule_identity,
-                    "reporting": {
-                        "tolerance_m": reporting.tolerance_m,
-                        "resolution_m": reporting.resolution_m,
-                        "thresholds": list(reporting.thresholds),
-                    },
-                    "training_tiles": len(training),
-                    "held_out_tiles": len(held_out),
-                }
-            )
-        )
+        {
+            "built": built,
+            "stem": stem,
+            "schedule": asdict(schedule),
+            "reporting": {
+                "tolerance_m": reporting.tolerance_m,
+                "resolution_m": reporting.resolution_m,
+                "thresholds": list(reporting.thresholds),
+            },
+            "training_tiles": len(training),
+            "held_out_tiles": len(held_out),
+        }
     )
 
     optimiser = torch.optim.SGD(
@@ -213,8 +214,11 @@ def train(
         # here it has been renamed away. Reporting it told every run that its checkpoint was a
         # `.partial` file — the one thing this module exists to make impossible.
         landed = checkpoints.path_for(epoch)
+        # `:.2e`, not `:.5f`: a cosine schedule's later epochs round to 0.00000 under a fixed
+        # five decimal places, and that line is the only live feedback a session gets while it
+        # runs.
         say(
-            f"epoch {epoch}: loss {loss:.4f}, rate {rate:.5f}, "
+            f"epoch {epoch}: loss {loss:.4f}, rate {rate:.2e}, "
             f"checkpoint {checkpoints.directory.name}/{landed.name}"
         )
 

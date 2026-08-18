@@ -125,14 +125,33 @@ def test_the_seed_names_the_weights_and_not_only_the_data() -> None:
     assert not torch.equal(a_head(seed=20260814), a_head(seed=20260815))
 
 
-def test_a_second_session_continues_the_run_the_first_one_started(tmp_path: Path) -> None:
-    """The whole design, end to end: run one epoch, throw the process away, run again.
+def test_a_second_session_continues_the_run_the_first_one_started(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole design, end to end: start the run, throw the process away, run the same command.
 
-    The second session is given a longer schedule and a model with untrained weights, and it has
-    to pick up at epoch 2 rather than starting over — which is what an evening on a free tier
-    actually looks like.
+    The second session gets a model with untrained weights and the same schedule the first one
+    declared, and it has to pick up at epoch 2 rather than starting over — which is what an
+    evening on a free tier actually looks like: the notebook is re-run, and it is the same cell.
+
+    The schedule's length is part of what names the run, so a session does not get to extend it.
+    Under a decaying rate the declared length is what the rate is annealed over, so a longer
+    horizon is a different experiment rather than a longer one, and `describe` refuses it. That
+    is why the interruption here is injected rather than simulated by declaring a shorter
+    schedule first, which is what this test used to do.
     """
-    train(**(a_run(tmp_path, epochs=1)))
+    real_one_epoch = train_module._one_epoch
+
+    def dies_before_epoch_two(model, optimiser, training, epoch, schedule, device, **kwargs):
+        if epoch == 2:
+            raise KeyboardInterrupt
+        return real_one_epoch(model, optimiser, training, epoch, schedule, device, **kwargs)
+
+    monkeypatch.setattr(train_module, "_one_epoch", dies_before_epoch_two)
+    with pytest.raises(KeyboardInterrupt):
+        train(**(a_run(tmp_path, epochs=2)))
+    monkeypatch.undo()
+
     assert Checkpoints(tmp_path / "run").next_epoch() == 2
 
     train(**(a_run(tmp_path, epochs=2)))
@@ -208,8 +227,9 @@ def test_a_resumed_session_continues_the_learning_rate_schedule(
     told, so a session that only found out at epoch 3 that the run was ever meant to be four
     epochs long would already be annealing over the wrong horizon; a resume has to mean the same
     schedule picked back up, not a shorter one stretched afterwards. The kill is injected between
-    epoch 2's checkpoint and epoch 3's training, the same way `test_checkpoints.py` raises inside
-    `checkpoints.writing` — a session that never got to run epoch 3 at all.
+    epoch 2's checkpoint and epoch 3's training by replacing `_one_epoch` outright — in the same
+    spirit as `test_checkpoints.py` raising inside `checkpoints.writing`, one level up — so this
+    is a session that never got to run epoch 3 at all.
     """
     straight = tmp_path / "straight"
     train(**(a_run(straight, epochs=4, lr_schedule="cosine")))
@@ -237,6 +257,13 @@ def test_a_resumed_session_continues_the_learning_rate_schedule(
 
     assert len(uninterrupted) == 4
     assert resumed == pytest.approx(uninterrupted)
+    # Pinned outright rather than checked for "decreasing": a cosine trajectory is a closed-form
+    # property of the schedule, not a measurement of the detector, so a reader who has never
+    # computed one can see here what it does. Without this line a `_scheduler` that quietly
+    # returned None for "cosine" would still pass every test in this file.
+    assert uninterrupted == pytest.approx(
+        [0.001, 0.0008535533905932737, 0.0005, 0.00014644660940672628]
+    )
 
 
 def test_a_constant_schedule_reports_the_one_rate_it_trained_at(tmp_path: Path) -> None:

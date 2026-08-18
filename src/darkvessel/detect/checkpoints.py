@@ -139,6 +139,12 @@ class Journal:
         sessions, and the file would then hold two experiments under one name with nothing saying
         so — that is refused rather than merged.
         """
+        # `document["run"]` came back through `json.loads`, which turns a tuple into a list —
+        # `anchor_sizes` is one — so a caller handing back the same identity it was given would
+        # otherwise compare its own tuples against the list JSON already flattened them into and
+        # be refused for a difference that isn't one. Round-tripped here too, once, so both sides
+        # of the comparison, and what gets written, are the same shape.
+        run = json.loads(json.dumps(run))
         document = self._document()
         if document["run"] is not None and document["run"] != run:
             differing = _differences(document["run"], run)
