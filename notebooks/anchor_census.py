@@ -43,6 +43,18 @@ CANDIDATES = {
     "small (rung 2)": ((4,), (8,), (16,), (32,), (64,)),
 }
 
+# Torchvision's own RPN defaults (see `detector_model`'s `rpn_batch_size_per_image` and
+# `rpn_positive_fraction`), named here rather than left as bare literals so the realised-fraction
+# line below can show the reader where 128 comes from instead of asserting it.
+RPN_BATCH_SIZE_PER_IMAGE = 256
+RPN_POSITIVE_FRACTION = 0.5
+RPN_POSITIVE_CAP = RPN_BATCH_SIZE_PER_IMAGE * RPN_POSITIVE_FRACTION
+
+# Matcher's own high threshold. Named once and reused for the "rescued only by low-quality
+# matching" count below, so the two cannot drift apart if this is ever retuned.
+HIGH_IOU_THRESHOLD = 0.7
+LOW_IOU_THRESHOLD = 0.3
+
 
 def anchors_for(sizes: tuple[tuple[int, ...], ...]) -> tuple[torch.Tensor, list[int]]:
     """Every anchor one tile offers, and how many of them belong to each pyramid level.
@@ -70,7 +82,7 @@ def census(sizes: tuple[tuple[int, ...], ...], refs: list) -> None:
     # Torchvision's own thresholds, and its own guarantee that every box gets at least one anchor
     # however poor the overlap. That guarantee is why "zero positives" never happens and why the
     # count, not the presence, is the thing worth measuring.
-    matcher = Matcher(0.7, 0.3, allow_low_quality_matches=True)
+    matcher = Matcher(HIGH_IOU_THRESHOLD, LOW_IOU_THRESHOLD, allow_low_quality_matches=True)
 
     boundaries = torch.tensor(per_level).cumsum(0)
     positives_per_tile = []
@@ -90,8 +102,9 @@ def census(sizes: tuple[tuple[int, ...], ...], refs: list) -> None:
         for index in positive.tolist():
             by_level[int((boundaries <= index).sum())] += 1
 
-        # Boxes whose best anchor never reached 0.7 and were matched only by the low-quality rule.
-        rescued += int((quality.max(dim=1).values < 0.7).sum())
+        # Boxes whose best anchor never reached the high threshold and were matched only by the
+        # low-quality rule.
+        rescued += int((quality.max(dim=1).values < HIGH_IOU_THRESHOLD).sum())
 
     total = sum(positives_per_tile)
     tiles = len(positives_per_tile)
@@ -102,10 +115,17 @@ def census(sizes: tuple[tuple[int, ...], ...], refs: list) -> None:
     )
     print(f"  boxes matched only by allow_low_quality_matches: {rescued}")
     print(f"  by pyramid level: {dict(sorted(by_level.items()))}")
-    # 256 anchors are sampled at a ceiling of 50% positive, so 128 are asked for.
+    # The sampler draws once per image and caps *that image's* positives at RPN_POSITIVE_CAP
+    # before the batch is filled with background — it never sees the other tiles, so it cannot
+    # average across them first. Capping each tile and then averaging is the model of what the
+    # sampler actually does; capping the mean is a different quantity, and because x -> min(x,
+    # cap) is concave, Jensen's inequality makes it a strictly larger one whenever any tile
+    # exceeds the cap. That direction is exactly wrong for a census meant to expose a sampler
+    # running out of positives, so the cap is applied per tile, not to the mean.
+    capped_mean = sum(min(x, RPN_POSITIVE_CAP) for x in positives_per_tile) / max(tiles, 1)
     print(
-        f"  realised positive fraction against a batch of 256: "
-        f"{min(total / max(tiles, 1), 128.0) / 256:.3f}"
+        f"  realised positive fraction against a batch of {RPN_BATCH_SIZE_PER_IMAGE}: "
+        f"{capped_mean / RPN_BATCH_SIZE_PER_IMAGE:.3f}"
     )
 
 
