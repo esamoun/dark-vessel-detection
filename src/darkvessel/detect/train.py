@@ -30,9 +30,9 @@ from darkvessel.detect.dataset import Box, TileRef, symmetry_for
 from darkvessel.detect.metrics import NOTHING, Attempt, Reporting, measure
 from darkvessel.detect.model import SHIP, as_model_input, detections_from
 
-# The two names `Schedule.lr_schedule` accepts. Kept as the one list both `__post_init__` and
+# The two names `Schedule.lr_schedule` accepts. Kept as the one tuple both `__post_init__` and
 # `_scheduler` read, so there is one place that decides what this project has rather than two
-# lists that could quietly drift apart.
+# tuples that could quietly drift apart.
 _LR_SCHEDULES = ("constant", "cosine")
 
 
