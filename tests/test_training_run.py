@@ -161,6 +161,26 @@ def test_a_second_session_continues_the_run_the_first_one_started(
     assert Checkpoints(tmp_path / "run").next_epoch() == 3
 
 
+def test_a_resume_declaring_a_different_number_of_epochs_is_refused(tmp_path: Path) -> None:
+    """`epochs` names the run along with everything else in the schedule, and this is the test
+    that holds that in place: it was once left out of the run block, and put back on the
+    argument below. It is not enough for the argument to live in a comment.
+
+    Under a decaying rate the declared length is what the rate is annealed over — cosine's
+    `T_max` is `schedule.epochs` — so a session resumed with a longer horizon is a different
+    experiment from the one that was running, not a longer version of it. A schedule that had
+    already reached `eta_min` would otherwise resume at a learning rate of zero and train every
+    remaining epoch there, silently, on a machine rented by the hour. `describe` refuses the
+    resume rather than merging the two.
+    """
+    train(**(a_run(tmp_path, epochs=2)))
+
+    assert Journal(tmp_path / "run" / "metrics.json").run()["schedule"]["epochs"] == 2
+
+    with pytest.raises(ValueError, match="epochs"):
+        train(**(a_run(tmp_path, epochs=4)))
+
+
 def test_an_epoch_whose_weights_landed_but_whose_score_did_not_is_scored(tmp_path: Path) -> None:
     """The gap the ordering inside an epoch opens, and the thing that closes it.
 
@@ -278,9 +298,20 @@ def test_a_constant_schedule_reports_the_one_rate_it_trained_at(tmp_path: Path) 
     assert rates == [0.001, 0.001]
 
 
-def test_a_schedule_this_project_does_not_have_is_refused_by_name(tmp_path: Path) -> None:
+def test_a_schedule_this_project_does_not_have_is_refused_by_name() -> None:
+    """The refusal lives in `Schedule.__post_init__` now, not in `train`, so it is pinned there
+    directly rather than through an entry point it no longer reaches."""
     with pytest.raises(ValueError, match="lr_schedule"):
-        train(**(a_run(tmp_path, epochs=1, lr_schedule="exponential")))
+        Schedule(
+            epochs=1,
+            batch_size=2,
+            learning_rate=0.001,
+            momentum=0.9,
+            weight_decay=0.0005,
+            workers=0,
+            seed=1,
+            lr_schedule="exponential",
+        )
 
 
 def test_the_shipped_training_config_is_the_one_the_command_parses() -> None:
