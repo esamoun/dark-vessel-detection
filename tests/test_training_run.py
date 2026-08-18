@@ -28,7 +28,7 @@ torch = pytest.importorskip(
 from test_dataset import FIXTURE, write_dataset  # noqa: E402
 
 import darkvessel.detect.train as train_module  # noqa: E402
-from darkvessel.cli import training_request_from  # noqa: E402
+from darkvessel.cli import _train, training_request_from  # noqa: E402
 from darkvessel.config import load_config  # noqa: E402
 from darkvessel.detect.checkpoints import Checkpoints, Journal  # noqa: E402
 from darkvessel.detect.dataset import Layout, catalogue, split_by_scene  # noqa: E402
@@ -337,7 +337,9 @@ def test_the_shipped_training_config_is_the_one_the_command_parses() -> None:
     # `lr_schedule` reaches `Schedule` through this key alone. Left out of the dict, `Schedule`'s
     # own default ("constant") takes over silently — no exception, just twelve epochs at the
     # wrong rate, on the run whose entire reason for existing is that this one line differs.
-    assert request["schedule"]["lr_schedule"] in train_module._LR_SCHEDULES
+    # `.get` rather than bare indexing, so a deleted key fails this assertion by name instead of
+    # raising a `KeyError` that reads as a broken test rather than a caught regression.
+    assert request["schedule"].get("lr_schedule") in train_module._LR_SCHEDULES
     # Every key in this dict is unpacked straight into `detector_model(**request["model"])`. A
     # key this dict stops producing is a keyword `detector_model` falls back to its own default
     # for, silently — the same failure mode as `lr_schedule` above, one call away from the
@@ -394,7 +396,9 @@ def test_rung_one_is_the_one_line_it_claims_to_be() -> None:
     own default ("constant") is caught against the rung whose whole claim that would break."""
     request = training_request_from(load_config(LADDER / "r1-cosine.yaml"), LADDER)
 
-    assert request["schedule"]["lr_schedule"] == "cosine"
+    # `.get` rather than bare indexing — see the shipped-config parse test for why a deleted key
+    # should fail this assertion by name rather than as a `KeyError`.
+    assert request["schedule"].get("lr_schedule") == "cosine"
 
 
 @pytest.mark.parametrize("rung", sorted(LADDER.glob("*.yaml")), ids=lambda path: path.name)
@@ -431,3 +435,41 @@ def test_the_rungs_of_the_ladder_do_not_share_a_working_directory() -> None:
 
     assert len(set(directories)) == len(directories)
     assert len(set(metrics)) == len(metrics)
+
+
+def test_train_hands_its_own_stem_to_the_loop_not_only_to_the_builder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`stem` has three landings, and this is the one nothing else here reaches: it feeds
+    `request["model"]` — which goes into both `detector_model(**request["model"])` and the
+    `built` block written into every checkpoint — and it is also `train`'s own `stem=` keyword,
+    passed separately because `train` hands it to the `_Tiles` dataset that turns a tile into a
+    tensor. Miss that third wiring and the model is built for one channel while the dataset feeds
+    it three — loud, but loud on a rented GPU, which is the cost this test exists to avoid
+    paying.
+
+    Cataloguing tiles, splitting by scene, and building the model are all stubbed out, because
+    none of them is what this test checks — only the one keyword argument the wiring under test
+    controls, captured off the stub in its place. `r3-stem.yaml` is the fixture rather than the
+    shipped config because it resolves to `model.stem == "single"`, and `single` differs from
+    `train`'s own default of `"repeat"`; a config that resolved to the default would pass whether
+    or not the wiring existed.
+    """
+    captured: dict = {}
+
+    def fake_train(**kwargs: object) -> None:
+        captured.update(kwargs)
+
+    # `_train` imports `detector_model` and `train` inside its own function body, so each call
+    # re-resolves the name from its defining module — these two have to be patched there, not on
+    # `darkvessel.cli`, where no such names exist and a patch would silently do nothing.
+    monkeypatch.setattr("darkvessel.detect.train.train", fake_train)
+    monkeypatch.setattr("darkvessel.detect.model.detector_model", lambda **kwargs: None)
+    # `catalogue` and `split_by_scene` are imported at `cli.py` module scope, so `_train` resolves
+    # them as ordinary globals there — the opposite rule from the two above.
+    monkeypatch.setattr("darkvessel.cli.catalogue", lambda root, layout: [])
+    monkeypatch.setattr("darkvessel.cli.split_by_scene", lambda refs: ([], []))
+
+    _train(LADDER / "r3-stem.yaml")
+
+    assert captured.get("stem", "repeat") == "single"
