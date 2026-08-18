@@ -3,6 +3,10 @@
 # The stem is built to produce exactly what the repeat produces at initialisation, so what this
 # rung measures is what training does with one bank of kernels rather than a different starting
 # point. See docs/decisions.md.
+#
+# Extends rung 2 because the ladder is greedy: each rung starts from the last one that was kept.
+# If R2 is rejected, this line is repointed at r1-cosine.yaml and the edit goes into
+# docs/failures.md with the rejection.
 
 extends: r2-anchors.yaml
 

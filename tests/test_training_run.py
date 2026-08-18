@@ -15,6 +15,7 @@ that it installs and runs without a framework, so the framework is an extra and 
 be honest about running without it.
 """
 
+import inspect
 from pathlib import Path
 
 import pytest
@@ -333,6 +334,17 @@ def test_the_shipped_training_config_is_the_one_the_command_parses() -> None:
     # The Kaggle attachment points are absolute, and have to survive being read relative to a
     # config file that lives in this repository rather than in the session.
     assert request["root"].is_absolute() and request["checkpoints"].directory.is_absolute()
+    # `lr_schedule` reaches `Schedule` through this key alone. Left out of the dict, `Schedule`'s
+    # own default ("constant") takes over silently — no exception, just twelve epochs at the
+    # wrong rate, on the run whose entire reason for existing is that this one line differs.
+    assert request["schedule"]["lr_schedule"] in train_module._LR_SCHEDULES
+    # Every key in this dict is unpacked straight into `detector_model(**request["model"])`. A
+    # key this dict stops producing is a keyword `detector_model` falls back to its own default
+    # for, silently — the same failure mode as `lr_schedule` above, one call away from the
+    # builder instead of the scheduler. `tile_px` is `_train`'s own to pass, not this dict's, so
+    # it is excluded from the builder's parameter set before comparing.
+    builder_params = set(inspect.signature(detector_model).parameters) - {"tile_px"}
+    assert set(request["model"]) == builder_params
 
 
 def test_the_shipped_config_reports_the_tolerance_the_fusion_will_use(tmp_path: Path) -> None:
@@ -373,6 +385,16 @@ def test_the_ladder_has_the_four_rungs_the_plan_names() -> None:
         "r3-stem.yaml",
         "r4-sampler.yaml",
     ]
+
+
+def test_rung_one_is_the_one_line_it_claims_to_be() -> None:
+    """r1's entire reason to exist is `schedule.lr_schedule: cosine`. The parametrised test below
+    only checks that *some* schedule with a positive epoch count came out of *some* rung; this
+    one names the rung and the value, so a `lr_schedule` that silently fell back to `Schedule`'s
+    own default ("constant") is caught against the rung whose whole claim that would break."""
+    request = training_request_from(load_config(LADDER / "r1-cosine.yaml"), LADDER)
+
+    assert request["schedule"]["lr_schedule"] == "cosine"
 
 
 @pytest.mark.parametrize("rung", sorted(LADDER.glob("*.yaml")), ids=lambda path: path.name)
