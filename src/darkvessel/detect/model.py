@@ -27,9 +27,9 @@ training does with one bank of kernels rather than a different initialisation. N
 dual-polarisation stem the ticket asked for, and that one is not coming: there is no
 dual-polarisation data to fit it on and none to run it over.
 
-This module is the only one in `detect/` that imports torch, along with `train.py`. Everything
-that can be got wrong quietly — the split, the subset, the augmentations, the counting, the
-resume — is on the other side of that line, in modules a laptop can test in a second.
+This module imports torch, along with `train.py` and `trained.py`. Everything that can be got
+wrong quietly — the split, the subset, the augmentations, the counting, the resume — is on the
+other side of that line, in modules a laptop can test in a second.
 """
 
 import numpy as np
