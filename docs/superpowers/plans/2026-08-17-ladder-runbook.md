@@ -43,14 +43,18 @@ Each rung writes to its own `checkpoints-rN` directory, so a rung cannot resume 
 rung's finished schedule and report its numbers as its own — the five sessions share one Kaggle
 working directory, and only the config tells them apart.
 
-**Adapting `notebooks/kaggle-train.ipynb`.** The notebook's last cell names `configs/train.yaml`
-explicitly, and its resume cell (cell 3) hardcodes `/kaggle/working/checkpoints` and
-`metrics.json` because those are R0's own paths — the ones in the table's first row. For sessions
-2 to 5, change the last cell's `--config` to that session's ladder config, and if a rung needs a
-second session to finish its twelve epochs, change cell 3's glob and filenames to that rung's own
-`checkpoints-rN` and `metrics-rN-*.json` too. Left pointing at R0's names, cell 3 finds nothing
-under `*/checkpoints/epoch-*.pt`, reports no checkpoint attached, and the rung restarts from epoch
-0 rather than resuming — silently, and at the cost of the epochs already paid for.
+**Adapting `notebooks/kaggle-train.ipynb`.** The resume cell (cell 3) sets one constant, `CONFIG`,
+and derives the checkpoint directory, the glob and the metrics filename from it via
+`load_config`; the training cell reads the same constant. For sessions 2 to 5, set `CONFIG` to
+that session's ladder config and nothing else — there is no second edit left to miss. If a rung
+needs a second session to finish its twelve epochs, `CONFIG` unchanged is the whole of what a
+resume needs: the glob is already scoped to that rung's own `checkpoints-rN` directory, so it
+cannot pick up a checkpoint left over from a different rung's attached output. This replaced an
+earlier two-edit procedure — the training cell's `--config` and the resume cell's hardcoded
+`/kaggle/working/checkpoints` and `metrics.json` had to be changed together, and missing the
+second one found nothing under `*/checkpoints/epoch-*.pt`, reported no checkpoint attached, and
+restarted the rung from epoch 0 rather than resuming — silently, and at the cost of the epochs
+already paid for.
 
 After each session, bring the metrics file back into the repository under the name the table
 gives, and run:
