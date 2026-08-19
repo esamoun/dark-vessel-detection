@@ -123,6 +123,10 @@ def train(
     journal.describe(
         {
             "built": built,
+            # The loop's own copy, read by `_Tiles` below. `built["stem"]` (set by the caller,
+            # see `cli._train`) is the one a checkpoint carries and a resume is checked against;
+            # this one is what this session actually ran with. The two happen to be the same key
+            # written twice rather than one value read from two places — leave both.
             "stem": stem,
             "schedule": asdict(schedule),
             "reporting": {

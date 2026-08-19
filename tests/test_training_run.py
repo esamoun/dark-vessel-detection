@@ -15,6 +15,7 @@ that it installs and runs without a framework, so the framework is an extra and 
 be honest about running without it.
 """
 
+import dataclasses
 import inspect
 from pathlib import Path
 
@@ -375,6 +376,39 @@ def test_the_checkpoint_records_what_built_it(tmp_path: Path) -> None:
 
     assert state["built"] == run["built"]
     assert state["built"]["anchor_sizes"] == ANCHOR_SIZES
+
+
+def test_the_run_block_carries_what_a_resume_and_the_ladder_both_read_out_of_it(
+    tmp_path: Path,
+) -> None:
+    """The shape of `journal.run()`, pinned directly rather than assumed from the two tests that
+    depend on it without checking it.
+
+    `describe` refuses a resume whose `run["built"]` disagrees with the one already on file —
+    that is the only thing that catches a rung resumed under edited anchors or an edited stem,
+    because `AnchorGenerator` holds no parameters and a state dict fitted under one set of sizes
+    loads without complaint under another. `ladder._check_comparable` reads
+    `run["reporting"][field]` off the same block to refuse two rungs scored differently — but the
+    ladder's own tests build `run` by hand, so nothing before this test connected that reader to
+    this writer. A `train()` that quietly stopped writing either key would leave both suites
+    green while a resume under a changed config, or a ladder comparing two incomparable rungs,
+    went through in silence.
+
+    Structure only: what the keys *are*, not what a real model reports through them.
+    """
+    run = a_run(tmp_path, epochs=1)
+    train(**run)
+
+    block = Journal(tmp_path / "run" / "metrics.json").run()
+
+    assert set(block["built"]) == set(run["built"])
+    # `a_run` does not pass `stem`, so this pins `train`'s own default rather than an argument
+    # the fixture chose — the point being that the key is there at all, under whichever value.
+    assert block["stem"] == "repeat"
+    assert set(block["schedule"]) == {field.name for field in dataclasses.fields(Schedule)}
+    assert set(block["reporting"]) == {"tolerance_m", "resolution_m", "thresholds"}
+    assert "training_tiles" in block
+    assert "held_out_tiles" in block
 
 
 def test_the_ladder_has_the_four_rungs_the_plan_names() -> None:
