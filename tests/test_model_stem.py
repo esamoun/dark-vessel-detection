@@ -96,6 +96,30 @@ def test_the_folded_stem_computes_the_three_channel_stem_away_from_the_tile_edge
     )
 
 
+def test_the_folded_stem_disagrees_with_the_repeat_at_the_tile_edge() -> None:
+    """The complement of the interior-agreement test above, and the half of the property
+    `docs/decisions.md` claims that nothing previously checked.
+
+    Interior agreement alone does not say the three-pixel margin means anything: a fold that
+    happened to agree everywhere would pass that test too, and the border would be a margin drawn
+    for no reason. What distinguishes "a boundary convention" from "the two stems are simply the
+    same function" is that the border genuinely disagrees — by the ImageNet mean the padded zero
+    stands for under the repeat stem, not by a rounding error of the kind `atol=1e-5` above
+    tolerates.
+    """
+    image = np.random.default_rng(0).random((TILE_PX, TILE_PX)).astype(np.float32)
+    repeat_out = stem_output("repeat", image)
+    single_out = stem_output("single", image)
+
+    interior = (..., slice(MARGIN_PX, -MARGIN_PX), slice(MARGIN_PX, -MARGIN_PX))
+    border = torch.ones_like(repeat_out, dtype=torch.bool)
+    border[interior] = False
+
+    # Two orders of magnitude past the interior's tolerance, so this is the boundary convention
+    # asserting itself and not float32 accumulation.
+    assert (repeat_out[border] - single_out[border]).abs().max() > 1e-3
+
+
 def test_the_single_channel_stem_takes_one_channel() -> None:
     model = a_model("single")
 

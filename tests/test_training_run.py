@@ -33,6 +33,7 @@ from darkvessel.cli import _train, training_request_from  # noqa: E402
 from darkvessel.config import load_config  # noqa: E402
 from darkvessel.detect.checkpoints import Checkpoints, Journal  # noqa: E402
 from darkvessel.detect.dataset import Layout, catalogue, split_by_scene  # noqa: E402
+from darkvessel.detect.ladder import SAME_REPORTING  # noqa: E402
 from darkvessel.detect.metrics import Reporting  # noqa: E402
 from darkvessel.detect.model import ANCHOR_SIZES, detector_model  # noqa: E402
 from darkvessel.detect.train import Schedule, train  # noqa: E402
@@ -409,7 +410,13 @@ def test_the_run_block_carries_what_a_resume_and_the_ladder_both_read_out_of_it(
     # the fixture chose — the point being that the key is there at all, under whichever value.
     assert block["stem"] == "repeat"
     assert set(block["schedule"]) == {field.name for field in dataclasses.fields(Schedule)}
-    assert set(block["reporting"]) == {"tolerance_m", "resolution_m", "thresholds"}
+    # Derived from `ladder.SAME_REPORTING` rather than copied, so the writer here is tied to the
+    # reader that actually depends on it — `ladder._check_comparable` — and not to a second literal
+    # that could drift from the first without either suite noticing. `.get` rather than bare
+    # indexing, so a `train()` that stopped writing the key fails this assertion by name instead of
+    # raising a `KeyError` that reads as a broken test rather than a caught regression — the same
+    # anti-pattern already fixed elsewhere in this file.
+    assert set(block.get("reporting", {})) == set(SAME_REPORTING)
     assert "training_tiles" in block
     assert "held_out_tiles" in block
 
