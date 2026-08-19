@@ -228,7 +228,8 @@ W'[k, 0, i, j] = Σ_c W[k, c, i, j] / s_c
 b'[k]          = −Σ_c (m_c / s_c) · Σ_ij W[k, c, i, j]
 ```
 
-and the transform set to `image_mean=[0.0], image_std=[1.0]` produces the same `y` exactly.
+and the transform set to `image_mean=[0.0], image_std=[1.0]` produces the same `y`, wherever the
+kernel does not reach the tile's zero padding.
 
 The bias matters here and would not in a stock ResNet. With `trainable_backbone_layers: 3`, `bn1`
 is a `FrozenBatchNorm2d` applying fixed statistics rather than recentring the batch, so a constant
