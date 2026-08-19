@@ -29,7 +29,7 @@ from darkvessel.detect.checkpoints import Checkpoints, Journal
 from darkvessel.detect.dataset import Layout, Subset, catalogue, split_by_scene
 from darkvessel.detect.detector import Detector
 from darkvessel.detect.geo import write_detections
-from darkvessel.detect.ladder import Rung, judge, table
+from darkvessel.detect.ladder import WINDOW, Rung, judge, table
 from darkvessel.detect.metrics import Reporting
 from darkvessel.detect.threshold import BrightPixelDetector
 from darkvessel.fusion.azimuth import Geometry
@@ -461,7 +461,7 @@ def _compare(config_path: Path) -> int:
     line above.
     """
     config = load_config(config_path)
-    window = int(config["ladder"].get("window", 4))
+    window = int(config["ladder"].get("window", WINDOW))
 
     rungs = []
     for requested in ladder_request_from(config, config_path.parent):

@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+import darkvessel.cli as cli
 from darkvessel.cli import ladder_request_from, main
 from darkvessel.config import load_config
 from darkvessel.detect.ladder import Rung, band, best_f1, judge, table
@@ -243,3 +244,61 @@ def test_a_rung_scored_zero_epochs_is_reported_pending_rather_than_crashing(
     assert main(["compare", "--config", str(config)]) == 0
 
     assert "R0" in capsys.readouterr().out
+
+
+def test_compares_default_window_is_the_constant_ladder_owns_not_a_copied_literal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`_compare` used to fall back to a bare `4` when a config left `window:` out, and nothing
+    said that number had anything to do with `ladder.WINDOW` — the two could drift apart with no
+    test noticing. `cli.py` now imports the constant itself, but `from ladder import WINDOW`
+    copies the value at import time rather than binding a live reference to `ladder`'s attribute,
+    so patching `ladder.WINDOW` after the fact does not move what `cli._compare` reads (verified
+    by hand: it does not). The honest external observation is therefore to patch the name
+    `_compare` actually evaluates, `cli.WINDOW`, and show the ladder's own arithmetic moves with
+    it — which a hardcoded literal could never do.
+
+    R0's last four epochs swing from 0.3 to 0.9 (band 0.6 under the real default, `WINDOW == 4`)
+    but its very last epoch alone has no swing at all (band 0.0 under a window of one). R1 gains
+    only 0.05 over R0 — enough to clear a band of zero but not one of 0.6 — so which window
+    `_compare` actually used is legible straight off whether R1 is reported kept or rejected.
+    """
+    reporting = {"tolerance_m": 200.0, "resolution_m": 10.0, "thresholds": [0.5]}
+
+    def an_entry(epoch: int, f1: float) -> dict:
+        return {
+            "epoch": epoch,
+            "held_out_tiles": 3000,
+            "held_out_ships": 2378,
+            "at": [{"score": 0.5, "precision": f1, "recall": f1}],
+        }
+
+    r0_epochs = [an_entry(index + 1, f1) for index, f1 in enumerate([0.2, 0.9, 0.3, 0.6, 0.5])]
+    r0 = tmp_path / "metrics-r0.json"
+    r0.write_text(json.dumps({"run": {"reporting": reporting}, "epochs": r0_epochs}))
+
+    r1 = tmp_path / "metrics-r1.json"
+    r1.write_text(json.dumps({"run": {"reporting": reporting}, "epochs": [an_entry(1, 0.55)]}))
+
+    config = tmp_path / "ladder.yaml"
+    config.write_text(
+        "ladder:\n"
+        "  rungs:\n"
+        "    - label: R0\n"
+        "      changed: baseline\n"
+        "      metrics: metrics-r0.json\n"
+        "    - label: R1\n"
+        "      changed: one line\n"
+        "      metrics: metrics-r1.json\n"
+    )
+
+    assert main(["compare", "--config", str(config)]) == 0
+    # Real default: WINDOW == 4, band 0.6, R1's gain of 0.05 does not clear it.
+    assert "rejected" in capsys.readouterr().out
+
+    monkeypatch.setattr(cli, "WINDOW", 1)
+
+    assert main(["compare", "--config", str(config)]) == 0
+    # Patched default: window 1, band 0.0, the same gain now clears it — proof the value
+    # `_compare` used was read from the name `WINDOW`, not baked in as a literal.
+    assert "kept" in capsys.readouterr().out

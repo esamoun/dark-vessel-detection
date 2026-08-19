@@ -29,12 +29,23 @@ def _cell_sources() -> list[str]:
 
 
 def test_the_notebook_names_its_run_once_rather_than_in_two_places_that_can_disagree() -> None:
-    """The two literals that used to name a run a second time are refused outright, and `CONFIG`
-    — the one place left that names it — has to be there instead. A notebook that reintroduced
-    either literal would be reintroducing exactly the two-edit trap this file exists to close.
-    """
-    whole = "\n".join(_cell_sources())
+    """The two literals that used to name a run a second time are refused outright, and the
+    training cell has to read the run back through `CONFIG` rather than naming it again itself.
 
-    assert "CONFIG" in whole
+    Banning the two old literals only closes half the trap: a notebook that kept the derived
+    resume cell but put the training cell back to a hardcoded
+    `!darkvessel train --config /kaggle/working/repo/configs/train.yaml` still has `CONFIG`
+    sitting in the source, defined by the resume cell and read by nothing, and neither banned
+    literal appears — so the two checks below would both pass while the two-edit trap was back.
+    The training cell's own source is what has to be checked, and it has to reference `{CONFIG}`
+    rather than a path of its own.
+    """
+    sources = _cell_sources()
+    whole = "\n".join(sources)
+
     assert "metrics.json" not in whole
     assert "/checkpoints" not in whole
+
+    training = [source for source in sources if "darkvessel train" in source]
+    assert len(training) == 1, "expected exactly one cell that runs `darkvessel train`"
+    assert "{CONFIG}" in training[0]

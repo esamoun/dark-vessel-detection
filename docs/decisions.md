@@ -1053,14 +1053,17 @@ the signal where it does — a boundary convention, not a difference in what eit
 from.
 
 **What was measured.** On random weights, `conv1`'s output agrees to **1.5e-06** outside a
-three-pixel margin, at both 64 px and 256 px tiles — a fixed border, not one that shrinks as the
-tile grows, because it is a property of the kernel and the padding rather than of the tile size.
-The mechanism was confirmed rather than assumed: with the repeat's mean set to zero, a padded zero
-means the same raw value under both conventions, and the two whole backbones — fifty layers, not
-just `conv1` — then agree to **3.8e-04** on a signal of scale **142**, which is float32
-accumulation and nothing more. That the disagreement collapses to accumulation noise once the one
-thing that differs between the conventions is equalised is what says the border gap is the padding
-and not some other scale artefact in the fold arithmetic.
+three-pixel margin at the 64 px tile `tests/test_model_stem.py` fixes — a border that a change to
+the tile size is not expected to shrink, because it is a property of the kernel and the padding
+rather than of the tile size. That expectation was checked once at 256 px too, in a scratch script
+run during implementation and never committed, where the same margin held; that figure is recorded
+here as what was observed then, not as something a test holds now. The mechanism was confirmed
+rather than assumed: with the repeat's mean set to zero, a padded zero means the same raw value
+under both conventions, and the two whole backbones — fifty layers, not just `conv1` — then agree
+to **3.8e-04** on a signal of scale **142**, which is float32 accumulation and nothing more. That
+the disagreement collapses to accumulation noise once the one thing that differs between the
+conventions is equalised is what says the border gap is the padding and not some other scale
+artefact in the fold arithmetic.
 
 **What the property is used for.** Rung 3 measures what training does with one bank of kernels
 folded down to one channel, rather than a different starting point. That claim only holds if the
@@ -1069,7 +1072,8 @@ field actually looks — and `C5`'s receptive field is the whole tile, so a bord
 not stay confined to the border; it reaches every level of the pyramid. The property above is
 what is available instead: agreement inside the tile, a stated and measured disagreement at its
 edge, and everything outside `conv1` identical including trainability. `tests/test_model_stem.py`
-holds both halves.
+holds both halves at the one tile size it fixes, 64 px: agreement in the interior and, as its own
+complement, a genuine disagreement at the border.
 
 **What it costs.** The comparison rung 3 makes is not "the same model, one line different at
 training time" quite as cleanly as the rest of the ladder claims for its own rungs — a
