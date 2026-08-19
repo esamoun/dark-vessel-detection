@@ -990,3 +990,37 @@ answer, which is the one thing this correction must not do.
 **What is still owed.** Earth Engine publishes a per-pixel `angle` band on COPERNICUS/S1_GRD. The
 export should record it, so a scene carries its own incidence angle instead of accepting the
 middle of the swath. Written down here rather than left as a gap.
+
+---
+
+## 2026-08-17 — What counts as a rung helping, decided before anything ran
+
+**Decision.** A rung of the small-target ladder is kept if its best F1 across the reported score
+thresholds, at its final epoch, exceeds the previous kept rung's by **more** than the range of
+that same statistic over the previous rung's last four epochs. A gain exactly equal to that range
+is a rejection. `ladder.py` applies it; `configs/ladder.yaml` names the rungs it is applied to.
+
+**Why a rule rather than a reading.** The baseline did not converge — see the failure log — and
+its precision at a fixed threshold moved by a factor of three between adjacent epochs of a single
+run. The gain a better anchor size buys is plausibly two or three points of F1, which is smaller
+than that. Under those conditions "this change helped" is a sentence that can be written about
+almost any pair of numbers, and the only defence is to fix what would count as help before seeing
+any of it.
+
+**Why the band is measured rather than assumed.** It is the previous rung's own dispersion over
+its last four epochs, so a configuration that settles buys a tighter test for the next change and
+one that does not pays for it. Nothing here is a claim about how much noise there ought to be.
+
+**Why strictly greater.** A gain that only reaches the noise the previous rung was already showing
+is noise. One character, and it is the difference between a ladder and a narration.
+
+**The fallback, decided now rather than when it is needed.** If the cosine decay does not settle
+the run — R1's band over its last four epochs stays the same order as R0's — the statistic becomes
+the median over the last four epochs rather than the final one, the band stays the range, and the
+finding that a decaying rate did not settle this configuration is recorded in the failure log.
+Deciding this in advance is what stops it being an escape hatch.
+
+**What this ticket cannot do about the deeper problem.** One run per rung, one seed. A rung whose
+gain clears the band could still be a lucky draw, and only repeated seeds would settle that. It
+would double a thirteen-hour budget on a free tier, and it is recorded here as the honest limit of
+what these five numbers support rather than papered over.

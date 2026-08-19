@@ -333,3 +333,35 @@ detector, and the ticket that swapped the detector in is not allowed to modify a
 is recorded here with the measurements, and carried into a ticket of its own. What the swap
 ticket reports instead is the detector scored against the positions the radar actually shows,
 which is a statement about the detector and not about the matching.
+
+---
+
+## 2026-08-17 — The dual-polarisation stem has no data, on either side of the chain
+
+**What was asked for.** Issue #11's first acceptance criterion is an input stage adapted to radar
+polarisation channels, and `model.py` sharpened it before the work began: "a dual-polarisation
+stem trained as one".
+
+**Why it is not here.** There is no second polarisation anywhere in this project. LS-SSDD-v1.0 is
+VV, all 9000 sub-images of it. The scene the chain runs on is VV, and `configs/kattegat-lane.yaml`
+records why: Earth Engine answers a single download up to 48 MiB, the box came back at 57 MB in VV
+and VH, and the area was the one thing that had been measured and argued for, so the polarisation
+was what gave way. Building a dual stem now would mean fitting its second channel on a copy of the
+first, which is not an adaptation — it is the null adaptation the repository already ships.
+
+**What was done instead.** A single-channel stem: `conv1` takes one channel of radar amplitude
+rather than three copies of it, its weights folded down from the pretrained RGB kernels so that
+the model agrees with the repeat inside the tile at initialisation. It is not numerically
+identical to the repeat everywhere — `conv1` pads with three rings of zeros, and a zero means raw
+amplitude under the repeat's normalisation and means nothing under this one, so the two agree
+beyond three positions of the border and differ within it. Every parameter outside `conv1` is the
+repeat's own, including which layers are trainable, so the rung that introduces this stem measures
+what training does with one bank of kernels rather than a different starting point. That is an
+input stage adapted to what the data actually is, and it is measured as rung 3 of the ladder.
+
+**What it would take to do the thing that was asked.** A VV+VH export, which means either a
+smaller study area or a coarser resolution — both already argued over once — and a
+dual-polarisation training set, which means either finding one at Sentinel-1's resolution or
+accepting a set whose physics is not this chain's physics. Both are decisions above this ticket's
+level. Recorded here so that the day a dual-polarisation export exists, this is a task rather than
+a rediscovery.
