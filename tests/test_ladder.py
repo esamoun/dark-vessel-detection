@@ -9,11 +9,12 @@ What is pinned is the boundary. A rung whose gain exactly equals the noise band 
 that single `>` rather than `>=` is the difference between a ladder and a narration of noise.
 """
 
+import json
 from pathlib import Path
 
 import pytest
 
-from darkvessel.cli import ladder_request_from
+from darkvessel.cli import ladder_request_from, main
 from darkvessel.config import load_config
 from darkvessel.detect.ladder import Rung, band, best_f1, judge, table
 
@@ -144,6 +145,17 @@ def test_two_rungs_scored_at_different_thresholds_are_refused() -> None:
         judge([r0, r1])
 
 
+def test_two_rungs_scored_at_different_resolutions_are_refused() -> None:
+    """`resolution_m` is what turns the tolerance from metres into pixels. Two rungs that agree on
+    the metres but disagree on the pixel scale it was measured against are not comparable either,
+    and nothing else in `SAME_REPORTING` would catch it."""
+    r0 = a_rung("R0", [0.5, 0.5, 0.5, 0.5])
+    r1 = a_rung("R1", [0.6, 0.6, 0.6, 0.6], reporting={**REPORTING, "resolution_m": 20.0})
+
+    with pytest.raises(ValueError, match="resolution_m"):
+        judge([r0, r1])
+
+
 def test_two_rungs_scored_over_different_held_out_splits_are_refused() -> None:
     """The one thing every rung of this ladder has in common is the split, and a rung scored over
     a subset of it would report a precision the detector had not earned."""
@@ -153,6 +165,18 @@ def test_two_rungs_scored_over_different_held_out_splits_are_refused() -> None:
         entry["held_out_tiles"] = 1500
 
     with pytest.raises(ValueError, match="held_out_tiles"):
+        judge([r0, r1])
+
+
+def test_two_rungs_scored_over_different_counts_of_held_out_ships_are_refused() -> None:
+    """`held_out_tiles` alone does not pin the split — the same tile count could carry a different
+    census of ships if the labels themselves moved. `SAME_SPLIT` checks both."""
+    r0 = a_rung("R0", [0.5, 0.5, 0.5, 0.5])
+    r1 = a_rung("R1", [0.6, 0.6, 0.6, 0.6])
+    for entry in r1.epochs:
+        entry["held_out_ships"] = 4000
+
+    with pytest.raises(ValueError, match="held_out_ships"):
         judge([r0, r1])
 
 
@@ -193,3 +217,29 @@ def test_every_rung_of_the_shipped_ladder_reads_its_metrics_from_its_own_file() 
     paths = [rung["metrics"] for rung in rungs]
 
     assert len(set(paths)) == len(paths)
+
+
+def test_a_rung_scored_zero_epochs_is_reported_pending_rather_than_crashing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A session killed between `describe` writing the run block and the first epoch's checkpoint
+    landing leaves exactly this file: named, and with no epoch in it. `judge` reads a statistic
+    off `rung.epochs[-1]`, which is an `IndexError` on an empty list rather than a verdict — and a
+    metrics file a session died early enough to leave behind is not a rare shape on a free tier.
+    It is treated the way a missing metrics file already is: reported as pending, not crashed on.
+    """
+    metrics = tmp_path / "metrics-r0.json"
+    metrics.write_text(json.dumps({"run": {"reporting": REPORTING}, "epochs": []}))
+
+    config = tmp_path / "ladder.yaml"
+    config.write_text(
+        "ladder:\n"
+        "  rungs:\n"
+        "    - label: R0\n"
+        "      changed: baseline\n"
+        "      metrics: metrics-r0.json\n"
+    )
+
+    assert main(["compare", "--config", str(config)]) == 0
+
+    assert "R0" in capsys.readouterr().out

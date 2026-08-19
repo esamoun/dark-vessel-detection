@@ -452,6 +452,13 @@ def _compare(config_path: Path) -> int:
     this file for most of the ticket. The comparison reports it as pending and stops there rather
     than skipping it — a ladder read across a gap would measure a change against the wrong
     configuration and would not look any different.
+
+    A rung whose file exists, names its run and has scored no epoch is the same kind of pending:
+    a session killed between `describe` writing the run block and the first epoch landing leaves
+    exactly that file, and `judge` has no epoch to read a statistic off — `best_f1(epochs[-1])`
+    on an empty list is an `IndexError`, not a verdict. Caught here rather than in `judge`,
+    because "not run far enough yet" is reported the same way "not run at all" already is, one
+    line above.
     """
     config = load_config(config_path)
     window = int(config["ladder"].get("window", 4))
@@ -463,12 +470,17 @@ def _compare(config_path: Path) -> int:
             break
 
         journal = Journal(requested["metrics"])
+        entries = journal.entries()
+        if not entries:
+            print(f"{requested['label']}: no epoch scored yet ({requested['metrics']})")
+            break
+
         rungs.append(
             Rung(
                 label=requested["label"],
                 changed=requested["changed"],
                 run=journal.run(),
-                epochs=journal.entries(),
+                epochs=entries,
             )
         )
 

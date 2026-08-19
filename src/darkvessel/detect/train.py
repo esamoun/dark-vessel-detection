@@ -28,7 +28,7 @@ from tqdm import tqdm
 from darkvessel.detect.checkpoints import Checkpoints, Journal
 from darkvessel.detect.dataset import Box, TileRef, symmetry_for
 from darkvessel.detect.metrics import NOTHING, Attempt, Reporting, measure
-from darkvessel.detect.model import SHIP, as_model_input, detections_from
+from darkvessel.detect.model import SHIP, STEMS, as_model_input, detections_from
 
 # The two names `Schedule.lr_schedule` accepts. Kept as the one tuple both `__post_init__` and
 # `_scheduler` read, so there is one place that decides what this project has rather than two
@@ -110,6 +110,18 @@ def train(
     order they arrive in — is derived from the seed and the epoch number rather than from a
     generator's position in a stream.
     """
+    # `model` and `stem` are two arguments naming the same thing, and nothing upstream of here
+    # checks they agree — `_train` builds both from the same config key, but any other caller can
+    # hand this function a model built for one stem and a `stem` naming another. Caught here,
+    # against the one place the answer already lives, rather than on the first batch of a rented
+    # GPU session, after the dataset is attached and the wheels are installed.
+    channels = model.backbone.body.conv1.in_channels
+    if channels != STEMS[stem]:
+        raise ValueError(
+            f"model was built with a stem taking {channels} channel(s), but stem={stem!r} feeds "
+            f"it tiles of {STEMS[stem]}"
+        )
+
     model.to(device)
 
     # Written before the first epoch, so a metrics file says which configuration produced it. Five
