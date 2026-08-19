@@ -1,8 +1,11 @@
 # Rung 3: one channel of radar amplitude instead of three copies of it.
 #
-# The stem is built to produce exactly what the repeat produces at initialisation, so what this
-# rung measures is what training does with one bank of kernels rather than a different starting
-# point. See docs/decisions.md.
+# The stem agrees with the repeat inside the tile at initialisation, and differs from it over a
+# three-pixel border — conv1 pads with zeros, and a zero does not mean the same raw amplitude on
+# both sides of the normalisation. Every parameter outside conv1 is identical, and the folded
+# stem inherits the trainability of the one it replaces, so what this rung measures is what
+# training does with one bank of kernels rather than a different starting point. See
+# docs/decisions.md.
 #
 # Extends rung 2 because the ladder is greedy: each rung starts from the last one that was kept.
 # If R2 is rejected, this line is repointed at r1-cosine.yaml and the edit goes into

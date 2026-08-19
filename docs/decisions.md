@@ -817,6 +817,12 @@ three-channel backbone to accept the data at all. What the ticket means by an in
 to radar polarisation — a dual-polarisation stem trained as one — is still to come, and is not
 what is here.
 
+**What was done instead.** Corrected on 2026-08-17 — see docs/failures.md. Originally recorded as:
+still to come. It is not: LS-SSDD is VV only and the scene this chain exports is VV only, so a
+dual-polarisation stem has no data to be fitted on and none to be run on, on either side. What was
+built instead is the single-channel stem, folded down from the pretrained three-channel kernels
+and measured as rung 3 of the ladder — see the 2026-08-17 entry on the folded stem, below.
+
 ---
 
 ## 2026-08-14 — Where the annotations start counting is measured, not assumed
@@ -1024,3 +1030,49 @@ Deciding this in advance is what stops it being an escape hatch.
 gain clears the band could still be a lucky draw, and only repeated seeds would settle that. It
 would double a thirteen-hour budget on a free tier, and it is recorded here as the honest limit of
 what these five numbers support rather than papered over.
+
+---
+
+## 2026-08-17 — The folded stem agrees with the repeat inside the tile, and not at its edge
+
+**Decision.** Rung 3's single-channel stem is measured and used on the strength of one property:
+`conv1`'s output agrees with the three-channel repeat's away from a three-pixel border, and every
+parameter and buffer outside `conv1` — including which layers are trainable — is exactly the
+repeat's own. It is not numerically identical to the repeat everywhere, and an earlier draft of
+this project's own documents said it was; that claim was unqualified and wrong, and this entry is
+the correction.
+
+**Why the border disagrees.** `conv1` pads with three rings of zeros before it convolves. Under
+the repeat stem the tile is normalised *before* the padding is added, so a padded zero sits in
+normalised space and stands for raw amplitude `m_c` — ImageNet's per-channel mean, a different
+value on each of the three channels. Under the folded stem the transform is the identity, so a
+padded zero stands for a raw zero. No single padding value reconciles the two: it would have to
+satisfy `v · A_k = B_k` for every output channel `k` at once, and those ratios differ per channel.
+So the two stems agree wherever the kernel does not reach the tile's edge, and disagree by most of
+the signal where it does — a boundary convention, not a difference in what either stem starts
+from.
+
+**What was measured.** On random weights, `conv1`'s output agrees to **1.5e-06** outside a
+three-pixel margin, at both 64 px and 256 px tiles — a fixed border, not one that shrinks as the
+tile grows, because it is a property of the kernel and the padding rather than of the tile size.
+The mechanism was confirmed rather than assumed: with the repeat's mean set to zero, a padded zero
+means the same raw value under both conventions, and the two whole backbones — fifty layers, not
+just `conv1` — then agree to **3.8e-04** on a signal of scale **142**, which is float32
+accumulation and nothing more. That the disagreement collapses to accumulation noise once the one
+thing that differs between the conventions is equalised is what says the border gap is the padding
+and not some other scale artefact in the fold arithmetic.
+
+**What the property is used for.** Rung 3 measures what training does with one bank of kernels
+folded down to one channel, rather than a different starting point. That claim only holds if the
+folded stem and the repeat it replaces agree at initialisation everywhere the FPN's receptive
+field actually looks — and `C5`'s receptive field is the whole tile, so a border difference does
+not stay confined to the border; it reaches every level of the pyramid. The property above is
+what is available instead: agreement inside the tile, a stated and measured disagreement at its
+edge, and everything outside `conv1` identical including trainability. `tests/test_model_stem.py`
+holds both halves.
+
+**What it costs.** The comparison rung 3 makes is not "the same model, one line different at
+training time" quite as cleanly as the rest of the ladder claims for its own rungs — a
+three-pixel border's worth of the tile starts from a different convention. It is recorded here
+rather than smoothed over, because the alternative was a spec that stated a stronger property than
+the code delivers.
