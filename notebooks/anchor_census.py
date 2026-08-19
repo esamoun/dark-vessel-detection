@@ -20,6 +20,7 @@ Costs no GPU quota. It reads boxes, not images, and runs on a CPU session in min
 """
 
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
 import torch
@@ -77,8 +78,42 @@ def anchors_for(sizes: tuple[tuple[int, ...], ...]) -> tuple[torch.Tensor, list[
     return model.rpn.anchor_generator(images, features)[0], per_level
 
 
-def census(sizes: tuple[tuple[int, ...], ...], refs: list) -> None:
-    anchors, per_level = anchors_for(sizes)
+@dataclass(frozen=True)
+class CensusResult:
+    """What one census run found, kept as data rather than only as the lines it prints.
+
+    Printing alone is what let the mean-then-cap defect ship silently in the first place: the
+    only check that ever ran against it was a human reading a terminal. Everything `_report`
+    prints below is read from here, not recomputed, so a test can pin the same numbers a person
+    reads.
+    """
+
+    ship_bearing_tiles: int
+    positives_per_tile: list[int]
+    rescued: int
+    by_level: dict[int, int]
+    realised_fraction: float
+
+
+def _level_of(index: int, boundaries: torch.Tensor) -> int:
+    """Which pyramid level an anchor index falls in, given each level's cumulative anchor count.
+
+    `boundaries[i]` is the index one past the last anchor of level `i`. `<=` is load-bearing, not
+    `<`: an index equal to a boundary is the *first* anchor of the next level, not the last of the
+    one the boundary closes, because `per_level` counts anchors and `cumsum` turns those counts
+    into the index one past where each level ends.
+    """
+    return int((boundaries <= index).sum())
+
+
+def _measure(anchors: torch.Tensor, per_level: list[int], refs: list) -> CensusResult:
+    """The counting core of `census`, taking anchors directly rather than a size spec.
+
+    Split out from `census` so a caller can hand it a small hand-built anchor tensor instead of
+    paying for a ResNet-50 forward pass to get one — which is what a test wants when what it is
+    checking is this function's arithmetic rather than torchvision's anchor geometry, already
+    checked by hand against the installed library once, elsewhere.
+    """
     # Torchvision's own thresholds, and its own guarantee that every box gets at least one anchor
     # however poor the overlap. That guarantee is why "zero positives" never happens and why the
     # count, not the presence, is the thing worth measuring.
@@ -100,21 +135,13 @@ def census(sizes: tuple[tuple[int, ...], ...], refs: list) -> None:
         positives_per_tile.append(len(positive))
 
         for index in positive.tolist():
-            by_level[int((boundaries <= index).sum())] += 1
+            by_level[_level_of(index, boundaries)] += 1
 
         # Boxes whose best anchor never reached the high threshold and were matched only by the
         # low-quality rule.
         rescued += int((quality.max(dim=1).values < HIGH_IOU_THRESHOLD).sum())
 
-    total = sum(positives_per_tile)
     tiles = len(positives_per_tile)
-    print(f"  ship-bearing tiles: {tiles}")
-    print(
-        f"  positive anchors per tile: mean {total / max(tiles, 1):.1f}, "
-        f"min {min(positives_per_tile)}, max {max(positives_per_tile)}"
-    )
-    print(f"  boxes matched only by allow_low_quality_matches: {rescued}")
-    print(f"  by pyramid level: {dict(sorted(by_level.items()))}")
     # The sampler draws once per image and caps *that image's* positives at RPN_POSITIVE_CAP
     # before the batch is filled with background — it never sees the other tiles, so it cannot
     # average across them first. Capping each tile and then averaging is the model of what the
@@ -123,9 +150,37 @@ def census(sizes: tuple[tuple[int, ...], ...], refs: list) -> None:
     # exceeds the cap. That direction is exactly wrong for a census meant to expose a sampler
     # running out of positives, so the cap is applied per tile, not to the mean.
     capped_mean = sum(min(x, RPN_POSITIVE_CAP) for x in positives_per_tile) / max(tiles, 1)
+
+    result = CensusResult(
+        ship_bearing_tiles=tiles,
+        positives_per_tile=positives_per_tile,
+        rescued=rescued,
+        by_level=dict(sorted(by_level.items())),
+        realised_fraction=capped_mean / RPN_BATCH_SIZE_PER_IMAGE,
+    )
+    return result
+
+
+def census(sizes: tuple[tuple[int, ...], ...], refs: list) -> CensusResult:
+    anchors, per_level = anchors_for(sizes)
+    result = _measure(anchors, per_level, refs)
+    _report(result)
+    return result
+
+
+def _report(result: CensusResult) -> None:
+    total = sum(result.positives_per_tile)
+    tiles = result.ship_bearing_tiles
+    print(f"  ship-bearing tiles: {tiles}")
+    print(
+        f"  positive anchors per tile: mean {total / max(tiles, 1):.1f}, "
+        f"min {min(result.positives_per_tile)}, max {max(result.positives_per_tile)}"
+    )
+    print(f"  boxes matched only by allow_low_quality_matches: {result.rescued}")
+    print(f"  by pyramid level: {result.by_level}")
     print(
         f"  realised positive fraction against a batch of {RPN_BATCH_SIZE_PER_IMAGE}: "
-        f"{capped_mean / RPN_BATCH_SIZE_PER_IMAGE:.3f}"
+        f"{result.realised_fraction:.3f}"
     )
 
 

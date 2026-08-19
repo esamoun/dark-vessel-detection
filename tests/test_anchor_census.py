@@ -1,0 +1,185 @@
+"""The arithmetic `notebooks/anchor_census.py` sets two rungs of the ladder from.
+
+That script shipped once with nothing checking it, on the ruling that it was a measurement for a
+decision log rather than behaviour anything depended on. A review then found an arithmetic defect
+in the one line the whole census exists to produce — the realised positive fraction capped the
+*mean across tiles* rather than each tile's own count, biasing the number toward the 50% ceiling
+it was written to show the sampler was nowhere near. Nothing caught that, because nothing was
+looking. This file is what looks now: four properties, each pinned against real torchvision
+matching on hand-built boxes, no dataset required.
+
+`notebooks/` is not an importable package — it has no `__init__.py` and is not on the install
+path — so the module is loaded by file location rather than `import`ed by name. This is the same
+constraint `sweep_window.py` lives under; unlike that script, this one now has something to
+verify it against.
+
+Skipped where torch is not installed, which includes CI: the chain's acceptance condition is that
+it installs and runs without a framework, and this script — like `test_model_stem.py` and
+`test_training_run.py` before it — is on the far side of that line.
+"""
+
+import importlib.util
+from pathlib import Path
+
+import pytest
+
+torch = pytest.importorskip(
+    "torch", reason="the detector extra is not installed: pip install -e '.[detector]'"
+)
+
+from darkvessel.detect.dataset import Box, TileRef  # noqa: E402
+
+_MODULE_PATH = Path(__file__).resolve().parents[1] / "notebooks" / "anchor_census.py"
+_SPEC = importlib.util.spec_from_file_location("anchor_census", _MODULE_PATH)
+anchor_census = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(anchor_census)
+
+
+def a_tile(name: str, *boxes: Box) -> TileRef:
+    """A `TileRef` with no image on disk, because the census never reads one — only `.boxes`."""
+    return TileRef(name=name, scene=1, image_path=Path("/dev/null"), boxes=tuple(boxes))
+
+
+def test_realised_fraction_caps_per_tile_not_the_mean():
+    """The RPN sampler runs once per image and caps *that image's* positives before it ever sees
+    another tile — capping the mean across tiles instead is a different, larger number, and it is
+    the number this census originally reported.
+
+    Four tiles carry one small box each (fewer than `RPN_POSITIVE_CAP` positives apiece under the
+    stock anchors); a fifth is packed with sixteen, densely enough that its own positive count
+    clears the cap on its own. Capping-then-averaging and averaging-then-capping disagree exactly
+    when some tile is individually above the cap and others are not — which is this fixture. Both
+    numbers are pinned so a reader can see what the bug was, not just that it is gone: reverting
+    the fix reproduces 0.500, the number this census used to print.
+    """
+    sparse_tiles = [
+        a_tile(
+            f"sparse_{i}",
+            Box(min_row=400, min_col=400, max_row=400 + 4 + i, max_col=400 + 4 + i),
+        )
+        for i in range(4)
+    ]
+    dense_boxes = [
+        Box(min_row=r, min_col=c, max_row=r + 6, max_col=c + 6)
+        for r in range(100, 100 + 4 * 20, 20)
+        for c in range(100, 100 + 4 * 20, 20)
+    ]
+    dense_tile = a_tile("dense", *dense_boxes)
+
+    result = anchor_census.census(anchor_census.ANCHOR_SIZES, [*sparse_tiles, dense_tile])
+
+    assert result.positives_per_tile == [80, 80, 80, 80, 800]
+
+    # Correct: cap each tile, then average. (80+80+80+80+128) / 5 / 256.
+    assert result.realised_fraction == pytest.approx(0.35)
+
+    # What the pre-fix formula gave: cap the mean, not each tile. min(mean([...]), 128) / 256.
+    total = sum(result.positives_per_tile)
+    old_formula = (
+        min(total / len(result.positives_per_tile), anchor_census.RPN_POSITIVE_CAP)
+        / anchor_census.RPN_BATCH_SIZE_PER_IMAGE
+    )
+    assert old_formula == pytest.approx(0.5)
+    assert result.realised_fraction != pytest.approx(old_formula)
+
+
+def test_real_match_and_rescue_only_are_different_counts():
+    """`allow_low_quality_matches` guarantees every box an anchor however poor the overlap, so
+    "how many positives exist" and "how many boxes only exist because of that guarantee" are two
+    different questions. Conflating them would make the census claim ships are findable that are
+    in fact only nominally matched — the opposite of what it exists to report.
+
+    One box is an exact copy of a real generated anchor (IoU 1.0, unambiguously a genuine match).
+    The other is a single pixel, far too small to reach `HIGH_IOU_THRESHOLD` against anything the
+    small (rung 2) anchor set offers. Both end up positive — the guarantee sees to that — but only
+    one should ever be counted as rescued.
+    """
+    small = anchor_census.CANDIDATES["small (rung 2)"]
+    anchors, _ = anchor_census.anchors_for(small)
+
+    # A real anchor, copied exactly: IoU with itself is 1.0, so this is a genuine match under any
+    # threshold this project would plausibly use.
+    x1, y1, x2, y2 = anchors[anchors.shape[0] // 2].tolist()
+    real_match = Box(min_row=y1, min_col=x1, max_row=y2, max_col=x2)
+
+    # One pixel, positioned off the anchor grid: nowhere near 0.7 IoU with even the smallest
+    # (4 px) anchor on offer.
+    rescue_only = Box(min_row=777.5, min_col=777.5, max_row=778.5, max_col=778.5)
+
+    result = anchor_census.census(
+        small, [a_tile("real_match", real_match), a_tile("rescue_only", rescue_only)]
+    )
+
+    assert result.positives_per_tile == [1, 1]  # both boxes are positive
+    assert result.rescued == 1  # but only one of them only because of the rescue rule
+
+
+def test_level_of_boundaries():
+    """`_level_of` is the arithmetic that turns a flat anchor index into a pyramid level, and the
+    boundary is the one place it can be silently off by one: `cumsum` gives the index one past
+    each level's last anchor, so an index *equal* to a boundary belongs to the level after it, not
+    the one the boundary closes. `<=` is what that requires; `<` looks almost the same and is
+    wrong at every boundary.
+
+    Levels of size 3, 2 and 4 give boundaries at 3, 5 and 9. Every index either side of a boundary
+    is checked, not just one per level, because an off-by-one only shows up at the seam.
+    """
+    boundaries = torch.tensor([3, 5, 9])
+
+    assert [anchor_census._level_of(i, boundaries) for i in range(9)] == [
+        0, 0, 0,  # level 0: indices 0..2
+        1, 1,  # level 1: indices 3..4
+        2, 2, 2, 2,  # level 2: indices 5..8
+    ]  # fmt: skip
+
+
+def test_high_iou_threshold_is_shared():
+    """`Matcher`'s own high threshold and the separate `quality.max(...) < HIGH_IOU_THRESHOLD`
+    line that counts rescues have to agree on where the line is, or the rescued count stops
+    describing what the matcher actually rescued.
+
+    An earlier version of this test built a single anchor and two boxes. With
+    `allow_low_quality_matches=True`, a single anchor is *always* the best (and only) match
+    available to whichever box it is compared against, so it is forced positive by the rescue
+    guarantee regardless of what threshold the matcher was built with — `positives_per_tile` was
+    `[1, 1]` whether the matcher's high threshold was 0.7 or a drifted 0.5. That version passed
+    against a matcher hardcoded to 0.5, which is exactly the defect it was meant to catch. It was
+    a test of the rescue-count arithmetic wearing the name of a drift test.
+
+    This version builds one box and *two* anchors, sized from `HIGH_IOU_THRESHOLD` and
+    `LOW_IOU_THRESHOLD` rather than from literals, so it still holds if either is retuned:
+    `above` overlaps the box at an IoU past `HIGH_IOU_THRESHOLD`, `between` at an IoU inside the
+    band the two thresholds bound. Under a matcher built at `HIGH_IOU_THRESHOLD`, only `above` is
+    a real match — `between` falls in `BETWEEN_THRESHOLDS` and is not the box's best anchor, so
+    the low-quality rescue does not reach it either. Under a matcher whose high threshold has
+    drifted down past `between`'s IoU (0.5, this file's diagnosed defect, is such a value), both
+    anchors clear the bar and both are positive. So `positives_per_tile` is `[1]` at the real
+    threshold and `[2]` under that drift: this is the assertion that actually depends on what the
+    matcher was constructed with, and the one that catches the defect this file was fixed for.
+
+    The rescued count is kept too, but it pins a different, matcher-independent fact: with the
+    box's best IoU (`above`, 0.75) already past `HIGH_IOU_THRESHOLD`, the box has a genuine match
+    and nothing about it needed the low-quality rule. `rescued` is computed straight from
+    `quality.max(dim=1)` and `HIGH_IOU_THRESHOLD` — it never sees the matcher object — so this
+    assertion would hold even under the drifted threshold and does not, by itself, catch it.
+    """
+    margin = 0.05
+    high = anchor_census.HIGH_IOU_THRESHOLD
+    low = anchor_census.LOW_IOU_THRESHOLD
+    assert low < high - margin, "the band is too narrow for this fixture's margin"
+
+    box = Box(min_row=0, min_col=0, max_row=10, max_col=10)
+    # Anchors share the box's top-left corner and its width, so IoU is simply the anchor's height
+    # as a fraction of the box's (the anchor is fully contained in the box): height 10 * iou.
+    above = [0.0, 0.0, 10.0, 10 * (high + margin)]
+    between = [0.0, 0.0, 10.0, 10 * (high - margin)]
+    anchors = torch.tensor([above, between])
+
+    result = anchor_census._measure(anchors, [2], [a_tile("one_box", box)])
+
+    # Depends on the matcher's high threshold: [1] at HIGH_IOU_THRESHOLD, [2] if it has drifted
+    # down past `between`'s IoU.
+    assert result.positives_per_tile == [1]
+    # Matcher-independent: the box's best anchor already clears HIGH_IOU_THRESHOLD on its own, so
+    # nothing here was rescued.
+    assert result.rescued == 0
