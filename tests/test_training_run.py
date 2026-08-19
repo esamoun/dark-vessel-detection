@@ -179,7 +179,10 @@ def test_a_resume_declaring_a_different_number_of_epochs_is_refused(tmp_path: Pa
     """
     train(**(a_run(tmp_path, epochs=2)))
 
-    assert Journal(tmp_path / "run" / "metrics.json").run()["schedule"]["epochs"] == 2
+    # `.get` rather than bare indexing, so a schedule block that stopped carrying `epochs` fails
+    # this assertion by name instead of raising a `KeyError` that reads as a broken test rather
+    # than a caught regression — the same anti-pattern already fixed elsewhere in this file.
+    assert Journal(tmp_path / "run" / "metrics.json").run()["schedule"].get("epochs") == 2
 
     with pytest.raises(ValueError, match="epochs"):
         train(**(a_run(tmp_path, epochs=4)))
@@ -469,6 +472,29 @@ def test_the_rungs_of_the_ladder_do_not_share_a_working_directory() -> None:
 
     assert len(set(directories)) == len(directories)
     assert len(set(metrics)) == len(metrics)
+
+
+def test_train_refuses_a_stem_that_disagrees_with_the_model_it_is_handed(tmp_path: Path) -> None:
+    """`model` and `stem` name the same thing twice, and nothing before this checked they agreed.
+
+    The ordinary caller, `_train`, builds both from the one config key and cannot disagree with
+    itself. Anything else calling `train` directly can, and the failure it buys is a crash on the
+    first batch — after the dataset is attached and the wheels are installed on a machine rented
+    by the hour, since `_Tiles` would have fed a three-channel model one channel or the reverse.
+    `model.backbone.body.conv1.in_channels` already carries the answer; this only has to ask it.
+    """
+    run = a_run(tmp_path, epochs=1)
+    # `a_run`'s model is the default stem, "repeat" — three channels. Naming the other one here
+    # is the mismatch, not a typo `STEMS` would refuse on its own.
+    run["stem"] = "single"
+
+    with pytest.raises(ValueError, match="single") as excinfo:
+        train(**run)
+
+    # Both values named, not just the one that was wrong: a reader fixing this does not also
+    # have to go and read `STEMS` to find out what the model was actually built for.
+    assert "3" in str(excinfo.value)
+    assert "1" in str(excinfo.value)
 
 
 def test_train_hands_its_own_stem_to_the_loop_not_only_to_the_builder(
