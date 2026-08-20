@@ -27,7 +27,7 @@ data:
   # and it is laid out differently: images already split into train and test, annotations all in
   # one directory. Kaggle now mounts datasets at /kaggle/input/datasets/<owner>/<slug>, which is
   # also new — the un-datasetted /kaggle/input/<slug> path this file used to name is gone. See
-  # docs/decisions.md, 2026-08-19.
+  # docs/decisions.md, 2026-08-20.
   root: /kaggle/input/datasets/petrarodriguez/ls-ssdd-v1-0
   # Both directories are named, not just the train one, because the held-out scenes (11-15) live
   # in the second. `split_by_scene` draws the held-out split from whichever scenes are present in

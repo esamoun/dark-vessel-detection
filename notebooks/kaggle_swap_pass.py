@@ -72,7 +72,7 @@ MINIMUM_SPAN_DB = 20.0
 # have been seen carrying PNG, and the reader takes whatever rasterio opens as 8-bit.
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 
-DATASET = Path("/kaggle/input/ls-ssdd-v10/LS-SSDD-v1.0-OPEN")
+DATASET = Path("/kaggle/input/datasets/petrarodriguez/ls-ssdd-v1-0")
 PACKAGED = Path("/kaggle/working/epoch-012.pt")
 
 # What built the weights this pass packages, read off configs/train.yaml at seed 20260814. The
