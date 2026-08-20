@@ -43,12 +43,22 @@ HELD_OUT_SCENES = tuple(range(11, 16))
 class Layout:
     """Where the images and the annotations sit, as LS-SSDD ships them.
 
+    `images` is a single directory name where the dataset ships that way, which is every config
+    this repository has shipped so far and so remains the type a plain string satisfies without
+    change. A mirror can instead split its images across several directories — LS-SSDD's own
+    train/test split, mounted as two — and `images` may then name a sequence of them; `catalogue`
+    reads the union. That shape matters beyond convenience: `split_by_scene` draws the held-out
+    set from whichever scene numbers are present in the catalogue, and does not raise if none
+    are. Point it at a directory that happens to hold only the training scenes and the held-out
+    split comes back empty, silently, and a run would score it and report the number. Naming
+    every directory the images sit under is what keeps that scene reachable at all.
+
     `first_index` is whether the annotations count their pixels from zero or from one. Left as
     None it is measured from the boxes themselves, which is what a full dataset always allows;
     it is here for the subset too small to settle the question on its own.
     """
 
-    images: str = "JPEGImages"
+    images: str | Sequence[str] = "JPEGImages"
     annotations: str = "Annotations"
     image_suffix: str = ".jpg"
     first_index: int | None = None
@@ -171,28 +181,57 @@ def catalogue(root: Path, layout: Layout = LS_SSDD) -> list[TileRef]:
 
     Sorted by name, because a run that is resumed has to see the tiles the interrupted one saw:
     the subset is drawn from this list, and a list in directory order is a different list on a
-    different filesystem.
+    different filesystem. Where `layout.images` names several directories, the tiles are the
+    union of all of them, still sorted by name rather than by directory-then-name — the second
+    would make the list depend on which directory was listed first, which is not a property
+    either the resume guarantee or the subset draw can tolerate.
 
     Enumerated from the images rather than from the annotations, so that a half-attached dataset
     is an error rather than a smaller dataset. The images are what gets trained on; an image
     whose label never arrived would otherwise be a tile the run quietly never saw, or worse, a
-    tile it saw as empty sea.
+    tile it saw as empty sea. Each named directory is checked for this on its own: a mirror that
+    splits its images across directories can have one of them fail to attach while the others do,
+    and reporting the set rather than the one that came back empty would leave that half of the
+    fix undone.
+
+    A stem is refused if it names an image under two of the directories. `_annotation_at` looks
+    an annotation up by stem alone, so a duplicate would attach one label to two images and train
+    the tile twice under it — silently, because nothing else here would notice two images that
+    happen to share a name.
 
     Every annotation is read before any box is built, because a box cannot be converted until the
     set has decided where its indices start counting — see `_first_index`.
     """
-    images = sorted((root / layout.images).glob(f"*{layout.image_suffix}"))
-    if not images:
-        raise FileNotFoundError(
-            f"no {layout.image_suffix} images under {root / layout.images}; the dataset is "
-            "attached at a different path, or under a different layout"
-        )
+    seen: dict[str, Path] = {}
+    images: list[Path] = []
+    for directory in _directories(layout.images):
+        found = list((root / directory).glob(f"*{layout.image_suffix}"))
+        if not found:
+            raise FileNotFoundError(
+                f"no {layout.image_suffix} images under {root / directory}; the dataset is "
+                "attached at a different path, or under a different layout"
+            )
+        for image in found:
+            if image.stem in seen:
+                raise ValueError(
+                    f"{image.stem!r} names an image under both {seen[image.stem].parent} and "
+                    f"{image.parent}; the same tile would be catalogued twice, under one label"
+                )
+            seen[image.stem] = image
+        images.extend(found)
+
+    images = sorted(images, key=lambda image: image.name)
 
     annotations = root / layout.annotations
     annotated = [_annotation_at(annotations / f"{image.stem}.xml", image) for image in images]
     first_index = _first_index(annotated, layout.first_index)
 
     return [_ref_from(tile, first_index) for tile in annotated]
+
+
+def _directories(images: str | Sequence[str]) -> tuple[str, ...]:
+    """Normalise `Layout.images` to the directory names it holds, one or several."""
+    return (images,) if isinstance(images, str) else tuple(images)
 
 
 def split_by_scene(

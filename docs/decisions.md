@@ -1138,3 +1138,44 @@ IoU threshold as the binding constraint rather than the anchor sizes or the samp
 this ladder does not test, because its rungs were fixed before the census existed. Rung 2 will
 measure what it measures; if the small anchors do not help, the census predicted it here, in
 writing, beforehand.
+
+---
+
+## 2026-08-19 — The Kaggle mirror does not ship LS-SSDD's own layout
+
+**Decision.** `Layout.images` may now name a sequence of directories, not only one, and
+`catalogue` reads their union, sorted by name exactly as the single-directory case already was.
+`configs/train.yaml` and `notebooks/anchor_census.py` are pointed at the Kaggle mirror
+(`petrarodriguez/ls-ssdd-v1-0`) as it is actually mounted, verified in a live session, rather
+than at the layout LS-SSDD itself publishes.
+
+**What differs.** LS-SSDD-v1.0-OPEN, as published, ships one `JPEGImages` directory of 9000 .jpg
+and one `Annotations` directory of 9000 .xml. The mirror instead splits the images into
+`JPEGImages_sub_train/JPEGImages_sub_train` (6000 .jpg) and
+`JPEGImages_sub_test/JPEGImages_sub_test` (3000 .jpg) — doubly nested, not a typo in this entry
+— while keeping all 9000 annotations in one directory, `Annotations_sub/Annotations_sub`. Kaggle
+has also changed how it mounts a dataset: `/kaggle/input/<slug>`, the path every config in this
+repository named until now, is gone; a dataset now mounts at
+`/kaggle/input/datasets/<owner>/<slug>`. Both changes are unannounced, downstream of Kaggle and
+the mirror's owner respectively, and neither is this repository's to fix — only to read correctly.
+
+**Why both image directories have to be named, and not only the train one.**
+`split_by_scene` holds out scenes 11 to 15 by filtering on the scene number encoded in each
+tile's filename. It is a pure filter and does not raise. Point `Layout.images` at the train
+directory alone — which is what the single-directory shape this project shipped until now would
+be forced to do, since the mirror's train directory holds none of the held-out scenes — and the
+held-out split comes back empty, silently, over a training run that runs to completion and
+reports the number as if it meant something. That is the failure this change exists to close, not
+a convenience for reading two directories instead of one. `catalogue` also refuses a stem that
+names an image under two of the directories, for the adjacent reason: `_annotation_at` looks an
+annotation up by stem alone, and a duplicate would attach one label to two images and train the
+tile twice under it. Nothing in the mirror above triggers it — the two directories are disjoint —
+which is exactly why it is guarded in code rather than left to be true by observation.
+
+**Cost.** This is read off a live session's directory listing, not verified here against a
+download of the mirror — the test suite's fixtures are hand-built at a few tiles, as they have
+been since `dataset.py`'s test file was written, and could not check the real 9000-file layout
+even if the dataset were fetched into CI. A further change on Kaggle's or the mirror owner's side
+would not be caught until a run attached to it failed to find its images, and would fail loudly
+rather than quietly — `catalogue`'s `FileNotFoundError` names the directory that came back empty
+— which is the property this repository can actually promise here.
