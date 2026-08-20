@@ -1080,3 +1080,61 @@ training time" quite as cleanly as the rest of the ladder claims for its own run
 three-pixel border's worth of the tile starts from a different convention. It is recorded here
 rather than smoothed over, because the alternative was a spec that stated a stronger property than
 the code delivers.
+
+---
+
+## 2026-08-19 — The anchor census: what the pyramid actually matches, and how big a ship is
+
+**Decision.** Rung 4 ships `rpn_batch_size_per_image: 32`, no longer provisional. Rung 2 keeps the
+five pyramid levels it has. Both are settled by `notebooks/anchor_census.py`, run on a Kaggle CPU
+session over the 1123 ship-bearing tiles of the training split — 3637 ships, no GPU quota spent.
+
+**What it measured.**
+
+| | positives per tile | rescue-only boxes | by pyramid level | realised fraction |
+| --- | --- | --- | --- | --- |
+| stock `((32,),(64,),(128,),(256,),(512,))` | mean 97.6, max 3098 | 3257 / 3637 | `{0: 109506, 1: 121}` | 0.168 |
+| small `((4,),(8,),(16,),(32,),(64,))` | mean 3.6, max 81 | 3524 / 3637 | `{0: 469, 1: 1338, 2: 1507, 3: 662, 4: 57}` | 0.014 |
+
+**Feature levels, which is what criterion 2 asks for.** Under the stock sizes three of the five
+pyramid levels never match anything at all: every positive anchor but 121 of them sits on level 0.
+Under the small sizes the matches spread across all five, with the bulk on levels 1 to 3 and level
+4 still carrying 57. That is the argument for keeping five levels rather than trimming the coarse
+ones, and it is a count rather than an inference from the stride arithmetic — which is the form the
+issue asked the reasoning to take.
+
+**The stock set's 97.6 positives per tile are an artefact, not a finding.** 90% of ships never
+reach the 0.7 foreground threshold under it; they are matched only because
+`allow_low_quality_matches` guarantees every box its best anchor. When a 16 px ship sits entirely
+inside a 32 px anchor the overlap is `256/1024 = 0.25` for *every* anchor that contains it,
+identically — so they tie at the maximum and the rescue rule forces all of them positive together.
+One tile produced 3098 that way. The number is large because the anchors are wrong, not despite it.
+
+**The prediction, and where it was wrong.** The census script recorded, before it ran, that the
+realised positive fraction would be near 1% rather than the 50% ceiling. Under the configuration
+rung 4 actually runs — small anchors — it is **1.4%**, and the sampler never approaches its cap of
+128. Under the stock set it is **16.8%**, and the prediction is simply wrong there, for the reason
+above: ties inflate the count. Recorded as wrong rather than quietly narrowed to the case that
+held, which is this project's rule for its own predictions.
+
+**Why 32.** With 3.6 positives to a tile the sampler's ceiling is idle, so what moves the realised
+fraction is the batch it fills: 256 gives 1.4%, 64 gives 5.6%, 32 gives 11.3%, 16 gives 22.5%.
+32 is the middle of that, and it is chosen for being the middle rather than for a target anyone can
+defend — the rung measures whether it helps, and if it does not, that is a rejection with numbers.
+
+**What the census contradicts.** The longest side of a labelled ship is 6.0 px at the fifth
+percentile, **16.0 px at the median** and 42.0 px at the ninety-fifth. At 10 m that is a median
+hull of 160 m. This repository says in several places — the README, `model.py`, `metrics.py` —
+that the problem is "a hull three pixels across", and that a 60 m vessel is six pixels. The
+arithmetic in those sentences is right and describes the fifth percentile; the framing generalises
+it to the whole set, and the whole set is three times larger than that. Nothing already published
+depends on it, and it is corrected here rather than edited away at each site, so that the gap
+between the prose and the measurement is on the record.
+
+**A reservation, written before the runs rather than after them.** The small anchors give
+twenty-seven times *fewer* positives than the stock ones and a slightly worse rescue-only rate,
+97% against 90%. Under both sets almost no ship reaches 0.7. That points at the RPN's foreground
+IoU threshold as the binding constraint rather than the anchor sizes or the sampler — a hypothesis
+this ladder does not test, because its rungs were fixed before the census existed. Rung 2 will
+measure what it measures; if the small anchors do not help, the census predicted it here, in
+writing, beforehand.
