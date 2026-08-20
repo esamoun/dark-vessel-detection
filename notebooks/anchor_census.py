@@ -34,8 +34,19 @@ from torchvision.ops import box_iou
 from darkvessel.detect.dataset import Layout, catalogue, split_by_scene
 from darkvessel.detect.model import ANCHOR_SIZES, detector_model
 
-ROOT = Path("/kaggle/input/ls-ssdd-v10/LS-SSDD-v1.0-OPEN")
-LAYOUT = Layout(images="JPEGImages", annotations="Annotations", image_suffix=".jpg")
+# The Kaggle mirror (petrarodriguez/ls-ssdd-v1-0), not LS-SSDD's own layout: images already
+# split into train and test directories, annotations all in one. Both image directories are
+# named, not just the train one, because the census runs over the training split's ship-bearing
+# tiles specifically — see configs/train.yaml and docs/decisions.md, 2026-08-19.
+ROOT = Path("/kaggle/input/datasets/petrarodriguez/ls-ssdd-v1-0")
+LAYOUT = Layout(
+    images=[
+        "JPEGImages_sub_train/JPEGImages_sub_train",
+        "JPEGImages_sub_test/JPEGImages_sub_test",
+    ],
+    annotations="Annotations_sub/Annotations_sub",
+    image_suffix=".jpg",
+)
 TILE_PX = 800
 
 # What rung 2 proposes, against what the baseline ships.

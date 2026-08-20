@@ -22,9 +22,20 @@ data:
   # labelled by SAR experts against AIS and Google Earth. Chosen because its physics is the
   # physics of this chain — same satellite, same 10 m pixel, same ships of three pixels against a
   # very large empty sea. See docs/decisions.md for what was rejected and why.
-  root: /kaggle/input/ls-ssdd-v10/LS-SSDD-v1.0-OPEN
-  images: JPEGImages
-  annotations: Annotations
+  #
+  # This is the Kaggle mirror (petrarodriguez/ls-ssdd-v1-0), not the layout LS-SSDD publishes,
+  # and it is laid out differently: images already split into train and test, annotations all in
+  # one directory. Kaggle now mounts datasets at /kaggle/input/datasets/<owner>/<slug>, which is
+  # also new — the un-datasetted /kaggle/input/<slug> path this file used to name is gone. See
+  # docs/decisions.md, 2026-08-19.
+  root: /kaggle/input/datasets/petrarodriguez/ls-ssdd-v1-0
+  # Both directories are named, not just the train one, because the held-out scenes (11-15) live
+  # in the second. `split_by_scene` draws the held-out split from whichever scenes are present in
+  # the catalogue; name only the train directory and it comes back empty without ever raising.
+  images:
+    - JPEGImages_sub_train/JPEGImages_sub_train
+    - JPEGImages_sub_test/JPEGImages_sub_test
+  annotations: Annotations_sub/Annotations_sub
   image_suffix: .jpg
   # Whether the annotations count their pixels from zero or from one. Left empty it is measured
   # from the boxes themselves, which the full dataset always settles: a 0 cannot occur in a file

@@ -44,10 +44,19 @@ pytestmark = pytest.mark.filterwarnings("ignore::rasterio.errors.NotGeoreference
 
 
 def write_dataset(
-    root: Path, ships: dict[str, list[tuple[int, int, int, int]]], size: int = SIZE
+    root: Path,
+    ships: dict[str, list[tuple[int, int, int, int]]],
+    size: int = SIZE,
+    images_dir: str = FIXTURE.images,
 ) -> Path:
-    """Write a dataset in LS-SSDD's layout, with `ships` as inclusive pixel indices per tile."""
-    (root / FIXTURE.images).mkdir(parents=True, exist_ok=True)
+    """Write a dataset in LS-SSDD's layout, with `ships` as inclusive pixel indices per tile.
+
+    `images_dir` defaults to the one directory the single-directory fixture layout names.
+    Passing a different one, and calling this twice against the same root, builds the
+    several-directories shape the Kaggle mirror ships — one shared annotations directory with
+    the images split across two.
+    """
+    (root / images_dir).mkdir(parents=True, exist_ok=True)
     (root / FIXTURE.annotations).mkdir(parents=True, exist_ok=True)
 
     for name, boxes in ships.items():
@@ -56,7 +65,7 @@ def write_dataset(
             image[min_row : max_row + 1, min_col : max_col + 1] = 255
 
         with rasterio.open(
-            root / FIXTURE.images / f"{name}{FIXTURE.image_suffix}",
+            root / images_dir / f"{name}{FIXTURE.image_suffix}",
             "w",
             driver="GTiff",
             height=size,
@@ -113,6 +122,88 @@ def test_the_held_out_side_is_the_one_lsssdd_holds_out(tmp_path: Path) -> None:
     _, held_out = split_by_scene(catalogue(a_dataset_spanning_every_scene(tmp_path), FIXTURE))
 
     assert {ref.scene for ref in held_out} == set(HELD_OUT_SCENES)
+
+
+# The Kaggle mirror's own directory names: LS-SSDD's train/test split, shipped as two image
+# directories beside one shared annotations directory, rather than as the one LS-SSDD publishes.
+TRAIN_DIR = "JPEGImages_sub_train"
+TEST_DIR = "JPEGImages_sub_test"
+
+
+def a_two_directory_dataset(root: Path) -> Path:
+    """The mirror's shape: a trained-on scene in one directory, a held-out scene in the other,
+    sharing one annotations directory."""
+    write_dataset(root, {"01_1": [(0, 0, 2, 3)], "01_2": []}, images_dir=TRAIN_DIR)
+    write_dataset(root, {"11_1": [(0, 0, 2, 3)], "11_2": []}, images_dir=TEST_DIR)
+    return root
+
+
+def test_a_layout_naming_two_directories_catalogues_their_union_in_name_order(
+    tmp_path: Path,
+) -> None:
+    """Both directories' images are read, as one list, and the list is sorted by name rather
+    than by directory then name — so it does not matter which directory was named first."""
+    root = a_two_directory_dataset(tmp_path)
+
+    forward = catalogue(root, Layout(images=(TRAIN_DIR, TEST_DIR), image_suffix=".tif"))
+    backward = catalogue(root, Layout(images=(TEST_DIR, TRAIN_DIR), image_suffix=".tif"))
+
+    names = [ref.name for ref in forward]
+    assert names == ["01_1", "01_2", "11_1", "11_2"]
+    assert [ref.name for ref in backward] == names
+
+
+def test_a_plain_string_still_names_one_directory_exactly_as_before(tmp_path: Path) -> None:
+    """The shape every shipped config uses today, unchanged by the sequence a mirror may need."""
+    root = write_dataset(tmp_path, {"01_1": [(0, 0, 2, 3)], "01_2": []})
+
+    refs = catalogue(root, FIXTURE)
+
+    assert [ref.name for ref in refs] == ["01_1", "01_2"]
+
+
+def test_an_empty_directory_among_several_raises_naming_it(tmp_path: Path) -> None:
+    """Half an attached dataset is exactly the case a several-directories `Layout` can hit that a
+    single-directory one cannot: one image directory fails to attach while the other does. The
+    error must name the one that came back empty, not the set of directories the layout holds —
+    reporting the set would leave a reader checking the directory that was fine."""
+    write_dataset(tmp_path, {"01_1": [(0, 0, 2, 3)]}, images_dir=TRAIN_DIR)
+    (tmp_path / TEST_DIR).mkdir()
+
+    with pytest.raises(FileNotFoundError) as excinfo:
+        catalogue(tmp_path, Layout(images=(TRAIN_DIR, TEST_DIR), image_suffix=".tif"))
+
+    message = str(excinfo.value)
+    assert TEST_DIR in message
+    assert TRAIN_DIR not in message
+
+
+def test_a_duplicate_stem_across_two_directories_is_refused(tmp_path: Path) -> None:
+    """`_annotation_at` looks an annotation up by stem alone; the same stem under two directories
+    would attach one label to two images and train the tile twice under it."""
+    write_dataset(tmp_path, {"01_1": [(0, 0, 2, 3)]}, images_dir=TRAIN_DIR)
+    write_dataset(tmp_path, {"01_1": []}, images_dir=TEST_DIR)
+
+    with pytest.raises(ValueError, match="01_1"):
+        catalogue(tmp_path, Layout(images=(TRAIN_DIR, TEST_DIR), image_suffix=".tif"))
+
+
+def test_the_held_out_scenes_are_reachable_when_images_are_split_across_two_directories(
+    tmp_path: Path,
+) -> None:
+    """The property the several-directories shape exists for. `split_by_scene` is a pure filter
+    over whatever `catalogue` returns: point it at a `Layout` that only names the train
+    directory, as the published single-directory shape would if handed this mirror, and the
+    held-out scene is never in the catalogue to begin with — `split_by_scene` does not raise, it
+    just returns nothing on that side, and a run would score it and report the number. Naming
+    both directories is what keeps scene 11 reachable."""
+    root = a_two_directory_dataset(tmp_path)
+
+    refs = catalogue(root, Layout(images=(TRAIN_DIR, TEST_DIR), image_suffix=".tif"))
+    _, held_out = split_by_scene(refs)
+
+    assert len(held_out) > 0
+    assert {ref.scene for ref in held_out} == {11}
 
 
 def three_ships_and_thirty_six_empty_tiles(root: Path) -> list:
