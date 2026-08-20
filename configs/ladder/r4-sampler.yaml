@@ -1,9 +1,11 @@
 # Rung 4: the foreground/background imbalance, at the loss.
 #
-# The number below is a placeholder until notebooks/anchor_census.py has run — the census counts
-# how many positive anchors a tile actually offers, and this is set to what it reports rather than
-# to a guess. Do not run this rung before the census, and record the census figure in
-# docs/decisions.md beside the value chosen here.
+# 32 rather than torchvision's 256, and the census is why: over the 1123 ship-bearing training
+# tiles a tile offers a mean of 3.6 positive anchors under rung 2's sizes, against the 128 a batch
+# of 256 at a ceiling of 0.5 asks for. The ceiling is therefore idle and `rpn_positive_fraction`
+# is not the lever; what moves the realised fraction is the batch the sampler fills around those
+# few positives — 1.4% at 256, 5.6% at 64, 11.3% at 32, 22.5% at 16. See docs/decisions.md
+# 2026-08-19 for the counts and for what the census contradicts.
 #
 # Extends rung 3 because the ladder is greedy: each rung starts from the last one that was kept.
 # If R3 is rejected, this line is repointed at r2-anchors.yaml and the edit goes into
