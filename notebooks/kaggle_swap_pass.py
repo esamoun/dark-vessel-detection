@@ -8,7 +8,8 @@ numbers, which is exactly enough to fix an affine.
 
 Run it in a session with two data sources attached:
 
-  * the LS-SSDD dataset (`ls-ssdd-v10`);
+  * the LS-SSDD mirror (`petrarodriguez/ls-ssdd-v1-0`), which Kaggle now mounts under
+    `/kaggle/input/datasets/<owner>/<slug>` rather than `/kaggle/input/<slug>`;
   * the output of the notebook version that trained, which is where `epoch-012.pt` survives.
 
 Paste the whole file into one cell, or `%run` it. It prints three things:

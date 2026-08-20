@@ -8,20 +8,44 @@ provider requires — that is what the loop is built for. Kaggle's *Save Version
 whole notebook in a fresh machine, so the artefact you download is a **second run** of the same
 code, not the session you watched. Take the metrics from the saved version, not from the console.
 
-## Session 0 — the census, on CPU
+## Session 0 — the census, on CPU. Done on 2026-08-20.
 
-Attach `ls-ssdd-v10`. No GPU, no internet needed.
+Its numbers, what they settled and what they contradicted are in `docs/decisions.md`. Rung 4's
+`rpn_batch_size_per_image` is fixed at 32 as a result and is no longer provisional. Kept here
+because every session below starts the same way, and because a rerun is how you check the numbers
+rather than trust them.
 
-    !pip install -e '.[detector]'
-    !python3 notebooks/anchor_census.py
+Attach the dataset **`petrarodriguez/ls-ssdd-v1-0`**. Note two things about it. Kaggle now mounts
+inputs at `/kaggle/input/datasets/<owner>/<slug>` rather than `/kaggle/input/<slug>`, so the path
+in any older note here is dead. And this mirror is not laid out the way LS-SSDD was published: its
+images are already split into `JPEGImages_sub_train` and `JPEGImages_sub_test`, each doubly
+nested, with all 9000 annotations in one directory. That is why `data.images` in
+`configs/train.yaml` names two directories — the held-out scenes, 11 to 15, live in the second,
+and naming only the first gives an empty held-out split that nothing would report.
 
-Paste its output into `docs/decisions.md` as the evidence for rung 2's anchor sizes and rung 4's
-sampler value, and set `rpn_batch_size_per_image` in `configs/ladder/r4-sampler.yaml` from the
-realised positive fraction it reports — the value shipped there now, `32`, is explicitly marked
-provisional pending this run. If the census contradicts the prediction in the script's own
-docstring (a realised positive fraction near 1%, not 50%), record the contradiction rather than
-the prediction: this project has already reported a prediction that turned out wrong once, in the
-first training run, and said so in the README rather than quietly fixing the number.
+No GPU, no internet needed:
+
+    !git clone -q https://github.com/esamoun/dark-vessel-detection.git /kaggle/working/repo
+    !cd /kaggle/working/repo && pip install -e '.[detector]'
+    !cd /kaggle/working/repo && python3 notebooks/anchor_census.py
+
+Before spending a GPU hour on any rung, confirm the dataset reads as it should:
+
+```python
+import pathlib, sys
+sys.path.insert(0, "/kaggle/working/repo/src")
+from darkvessel.config import load_config
+from darkvessel.cli import training_request_from
+from darkvessel.detect.dataset import catalogue, split_by_scene
+
+configs = pathlib.Path("/kaggle/working/repo/configs")
+request = training_request_from(load_config(configs / "train.yaml"), configs)
+training, held_out = split_by_scene(catalogue(request["root"], request["layout"]))
+print(len(training), len(held_out))
+```
+
+It must print `6000 3000`. A held-out count of zero means the mirror moved again; stop rather than
+train against a split that will be scored over nothing.
 
 ## Sessions 1 to 5 — the rungs, in order
 
