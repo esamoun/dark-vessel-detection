@@ -354,6 +354,23 @@ def test_the_shipped_training_config_is_the_one_the_command_parses() -> None:
     assert set(request["model"]) == builder_params
 
 
+def test_the_shipped_config_names_the_directory_the_held_out_scenes_live_in() -> None:
+    """The mechanism that keeps a several-directories `Layout` from silently losing the held-out
+    split is guarded in `test_dataset.py`; nothing there touches what `configs/train.yaml`
+    actually ships. Editing `data.images` back down to the train directory alone — the mirror's
+    single directory that carries no scene past 10 — would leave every other test in this file
+    green and the held-out split empty on the next paid run. See docs/decisions.md, 2026-08-20."""
+    request = training_request_from(yaml.safe_load(CONFIG.read_text()), CONFIG.parent)
+    images = request["layout"].images
+
+    assert not isinstance(images, str) and len(images) > 1, (
+        "only one directory is named; the held-out scenes may not be among its images"
+    )
+    assert "JPEGImages_sub_test/JPEGImages_sub_test" in images, (
+        "the directory the mirror's held-out scenes sit under is not named"
+    )
+
+
 def test_the_shipped_config_reports_the_tolerance_the_fusion_will_use(tmp_path: Path) -> None:
     """The detector is scored by the rule the chain will later apply to it. Let the two drift and
     the precision in the README stops describing what the pipeline does with the detections."""

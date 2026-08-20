@@ -36,8 +36,11 @@ from darkvessel.detect.model import ANCHOR_SIZES, detector_model
 
 # The Kaggle mirror (petrarodriguez/ls-ssdd-v1-0), not LS-SSDD's own layout: images already
 # split into train and test directories, annotations all in one. Both image directories are
-# named, not just the train one, because the census runs over the training split's ship-bearing
-# tiles specifically — see configs/train.yaml and docs/decisions.md, 2026-08-19.
+# named here for symmetry with configs/train.yaml, not because the census needs the held-out
+# half: `split_by_scene` below keeps only the training side and the held-out one is discarded,
+# so its tiles are globbed and parsed for nothing. Naming it costs one parse and keeps this
+# script's Layout the same one the training run actually uses, rather than a second Layout that
+# could quietly drift from it — see docs/decisions.md, 2026-08-20.
 ROOT = Path("/kaggle/input/datasets/petrarodriguez/ls-ssdd-v1-0")
 LAYOUT = Layout(
     images=[

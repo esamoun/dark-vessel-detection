@@ -230,8 +230,23 @@ def catalogue(root: Path, layout: Layout = LS_SSDD) -> list[TileRef]:
 
 
 def _directories(images: str | Sequence[str]) -> tuple[str, ...]:
-    """Normalise `Layout.images` to the directory names it holds, one or several."""
-    return (images,) if isinstance(images, str) else tuple(images)
+    """Normalise `Layout.images` to the directory names it holds, one or several.
+
+    An empty sequence is refused rather than treated as zero directories to search. Every check
+    below it in `catalogue` — the missing-directory error, the duplicate-stem check, even the
+    union itself — runs once per named directory, so naming none skips all of them: the loop
+    never executes, `catalogue` returns an empty list without raising, and `split_by_scene` on an
+    empty list returns `([], [])` — the exact silent empty-held-out-split failure this whole
+    change exists to close, reached this time through an empty `Layout.images` rather than
+    through a directory that omits the held-out scenes.
+    """
+    directories = (images,) if isinstance(images, str) else tuple(images)
+    if not directories:
+        raise ValueError(
+            "Layout.images names no directory at all; catalogue would silently read no images "
+            "and no error downstream would say so — see docs/decisions.md, 2026-08-20"
+        )
+    return directories
 
 
 def split_by_scene(

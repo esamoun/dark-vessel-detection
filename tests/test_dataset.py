@@ -188,6 +188,19 @@ def test_a_duplicate_stem_across_two_directories_is_refused(tmp_path: Path) -> N
         catalogue(tmp_path, Layout(images=(TRAIN_DIR, TEST_DIR), image_suffix=".tif"))
 
 
+def test_an_empty_images_sequence_is_refused_rather_than_read_as_nothing(tmp_path: Path) -> None:
+    """`Layout(images=())` would otherwise skip every check `catalogue` runs per directory — the
+    missing-directory error included — because the loop over directories never executes: it
+    returns an empty catalogue with no exception, and `split_by_scene` on an empty list returns
+    `([], [])` without raising either. That is the exact silent empty-held-out-split failure this
+    whole several-directories shape exists to close, reached here through an empty `images`
+    rather than through a directory that omits the held-out scenes."""
+    root = write_dataset(tmp_path, {"01_1": [(0, 0, 2, 3)]})
+
+    with pytest.raises(ValueError, match="no directory"):
+        catalogue(root, Layout(images=(), image_suffix=".tif"))
+
+
 def test_the_held_out_scenes_are_reachable_when_images_are_split_across_two_directories(
     tmp_path: Path,
 ) -> None:

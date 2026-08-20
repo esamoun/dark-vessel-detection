@@ -1141,7 +1141,7 @@ writing, beforehand.
 
 ---
 
-## 2026-08-19 — The Kaggle mirror does not ship LS-SSDD's own layout
+## 2026-08-20 — The Kaggle mirror does not ship LS-SSDD's own layout
 
 **Decision.** `Layout.images` may now name a sequence of directories, not only one, and
 `catalogue` reads their union, sorted by name exactly as the single-directory case already was.
