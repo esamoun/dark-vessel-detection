@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 import darkvessel.cli as cli
 from darkvessel.cli import ladder_request_from, main
@@ -321,3 +322,86 @@ def test_compares_default_window_is_the_constant_ladder_owns_not_a_copied_litera
     # Patched default: window 1, band 0.0, the same gain now clears it — proof the value
     # `_compare` used was read from the name `WINDOW`, not baked in as a literal.
     assert "kept" in capsys.readouterr().out
+
+
+def _shipped_rungs() -> list[dict[str, object]]:
+    """Every rung `configs/ladder.yaml` names, read through the same reader `darkvessel compare`
+    uses rather than a second parser that could drift from it."""
+    ladder = CONFIGS / "ladder.yaml"
+    return ladder_request_from(load_config(ladder), ladder.parent)
+
+
+def _shipped_verdicts() -> dict[str, bool]:
+    """Each shipped rung that has been run, by the stem of its metrics file, and whether it stood.
+
+    Stopping at the first rung with no metrics mirrors `_compare`: a ladder read across a gap
+    compares a change against the wrong configuration, and this test would inherit that. The run
+    block is read rather than stubbed, so `judge`'s own refusals — an unnamed run, two rungs
+    scored differently — reach this test instead of being bypassed by it.
+    """
+    requested = _shipped_rungs()
+    rungs = []
+    for rung in requested:
+        if not rung["metrics"].exists():
+            break
+        journal = json.loads(rung["metrics"].read_text())
+        if not journal.get("epochs"):
+            break
+        rungs.append(
+            Rung(
+                label=rung["label"],
+                changed=rung["changed"],
+                run=journal.get("run"),
+                epochs=journal["epochs"],
+            )
+        )
+
+    window = int(load_config(CONFIGS / "ladder.yaml")["ladder"].get("window", 4))
+    verdicts = judge(rungs, window=window)
+    # `strict=False` deliberately: `verdicts` is shorter than `requested` whenever a rung has
+    # not been run, and truncating to the judged ones is the point. A pending rung is absent from
+    # the mapping rather than present as rejected, which is what lets the check below stay quiet
+    # for the four evenings of this ticket when most of the ladder does not exist yet.
+    return {
+        Path(rung["metrics"]).stem: verdict.kept
+        for rung, verdict in zip(requested, verdicts, strict=False)
+    }
+
+
+def test_no_rung_of_the_shipped_ladder_stands_on_one_the_rule_rejected() -> None:
+    """The greedy rule, checked against the shipped files rather than stated in their comments.
+
+    "Each rung starts from the last one that was kept" is the sentence three of these configs
+    carry and the runbook repeats, and until now nothing read it. R2 was rejected on 2026-08-23 —
+    0.788 against 0.8454 — and `r3-stem.yaml` was repointed at `r1-cosine.yaml` by hand. Putting
+    that line back to `r2-anchors.yaml` is a one-character-per-word edit that no test noticed:
+    `test_every_rung_resolves_to_the_cosine_schedule_r1_was_kept_for` passes either way, because
+    r2 inherits the cosine too, and the one-line-per-rung test compares a rung to whatever its own
+    base happens to be. R3 would then measure *the stem and the small anchors* against R1 and
+    report the stem — handing R2's −0.058 to a change that did not cause it.
+
+    Derived from `judge` rather than from a hardcoded "r3 extends r1", so it keeps holding after
+    the next verdict without being edited: whichever rungs the rule rejects, nothing may stand on
+    them. It also stays quiet before a rung has run, which is the ordinary state of this file for
+    most of the ticket — a rung with no metrics yet is not rejected, it is pending.
+    """
+    verdicts = _shipped_verdicts()
+    rungs = sorted((CONFIGS / "ladder").glob("*.yaml"))
+
+    # Non-vacuity, and the thing that makes the stem mapping legitimate: every shipped rung config
+    # has to correspond to a rung of ladder.yaml by the stem of its metrics file. Without this a
+    # renamed config or a repointed `metrics:` line would silently match nothing, and the loop
+    # below would pass by checking zero rungs — the failure mode this file already guards against
+    # in `test_the_ladder_has_the_four_rungs_the_plan_names`.
+    named = {Path(rung["metrics"]).stem for rung in _shipped_rungs()}
+    assert {path.stem for path in rungs} <= named, (
+        "a rung config whose stem names no rung of ladder.yaml cannot be judged at all"
+    )
+
+    for path in rungs:
+        base = yaml.safe_load(path.read_text())["extends"]
+        base_stem = Path(base).stem
+        assert verdicts.get(base_stem, True), (
+            f"{path.name} extends {base}, which the rule rejected — the ladder is greedy and a "
+            f"rung may only stand on one that was kept"
+        )

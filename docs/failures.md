@@ -365,3 +365,70 @@ dual-polarisation training set, which means either finding one at Sentinel-1's r
 accepting a set whose physics is not this chain's physics. Both are decisions above this ticket's
 level. Recorded here so that the day a dual-polarisation export exists, this is a task rather than
 a rediscovery.
+
+---
+
+## 2026-08-23 — R2, the small anchors: rejected, exactly where the census said it would be
+
+**What was asked for.** Issue #11's second adaptation: anchors sized for the vessels this data
+actually holds. `configs/ladder/r2-anchors.yaml` takes `anchor_sizes` from the stock
+`[[32], [64], [128], [256], [512]]` down to `[[4], [8], [16], [32], [64]]`, on the argument that
+the smallest stock anchor is a 320 m vessel at 10 m resolution — longer than nearly anything in
+the training set.
+
+**What was measured.** Twelve epochs on a T4, one line different from R1, same seed and same
+splits. Statistic **F1 0.7877** against a bar of **0.8454** — R1's 0.8356 plus R1's band of
+0.0099 — so it is short by **0.0577**, and rejected.
+
+It is not a near miss on a hard bar. R2's best epoch of the twelve *is* its last one, 0.7877, so
+no epoch of this run reaches the threshold under any reading. And it lands below **R0's** 0.8074
+as well: the small anchors are worse than the stock ones outright, not merely worse than the
+cosine schedule that was kept before them.
+
+| Epoch | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| R1 | 0.801 | 0.784 | 0.801 | 0.804 | 0.804 | 0.812 | 0.832 | 0.810 | 0.827 | 0.826 | 0.833 | 0.836 |
+| R2 | 0.609 | 0.685 | 0.722 | 0.725 | 0.757 | 0.763 | 0.781 | 0.779 | 0.783 | 0.770 | 0.785 | 0.788 |
+
+At epoch 12 and threshold 0.75, R2 finds 1744 of the 2378 held-out ships with 306 false
+detections, against R1's 1959 with 352. It gives up 215 ships to save 46 false alarms.
+
+**The prediction that called it, written first.** `docs/decisions.md`, 2026-08-19, closes the
+anchor census with a reservation recorded *before* any rung had run: the small anchors give
+twenty-seven times fewer positive anchors than the stock ones and a slightly worse rescue-only
+rate, and under both sets almost no ship reaches an IoU of 0.7 — which points at the RPN's
+foreground IoU threshold as the binding constraint rather than at the anchor sizes. That entry
+says in as many words that if the small anchors do not help, it predicted so beforehand. They did
+not, and it did.
+
+The realised positive fraction is the mechanism: 16.8% under the stock anchors, 1.4% under these.
+The RPN's sampler fills a batch of 256 with roughly 3.6 positives instead of roughly 43, so the
+head has an order of magnitude fewer examples from which to learn confidence.
+
+**A number that looks like success and is not.** R2's final training loss is **0.0441**, against
+R1's **0.1174** — under a third, on a detector that is measurably worse. The loss is computed over
+a sample the anchor change re-composed: almost all easy negatives. Training losses are therefore
+not comparable across rungs that move `anchor_sizes`, and reading this one as progress would have
+been the most natural mistake available on the evening the run finished.
+
+**One thing that genuinely favours R2, and is not enough.** At threshold 0.05 it reports 9883
+false detections against R1's 27039, for the same recall — F1 0.312 against 0.144. The small
+anchors do suppress low-confidence noise. That is not where the operating point lives: every
+rung's statistic is decided at 0.75 or 0.90, where R2 loses.
+
+**A caveat recorded rather than argued away.** R2 is still climbing at epoch 12 — 0.770, 0.785,
+0.788 over its last three — and its band of 0.0173 is nearly twice R1's, both consistent with a
+configuration that has not converged in the twelve epochs it was given. Twelve is part of the
+comparison rather than an accident of it, and the gap is 0.058 rather than a thousandth, so this
+does not put the verdict in doubt. It does mean the rejection is of *these anchors under this
+schedule*, which is the only thing any rung of this ladder ever measures.
+
+**What was done.** `configs/ladder/r3-stem.yaml` is repointed from `r2-anchors.yaml` to
+`r1-cosine.yaml`, committed with this entry. The ladder is greedy: R3 now stands on R1, is
+measured against R1, and its bar is unchanged at 0.8454 — R2 having been rejected, it moves
+neither the standing statistic nor the band.
+
+**What is left standing.** The census's hypothesis — that the RPN's foreground IoU threshold, not
+the anchor geometry, is what binds — is now the best available explanation for two runs rather
+than one. This ladder does not test it: its five rungs were fixed on 2026-08-17, before the census
+existed. It is the first thing a sixth rung should change.
