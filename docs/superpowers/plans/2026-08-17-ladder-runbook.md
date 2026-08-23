@@ -4,7 +4,9 @@ Five GPU runs of twelve epochs, about 2.6 hours each on a T4, plus one CPU sessi
 Thirteen hours against a free tier's thirty a week, which leaves room for one session to be lost.
 
 Every run is `darkvessel train --config <rung>`, interrupted and restarted as many times as the
-provider requires — that is what the loop is built for. Kaggle's *Save Version* re-executes the
+provider requires — that is what the loop is built for. On Kaggle the notebook spells that
+`python -m darkvessel train` and not the console script, because `pip install -e` puts the script
+somewhere the session's shell does not look; the command is the same one, reached without a PATH. Kaggle's *Save Version* re-executes the
 whole notebook in a fresh machine, so the artefact you download is a **second run** of the same
 code, not the session you watched. Take the metrics from the saved version, not from the console.
 
