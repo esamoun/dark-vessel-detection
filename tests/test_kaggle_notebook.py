@@ -39,27 +39,39 @@ def _code_sources() -> list[str]:
     return ["".join(cell["source"]) for cell in document["cells"] if cell["cell_type"] == "code"]
 
 
+def _training_cell() -> int:
+    """The index, among the code cells, of the one that launches the run.
+
+    Keyed on `subprocess` rather than on the words "darkvessel train", which the split check
+    also contains — it imports `training_request_from` from `darkvessel.cli`. Keying on the
+    launch mechanism has the side effect of being the thing under test: a cell that went back
+    to a `!` shell line would not be found here at all, and every test below would say so.
+    """
+    cells = [i for i, source in enumerate(_code_sources()) if "subprocess" in source]
+    assert len(cells) == 1, "expected exactly one cell that launches the training run"
+    return cells[0]
+
+
 def test_the_notebook_names_its_run_once_rather_than_in_two_places_that_can_disagree() -> None:
     """The two literals that used to name a run a second time are refused outright, and the
     training cell has to read the run back through `CONFIG` rather than naming it again itself.
 
     Banning the two old literals only closes half the trap: a notebook that kept the derived
     resume cell but put the training cell back to a hardcoded
-    `!darkvessel train --config /kaggle/working/repo/configs/train.yaml` still has `CONFIG`
-    sitting in the source, defined by the resume cell and read by nothing, and neither banned
-    literal appears — so the two checks below would both pass while the two-edit trap was back.
-    The training cell's own source is what has to be checked, and it has to reference `{CONFIG}`
-    rather than a path of its own.
+    `--config /kaggle/working/repo/configs/train.yaml` still has `CONFIG` sitting in the source,
+    defined by the resume cell and read by nothing, and neither banned literal appears — so the
+    two checks below would both pass while the two-edit trap was back. The training cell's own
+    source is what has to be checked: it has to reference `CONFIG` and name no config file of
+    its own.
     """
-    sources = _cell_sources()
-    whole = "\n".join(sources)
+    whole = "\n".join(_cell_sources())
 
     assert "metrics.json" not in whole
     assert "/checkpoints" not in whole
 
-    training = [source for source in sources if "darkvessel train" in source]
-    assert len(training) == 1, "expected exactly one cell that runs `darkvessel train`"
-    assert "{CONFIG}" in training[0]
+    training = _code_sources()[_training_cell()]
+    assert "CONFIG" in training, "the training cell has to read the run back through CONFIG"
+    assert ".yaml" not in training, "naming a config here is the second edit that can disagree"
 
 
 def test_the_notebook_stops_on_an_empty_held_out_split_before_it_reaches_the_training_cell() -> (
@@ -77,38 +89,41 @@ def test_the_notebook_stops_on_an_empty_held_out_split_before_it_reaches_the_tra
     The check therefore lives in the notebook rather than in the runbook's prose, where it was
     a snippet an operator had to paste, and it asserts rather than prints — a `0` printed by a
     Run All scrolls past and the training cell starts anyway. Ordering is half the guard: a
-    check that runs after `darkvessel train` has already cost the session it exists to save.
+    check that runs after the training call has already cost the session it exists to save.
     """
     sources = _code_sources()
 
     checks = [i for i, source in enumerate(sources) if "split_by_scene" in source]
     assert len(checks) == 1, "expected exactly one cell that reads the split"
-    training = next(i for i, source in enumerate(sources) if "darkvessel train" in source)
-    assert checks[0] < training, "the split check has to run before the GPU time is spent"
+    assert checks[0] < _training_cell(), "the split check has to run before the GPU time is spent"
 
     assert "assert held_out" in sources[checks[0]], (
         "the check has to refuse an empty held-out split, not merely print its size"
     )
 
 
-def test_the_training_cell_reaches_the_command_line_through_the_interpreter() -> None:
-    """The run is launched as a module, not as a console script found on the shell's PATH.
+def test_the_run_is_launched_from_python_rather_than_through_the_notebook_s_shell() -> None:
+    """The training cell calls the interpreter directly, and no shell line relies on braces.
 
-    `pip install -e` puts the `darkvessel` script wherever the installer chose, and whether
-    that is on PATH belongs to the machine. On Kaggle it is not: the package imported, the
-    resume cell ran, `CONFIG` was defined, and `!darkvessel train` still answered
-    `command not found` — at the one cell that had the dataset and the wheels behind it.
+    Two separate things went wrong on Kaggle, in that order, and this pins both.
 
-    `sys.executable` is what closes the other half. A bare `!python -m darkvessel` would be
-    resolved by the shell's PATH again, and can name a different interpreter from the kernel's
-    — the one that does not have the package installed.
+    `pip install -e` puts the `darkvessel` console script wherever the installer chose, and
+    whether that directory is on PATH belongs to the machine. On Kaggle it is not, so
+    `!darkvessel train` answered `command not found` at the one cell with the dataset and the
+    wheels behind it. `sys.executable` in an argument list names the interpreter that actually
+    holds the package, and cannot be resolved against a different one.
+
+    The repair for that was `!{sys.executable} -m darkvessel train`, and it failed too: `{...}`
+    substitution inside a `!` line is a property of the frontend, not of Python, and this image
+    passes the braces through to bash untouched — so the run died on the brace. Worse, it fails
+    the same way whether or not the name exists, which is why `!{...}` is banned outright here
+    rather than left to be noticed again.
     """
     sources = _code_sources()
-    whole = "\n".join(sources)
+    training = sources[_training_cell()]
 
-    training = [source for source in sources if "darkvessel train" in source]
-    assert len(training) == 1
-    assert "-m darkvessel train" in training[0], "launch the run as a module, not a script"
-    assert "{sys.executable}" in training[0], "name the kernel's own interpreter, not `python`"
+    assert "sys.executable" in training, "name the interpreter that holds the package"
+    assert '"train"' in training, "the run is the `train` subcommand, not another one"
 
-    assert "!darkvessel" not in whole, "the console script is not on Kaggle's PATH"
+    assert "!{" not in "\n".join(sources), "a `!` line's brace substitution is not Python's"
+    assert "!darkvessel" not in "\n".join(sources), "the console script is not on Kaggle's PATH"
