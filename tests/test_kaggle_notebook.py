@@ -89,3 +89,26 @@ def test_the_notebook_stops_on_an_empty_held_out_split_before_it_reaches_the_tra
     assert "assert held_out" in sources[checks[0]], (
         "the check has to refuse an empty held-out split, not merely print its size"
     )
+
+
+def test_the_training_cell_reaches_the_command_line_through_the_interpreter() -> None:
+    """The run is launched as a module, not as a console script found on the shell's PATH.
+
+    `pip install -e` puts the `darkvessel` script wherever the installer chose, and whether
+    that is on PATH belongs to the machine. On Kaggle it is not: the package imported, the
+    resume cell ran, `CONFIG` was defined, and `!darkvessel train` still answered
+    `command not found` — at the one cell that had the dataset and the wheels behind it.
+
+    `sys.executable` is what closes the other half. A bare `!python -m darkvessel` would be
+    resolved by the shell's PATH again, and can name a different interpreter from the kernel's
+    — the one that does not have the package installed.
+    """
+    sources = _code_sources()
+    whole = "\n".join(sources)
+
+    training = [source for source in sources if "darkvessel train" in source]
+    assert len(training) == 1
+    assert "-m darkvessel train" in training[0], "launch the run as a module, not a script"
+    assert "{sys.executable}" in training[0], "name the kernel's own interpreter, not `python`"
+
+    assert "!darkvessel" not in whole, "the console script is not on Kaggle's PATH"
