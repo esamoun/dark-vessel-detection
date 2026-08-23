@@ -1,0 +1,743 @@
+{
+  "run": {
+    "built": {
+      "tile_px": 800,
+      "seed": 20260814,
+      "pretrained": true,
+      "trainable_backbone_layers": 3,
+      "anchor_sizes": [
+        [
+          32
+        ],
+        [
+          64
+        ],
+        [
+          128
+        ],
+        [
+          256
+        ],
+        [
+          512
+        ]
+      ],
+      "stem": "repeat",
+      "rpn_batch_size_per_image": 256,
+      "rpn_positive_fraction": 0.5,
+      "box_batch_size_per_image": 512,
+      "box_positive_fraction": 0.25
+    },
+    "stem": "repeat",
+    "schedule": {
+      "epochs": 12,
+      "batch_size": 2,
+      "learning_rate": 0.005,
+      "momentum": 0.9,
+      "weight_decay": 0.0005,
+      "workers": 2,
+      "seed": 20260814,
+      "lr_schedule": "cosine"
+    },
+    "reporting": {
+      "tolerance_m": 200.0,
+      "resolution_m": 10.0,
+      "thresholds": [
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        0.75,
+        0.9
+      ]
+    },
+    "training_tiles": 2246,
+    "held_out_tiles": 3000
+  },
+  "epochs": [
+    {
+      "epoch": 1,
+      "training_loss": 0.18128860274125613,
+      "learning_rate": 0.005,
+      "held_out_tiles": 3000,
+      "held_out_ships": 2378,
+      "at": [
+        {
+          "score": 0.05,
+          "precision": 0.17731065468549423,
+          "recall": 0.9293523969722456,
+          "found": 2210,
+          "false": 10254,
+          "missed": 168
+        },
+        {
+          "score": 0.1,
+          "precision": 0.27056033944839636,
+          "recall": 0.911690496215307,
+          "found": 2168,
+          "false": 5845,
+          "missed": 210
+        },
+        {
+          "score": 0.25,
+          "precision": 0.47208352246936,
+          "recall": 0.8746846089150546,
+          "found": 2080,
+          "false": 2326,
+          "missed": 298
+        },
+        {
+          "score": 0.5,
+          "precision": 0.6795272853667014,
+          "recall": 0.8221194280908326,
+          "found": 1955,
+          "false": 922,
+          "missed": 423
+        },
+        {
+          "score": 0.75,
+          "precision": 0.8566634707574304,
+          "recall": 0.7514718250630782,
+          "found": 1787,
+          "false": 299,
+          "missed": 591
+        },
+        {
+          "score": 0.9,
+          "precision": 0.9637155297532656,
+          "recall": 0.5584524810765349,
+          "found": 1328,
+          "false": 50,
+          "missed": 1050
+        }
+      ]
+    },
+    {
+      "epoch": 2,
+      "training_loss": 0.15331528613828552,
+      "learning_rate": 0.004914814565722671,
+      "held_out_tiles": 3000,
+      "held_out_ships": 2378,
+      "at": [
+        {
+          "score": 0.05,
+          "precision": 0.1122371804568144,
+          "recall": 0.936080740117746,
+          "found": 2226,
+          "false": 17607,
+          "missed": 152
+        },
+        {
+          "score": 0.1,
+          "precision": 0.20689986546223332,
+          "recall": 0.9053826745164003,
+          "found": 2153,
+          "false": 8253,
+          "missed": 225
+        },
+        {
+          "score": 0.25,
+          "precision": 0.5312250863672602,
+          "recall": 0.8406223717409588,
+          "found": 1999,
+          "false": 1764,
+          "missed": 379
+        },
+        {
+          "score": 0.5,
+          "precision": 0.7696817420435511,
+          "recall": 0.7729184188393609,
+          "found": 1838,
+          "false": 550,
+          "missed": 540
+        },
+        {
+          "score": 0.75,
+          "precision": 0.920158550396376,
+          "recall": 0.6833473507148865,
+          "found": 1625,
+          "false": 141,
+          "missed": 753
+        },
+        {
+          "score": 0.9,
+          "precision": 0.9906303236797275,
+          "recall": 0.48906644238856184,
+          "found": 1163,
+          "false": 11,
+          "missed": 1215
+        }
+      ]
+    },
+    {
+      "epoch": 3,
+      "training_loss": 0.14962814316559217,
+      "learning_rate": 0.004665063509461097,
+      "held_out_tiles": 3000,
+      "held_out_ships": 2378,
+      "at": [
+        {
+          "score": 0.05,
+          "precision": 0.15525714681248703,
+          "recall": 0.9432296047098402,
+          "found": 2243,
+          "false": 12204,
+          "missed": 135
+        },
+        {
+          "score": 0.1,
+          "precision": 0.2693064436792917,
+          "recall": 0.9209419680403701,
+          "found": 2190,
+          "false": 5942,
+          "missed": 188
+        },
+        {
+          "score": 0.25,
+          "precision": 0.5156365427234672,
+          "recall": 0.8805719091673675,
+          "found": 2094,
+          "false": 1967,
+          "missed": 284
+        },
+        {
+          "score": 0.5,
+          "precision": 0.7429888590088359,
+          "recall": 0.8132884777123633,
+          "found": 1934,
+          "false": 669,
+          "missed": 444
+        },
+        {
+          "score": 0.75,
+          "precision": 0.9056203605514316,
+          "recall": 0.7182506307821699,
+          "found": 1708,
+          "false": 178,
+          "missed": 670
+        },
+        {
+          "score": 0.9,
+          "precision": 0.9885057471264368,
+          "recall": 0.5063078216989066,
+          "found": 1204,
+          "false": 14,
+          "missed": 1174
+        }
+      ]
+    },
+    {
+      "epoch": 4,
+      "training_loss": 0.14500615966653196,
+      "learning_rate": 0.004267766952966368,
+      "held_out_tiles": 3000,
+      "held_out_ships": 2378,
+      "at": [
+        {
+          "score": 0.05,
+          "precision": 0.040732698234799664,
+          "recall": 0.9781328847771237,
+          "found": 2326,
+          "false": 54778,
+          "missed": 52
+        },
+        {
+          "score": 0.1,
+          "precision": 0.06636063692440108,
+          "recall": 0.9726661059714046,
+          "found": 2313,
+          "false": 32542,
+          "missed": 65
+        },
+        {
+          "score": 0.25,
+          "precision": 0.1849236327804237,
+          "recall": 0.9470142977291842,
+          "found": 2252,
+          "false": 9926,
+          "missed": 126
+        },
+        {
+          "score": 0.5,
+          "precision": 0.41460587326120557,
+          "recall": 0.9024390243902439,
+          "found": 2146,
+          "false": 3030,
+          "missed": 232
+        },
+        {
+          "score": 0.75,
+          "precision": 0.6723259762308998,
+          "recall": 0.832632464255677,
+          "found": 1980,
+          "false": 965,
+          "missed": 398
+        },
+        {
+          "score": 0.9,
+          "precision": 0.9097185342538502,
+          "recall": 0.7203532380151387,
+          "found": 1713,
+          "false": 170,
+          "missed": 665
+        }
+      ]
+    },
+    {
+      "epoch": 5,
+      "training_loss": 0.13682852646670587,
+      "learning_rate": 0.00375,
+      "held_out_tiles": 3000,
+      "held_out_ships": 2378,
+      "at": [
+        {
+          "score": 0.05,
+          "precision": 0.18886218612745503,
+          "recall": 0.9583683767872162,
+          "found": 2279,
+          "false": 9788,
+          "missed": 99
+        },
+        {
+          "score": 0.1,
+          "precision": 0.28272647095880055,
+          "recall": 0.943650126156434,
+          "found": 2244,
+          "false": 5693,
+          "missed": 134
+        },
+        {
+          "score": 0.25,
+          "precision": 0.4821034025629695,
+          "recall": 0.9175777964676198,
+          "found": 2182,
+          "false": 2344,
+          "missed": 196
+        },
+        {
+          "score": 0.5,
+          "precision": 0.6443139678615575,
+          "recall": 0.8767872161480236,
+          "found": 2085,
+          "false": 1151,
+          "missed": 293
+        },
+        {
+          "score": 0.75,
+          "precision": 0.7961285008237232,
+          "recall": 0.8128679562657696,
+          "found": 1933,
+          "false": 495,
+          "missed": 445
+        },
+        {
+          "score": 0.9,
+          "precision": 0.937463810075275,
+          "recall": 0.6808242220353238,
+          "found": 1619,
+          "false": 108,
+          "missed": 759
+        }
+      ]
+    },
+    {
+      "epoch": 6,
+      "training_loss": 0.1317302868866571,
+      "learning_rate": 0.003147047612756302,
+      "held_out_tiles": 3000,
+      "held_out_ships": 2378,
+      "at": [
+        {
+          "score": 0.05,
+          "precision": 0.03722018485637953,
+          "recall": 0.9432296047098402,
+          "found": 2243,
+          "false": 58020,
+          "missed": 135
+        },
+        {
+          "score": 0.1,
+          "precision": 0.25261104097325837,
+          "recall": 0.9255677039529016,
+          "found": 2201,
+          "false": 6512,
+          "missed": 177
+        },
+        {
+          "score": 0.25,
+          "precision": 0.5484888304862023,
+          "recall": 0.8776282590412111,
+          "found": 2087,
+          "false": 1718,
+          "missed": 291
+        },
+        {
+          "score": 0.5,
+          "precision": 0.8111624003357113,
+          "recall": 0.8128679562657696,
+          "found": 1933,
+          "false": 450,
+          "missed": 445
+        },
+        {
+          "score": 0.75,
+          "precision": 0.9139841688654353,
+          "recall": 0.7283431455004206,
+          "found": 1732,
+          "false": 163,
+          "missed": 646
+        },
+        {
+          "score": 0.9,
+          "precision": 0.9661705006765899,
+          "recall": 0.6005046257359126,
+          "found": 1428,
+          "false": 50,
+          "missed": 950
+        }
+      ]
+    },
+    {
+      "epoch": 7,
+      "training_loss": 0.12948848290484188,
+      "learning_rate": 0.0025,
+      "held_out_tiles": 3000,
+      "held_out_ships": 2378,
+      "at": [
+        {
+          "score": 0.05,
+          "precision": 0.04452606355815689,
+          "recall": 0.9533221194280909,
+          "found": 2267,
+          "false": 48647,
+          "missed": 111
+        },
+        {
+          "score": 0.1,
+          "precision": 0.2924921793534932,
+          "recall": 0.943650126156434,
+          "found": 2244,
+          "false": 5428,
+          "missed": 134
+        },
+        {
+          "score": 0.25,
+          "precision": 0.5087514585764294,
+          "recall": 0.9167367535744323,
+          "found": 2180,
+          "false": 2105,
+          "missed": 198
+        },
+        {
+          "score": 0.5,
+          "precision": 0.7220458553791888,
+          "recall": 0.86080740117746,
+          "found": 2047,
+          "false": 788,
+          "missed": 331
+        },
+        {
+          "score": 0.75,
+          "precision": 0.8837429111531191,
+          "recall": 0.7863751051303617,
+          "found": 1870,
+          "false": 246,
+          "missed": 508
+        },
+        {
+          "score": 0.9,
+          "precision": 0.9691516709511568,
+          "recall": 0.6341463414634146,
+          "found": 1508,
+          "false": 48,
+          "missed": 870
+        }
+      ]
+    },
+    {
+      "epoch": 8,
+      "training_loss": 0.12516743033776132,
+      "learning_rate": 0.0018529523872436984,
+      "held_out_tiles": 3000,
+      "held_out_ships": 2378,
+      "at": [
+        {
+          "score": 0.05,
+          "precision": 0.10190319861585555,
+          "recall": 0.9659377628259042,
+          "found": 2297,
+          "false": 20244,
+          "missed": 81
+        },
+        {
+          "score": 0.1,
+          "precision": 0.22870583525172655,
+          "recall": 0.9608915054667788,
+          "found": 2285,
+          "false": 7706,
+          "missed": 93
+        },
+        {
+          "score": 0.25,
+          "precision": 0.3802649456521739,
+          "recall": 0.9415475189234651,
+          "found": 2239,
+          "false": 3649,
+          "missed": 139
+        },
+        {
+          "score": 0.5,
+          "precision": 0.541140837960626,
+          "recall": 0.9015979814970564,
+          "found": 2144,
+          "false": 1818,
+          "missed": 234
+        },
+        {
+          "score": 0.75,
+          "precision": 0.7035245335176227,
+          "recall": 0.8561816652649286,
+          "found": 2036,
+          "false": 858,
+          "missed": 342
+        },
+        {
+          "score": 0.9,
+          "precision": 0.8765915768854065,
+          "recall": 0.7527333894028595,
+          "found": 1790,
+          "false": 252,
+          "missed": 588
+        }
+      ]
+    },
+    {
+      "epoch": 9,
+      "training_loss": 0.12199405937978763,
+      "learning_rate": 0.0012500000000000007,
+      "held_out_tiles": 3000,
+      "held_out_ships": 2378,
+      "at": [
+        {
+          "score": 0.05,
+          "precision": 0.05413112183066796,
+          "recall": 0.9579478553406223,
+          "found": 2278,
+          "false": 39805,
+          "missed": 100
+        },
+        {
+          "score": 0.1,
+          "precision": 0.37913571910871036,
+          "recall": 0.9444911690496215,
+          "found": 2246,
+          "false": 3678,
+          "missed": 132
+        },
+        {
+          "score": 0.25,
+          "precision": 0.593536017529444,
+          "recall": 0.9112699747687132,
+          "found": 2167,
+          "false": 1484,
+          "missed": 211
+        },
+        {
+          "score": 0.5,
+          "precision": 0.7669683257918553,
+          "recall": 0.8553406223717409,
+          "found": 2034,
+          "false": 618,
+          "missed": 344
+        },
+        {
+          "score": 0.75,
+          "precision": 0.8936585365853659,
+          "recall": 0.7703952901597981,
+          "found": 1832,
+          "false": 218,
+          "missed": 546
+        },
+        {
+          "score": 0.9,
+          "precision": 0.9643312101910828,
+          "recall": 0.6366694701429773,
+          "found": 1514,
+          "false": 56,
+          "missed": 864
+        }
+      ]
+    },
+    {
+      "epoch": 10,
+      "training_loss": 0.11959052732486218,
+      "learning_rate": 0.0007322330470336314,
+      "held_out_tiles": 3000,
+      "held_out_ships": 2378,
+      "at": [
+        {
+          "score": 0.05,
+          "precision": 0.04124586728333725,
+          "recall": 0.9600504625735913,
+          "found": 2283,
+          "false": 53068,
+          "missed": 95
+        },
+        {
+          "score": 0.1,
+          "precision": 0.33407177669472754,
+          "recall": 0.9512195121951219,
+          "found": 2262,
+          "false": 4509,
+          "missed": 116
+        },
+        {
+          "score": 0.25,
+          "precision": 0.525488327775131,
+          "recall": 0.9276703111858705,
+          "found": 2206,
+          "false": 1992,
+          "missed": 172
+        },
+        {
+          "score": 0.5,
+          "precision": 0.6990679094540613,
+          "recall": 0.8830950378469302,
+          "found": 2100,
+          "false": 904,
+          "missed": 278
+        },
+        {
+          "score": 0.75,
+          "precision": 0.8476527900797166,
+          "recall": 0.8048780487804879,
+          "found": 1914,
+          "false": 344,
+          "missed": 464
+        },
+        {
+          "score": 0.9,
+          "precision": 0.9568345323741008,
+          "recall": 0.671152228763667,
+          "found": 1596,
+          "false": 72,
+          "missed": 782
+        }
+      ]
+    },
+    {
+      "epoch": 11,
+      "training_loss": 0.11769688968240917,
+      "learning_rate": 0.00033493649053890326,
+      "held_out_tiles": 3000,
+      "held_out_ships": 2378,
+      "at": [
+        {
+          "score": 0.05,
+          "precision": 0.0737910175940681,
+          "recall": 0.9541631623212784,
+          "found": 2269,
+          "false": 28480,
+          "missed": 109
+        },
+        {
+          "score": 0.1,
+          "precision": 0.35090455396132253,
+          "recall": 0.9461732548359967,
+          "found": 2250,
+          "false": 4162,
+          "missed": 128
+        },
+        {
+          "score": 0.25,
+          "precision": 0.5393643031784842,
+          "recall": 0.9276703111858705,
+          "found": 2206,
+          "false": 1884,
+          "missed": 172
+        },
+        {
+          "score": 0.5,
+          "precision": 0.7106769956214214,
+          "recall": 0.8873002523128679,
+          "found": 2110,
+          "false": 859,
+          "missed": 268
+        },
+        {
+          "score": 0.75,
+          "precision": 0.8401026079521163,
+          "recall": 0.8263246425567704,
+          "found": 1965,
+          "false": 374,
+          "missed": 413
+        },
+        {
+          "score": 0.9,
+          "precision": 0.9434475258292551,
+          "recall": 0.7296047098402019,
+          "found": 1735,
+          "false": 104,
+          "missed": 643
+        }
+      ]
+    },
+    {
+      "epoch": 12,
+      "training_loss": 0.11742130867545321,
+      "learning_rate": 8.518543427732952e-05,
+      "held_out_tiles": 3000,
+      "held_out_ships": 2378,
+      "at": [
+        {
+          "score": 0.05,
+          "precision": 0.07760796888858566,
+          "recall": 0.956686291000841,
+          "found": 2275,
+          "false": 27039,
+          "missed": 103
+        },
+        {
+          "score": 0.1,
+          "precision": 0.33591538805303145,
+          "recall": 0.9482758620689655,
+          "found": 2255,
+          "false": 4458,
+          "missed": 123
+        },
+        {
+          "score": 0.25,
+          "precision": 0.5290167865707434,
+          "recall": 0.9276703111858705,
+          "found": 2206,
+          "false": 1964,
+          "missed": 172
+        },
+        {
+          "score": 0.5,
+          "precision": 0.7103843560350641,
+          "recall": 0.8860386879730866,
+          "found": 2107,
+          "false": 859,
+          "missed": 271
+        },
+        {
+          "score": 0.75,
+          "precision": 0.8476849848550411,
+          "recall": 0.8238015138772078,
+          "found": 1959,
+          "false": 352,
+          "missed": 419
+        },
+        {
+          "score": 0.9,
+          "precision": 0.9495798319327731,
+          "recall": 0.7127838519764508,
+          "found": 1695,
+          "false": 90,
+          "missed": 683
+        }
+      ]
+    }
+  ]
+}

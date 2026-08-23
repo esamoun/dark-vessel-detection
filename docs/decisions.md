@@ -1226,3 +1226,81 @@ code can be made to enforce, and a rerun on a different machine will not reprodu
 decimals. What *is* held is the rule that consumes it: `tests/test_ladder.py` pins the arithmetic
 of the band and the strictness of the comparison, so the threshold above cannot drift without a
 test failing.
+
+---
+
+## 2026-08-23 — R1, cosine decay: kept, on the band rather than on the gain
+
+**Decision.** `configs/ladder/r1-cosine.yaml` is kept. Its statistic is **F1 0.8356** against a bar
+of **0.8335** — R0's 0.8074 plus R0's band of 0.0261 — so it clears by **0.0021**. Every rung above
+it therefore stands on cosine decay, and `configs/ladder/r2-anchors.yaml` keeps its
+`extends: r1-cosine.yaml` unchanged.
+
+**The margin is not what carries this, and should not be read as if it were.** 0.0021 is thinner
+than the run-to-run variation this project has no measurement of: no configuration has ever been
+run twice here, so the only noise figure available is the within-run band, which is a different
+quantity. A keep resting on two thousandths would be a coin toss dressed as a verdict.
+
+What carries it is the second number the rule reports. **R1's own band is 0.0099, against R0's
+0.0261** — the oscillation the rung was put on the ladder to remove has been cut to a third. The
+last four epochs make the difference plain:
+
+| | epoch 9 | epoch 10 | epoch 11 | epoch 12 | band |
+| --- | --- | --- | --- | --- | --- |
+| R0 | 0.821 | 0.795 | 0.804 | 0.807 | 0.026 |
+| R1 | 0.828 | 0.826 | 0.833 | 0.836 | 0.010 |
+
+R0 falls 0.026 between epochs 9 and 10 and never recovers its best. R1 climbs, and tightens as the
+rate decays through 1.25e-03, 7.32e-04, 3.35e-04, 8.52e-05. This is the behaviour the rung claimed
+it would produce, written down on 2026-08-17 before a number existed to check it against.
+
+Two things rule out a lucky final epoch. **R1's epoch 12 (0.8356) beats R0's best epoch of the
+twelve** (0.8208, at epoch 9), so the gain does not depend on which epoch the statistic reads. And
+the separation opens at epoch 7 and holds for six epochs — R0 runs 0.810, 0.775, 0.821, 0.795,
+0.804, 0.807 while R1 runs 0.832, 0.810, 0.827, 0.826, 0.833, 0.836.
+
+**What the run actually does differently.** At epoch 12 and threshold 0.75, R1 finds 1959 of the
+2378 held-out ships, misses 419 and reports 352 false — precision 0.848, recall 0.824. R0 at the
+same threshold found 1706, missed 672 and reported 142 false — precision 0.923, recall 0.717. So
+R1 is not uniformly better at a fixed threshold: it finds 253 more ships and pays 210 more false
+detections for them. What improved is the balance, and with it the calibration — R1 at threshold
+**0.90** reports 1695 ships with 90 false, which is R0's recall at 0.75 (1706 ships) for 52 fewer
+false detections. The scores mean more than they did.
+
+**What this costs R2.** The rule measures the band on the rung being compared against, so R2 is
+judged against R1's 0.0099 rather than R0's 0.0261: **R2 is kept only above 0.8454**. R1 halved its
+own cushion, which is the rule working as designed — a configuration that settles buys a tighter
+test for the next change. R2 will have to earn a real 0.010 rather than clear 0.026 of noise.
+
+**An observation that does not change the verdict.** Epoch 1 of R1 and epoch 1 of R0 ran under
+identical conditions — same seed, same tiles, same rate of 5.00e-03, the scheduler not yet
+stepped — and did not agree: loss 0.1813 against 0.1920, best F1 0.801 against 0.485. Seeding here
+is thorough (`torch.manual_seed` before the model is built, a seeded generator per epoch) but
+there is no `torch.use_deterministic_algorithms`, so cuDNN algorithm choice and atomic
+accumulation remain free. The gap closed immediately: epoch 2 reads 0.784 against 0.782. R0's
+epoch 1 was pathological rather than representative — 32 detections above 0.75, a model not yet
+calibrated, where a small shift moves F1 enormously. Recorded because it is the only evidence this
+repository has about between-run variation, and it is weak evidence pointing both ways: large
+where the model is unsettled, negligible one epoch later.
+
+**What a test holds.** The verdict itself is a measurement and cannot be enforced in code, as with
+R0. What is now held is its consequence. `test_every_rung_resolves_to_the_cosine_schedule_r1_was_
+kept_for` in `tests/test_config.py` asserts that all four rungs resolve to `lr_schedule: cosine`,
+because a rung that lost it would measure two changes and report one — R3 would be "the stem, and
+the decay given back" — and its band would widen towards R0's, loosening the bar for the rung
+after it. This was unguarded until now: the sibling test compares a rung to *whatever its own
+`extends` names*, so `r2-anchors.yaml` repointed at `../train.yaml` still differs from its base by
+exactly one key. That revert was made and all 301 tests passed before the guard was written.
+Proved by three reverts, each failing by name: r2 repointed at the baseline (3 failures), r3
+repointed at the baseline (2), and `cosine` turned back to `constant` in r1 itself (5, the extra
+two being the sibling test noticing that r1 then changes nothing at all).
+
+The guard lives in `test_config.py` rather than beside the other ladder tests in
+`test_training_run.py`, which is skipped wherever torch is absent — CI included. `load_config`
+resolves `extends` without torch, so the check runs everywhere the repository is tested.
+
+**Which execution these numbers come from.** The interactive session of 2026-08-23, downloaded
+from `/kaggle/working` in the session's own output panel — not from a Save Version, which would
+have re-executed the notebook in a fresh machine and produced a second run of the same code. Same
+provenance as R0, deliberately: a bar of 0.8335 computed from one kind of execution and compared
+against the other would be measuring the machine as much as the change.
