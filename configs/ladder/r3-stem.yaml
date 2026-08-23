@@ -7,11 +7,11 @@
 # training does with one bank of kernels rather than a different starting point. See
 # docs/decisions.md.
 #
-# Extends rung 2 because the ladder is greedy: each rung starts from the last one that was kept.
-# If R2 is rejected, this line is repointed at r1-cosine.yaml and the edit goes into
-# docs/failures.md with the rejection.
+# Extends rung 1, not rung 2: the ladder is greedy and each rung starts from the last one that
+# was kept. R2 was rejected on 2026-08-23 -- 0.788 against a bar of 0.8454, and below R0's own
+# 0.807 -- so its anchors are not part of what this rung stands on. See docs/failures.md.
 
-extends: r2-anchors.yaml
+extends: r1-cosine.yaml
 
 model:
   stem: single
