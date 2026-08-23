@@ -74,15 +74,23 @@ repository. Nothing copies one to the other; that is this table.
 | Session | Config | Kaggle writes checkpoints to | Kaggle writes metrics to | Commit the metrics file as |
 | --- | --- | --- | --- | --- |
 | 1 ✅ | `configs/train.yaml` | `/kaggle/working/checkpoints` | `/kaggle/working/metrics.json` | `docs/runs/r0-baseline.json` |
-| 2 ← next | `configs/ladder/r1-cosine.yaml` | `/kaggle/working/checkpoints-r1` | `/kaggle/working/metrics-r1-cosine.json` | `docs/runs/r1-cosine.json` |
-| 3 | `configs/ladder/r2-anchors.yaml` | `/kaggle/working/checkpoints-r2` | `/kaggle/working/metrics-r2-anchors.json` | `docs/runs/r2-anchors.json` |
+| 2 ✅ | `configs/ladder/r1-cosine.yaml` | `/kaggle/working/checkpoints-r1` | `/kaggle/working/metrics-r1-cosine.json` | `docs/runs/r1-cosine.json` |
+| 3 ← next | `configs/ladder/r2-anchors.yaml` | `/kaggle/working/checkpoints-r2` | `/kaggle/working/metrics-r2-anchors.json` | `docs/runs/r2-anchors.json` |
 | 4 | `configs/ladder/r3-stem.yaml` | `/kaggle/working/checkpoints-r3` | `/kaggle/working/metrics-r3-stem.json` | `docs/runs/r3-stem.json` |
 | 5 | `configs/ladder/r4-sampler.yaml` | `/kaggle/working/checkpoints-r4` | `/kaggle/working/metrics-r4-sampler.json` | `docs/runs/r4-sampler.json` |
 
-**Session 1 ran on 2026-08-23.** R0 scored F1 **0.807**, with a noise band of **0.026** over its
-last four epochs, so **R1 is kept only above 0.833** — and rejected at or below it, the `>` being
-strict. The numbers, what they came from and what they already reproduce of the first run are in
-`docs/decisions.md`, 2026-08-23. Four sessions remain, about ten GPU hours.
+**Sessions 1 and 2 both ran on 2026-08-23.** R0 scored F1 **0.807** with a band of **0.026**,
+putting R1's bar at 0.833. R1 scored **0.836** — kept, by 0.0021 — and collapsed the band to
+**0.0099**, which is what the verdict actually rests on rather than the two-thousandth margin.
+Because the rule measures the band on the rung being compared against, **R2 is kept only above
+0.8454**, and rejected at or below it, the `>` being strict. A settling rung buys a tighter test
+for the next one; this is that, arriving early. The numbers and the reasoning are in
+`docs/decisions.md`, 2026-08-23. Three sessions remain, about eight GPU hours.
+
+R1 being kept, `r2-anchors.yaml` keeps `extends: r1-cosine.yaml` — no edit. That inheritance is
+now held by a test rather than by this sentence: `test_config.py` asserts every rung resolves to
+`lr_schedule: cosine`, so a rung repointed at the baseline fails on a laptop rather than after a
+GPU evening.
 
 Each rung writes to its own `checkpoints-rN` directory, so a rung cannot resume the previous
 rung's finished schedule and report its numbers as its own — the five sessions share one Kaggle
