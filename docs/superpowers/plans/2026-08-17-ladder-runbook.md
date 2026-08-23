@@ -29,7 +29,8 @@ No GPU, no internet needed:
     !cd /kaggle/working/repo && pip install -e '.[detector]'
     !cd /kaggle/working/repo && python3 notebooks/anchor_census.py
 
-Before spending a GPU hour on any rung, confirm the dataset reads as it should:
+This CPU session does not load the training notebook, so confirm the dataset reads as it should
+before trusting the census's numbers. In a Python cell — not a `!` shell one:
 
 ```python
 import pathlib, sys
@@ -46,6 +47,11 @@ print(len(training), len(held_out))
 
 It must print `6000 3000`. A held-out count of zero means the mirror moved again; stop rather than
 train against a split that will be scored over nothing.
+
+**Sessions 1 to 5 do not paste this.** `notebooks/kaggle-train.ipynb` carries the same check as a
+cell of its own, between the resume and the training call, and it asserts rather than prints — a
+zero there stops the notebook instead of scrolling past a Run All. It was prose here first, and
+prose an operator has to retype is a step that gets skipped or mistyped on the evening it matters.
 
 ## Sessions 1 to 5 — the rungs, in order
 

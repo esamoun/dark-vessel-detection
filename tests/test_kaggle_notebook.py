@@ -28,6 +28,17 @@ def _cell_sources() -> list[str]:
     return ["".join(cell["source"]) for cell in document["cells"]]
 
 
+def _code_sources() -> list[str]:
+    """The code cells only, in notebook order.
+
+    Ordering and "how many cells do this" claims are about what executes, and the prose cells
+    describe the code cells by name — the intro names `split_by_scene` while explaining why the
+    check below it exists. Counting those as a second check reads a correct notebook as broken.
+    """
+    document = json.loads(NOTEBOOK.read_text())
+    return ["".join(cell["source"]) for cell in document["cells"] if cell["cell_type"] == "code"]
+
+
 def test_the_notebook_names_its_run_once_rather_than_in_two_places_that_can_disagree() -> None:
     """The two literals that used to name a run a second time are refused outright, and the
     training cell has to read the run back through `CONFIG` rather than naming it again itself.
@@ -49,3 +60,32 @@ def test_the_notebook_names_its_run_once_rather_than_in_two_places_that_can_disa
     training = [source for source in sources if "darkvessel train" in source]
     assert len(training) == 1, "expected exactly one cell that runs `darkvessel train`"
     assert "{CONFIG}" in training[0]
+
+
+def test_the_notebook_stops_on_an_empty_held_out_split_before_it_reaches_the_training_cell() -> (
+    None
+):
+    """The split is read, and refused when it is empty, in a cell that runs *before* training.
+
+    `split_by_scene` is a pure filter over whichever scenes the catalogue holds, so a
+    `data.images` that no longer matches the dataset's layout does not raise — it yields an
+    empty held-out split, and the run trains to completion and reports its one measured number
+    over nothing. This has already happened once from outside the repository: the Kaggle mirror
+    splits LS-SSDD's images into two directories and Kaggle moved its mount point, both
+    unannounced (docs/decisions.md, 2026-08-20).
+
+    The check therefore lives in the notebook rather than in the runbook's prose, where it was
+    a snippet an operator had to paste, and it asserts rather than prints — a `0` printed by a
+    Run All scrolls past and the training cell starts anyway. Ordering is half the guard: a
+    check that runs after `darkvessel train` has already cost the session it exists to save.
+    """
+    sources = _code_sources()
+
+    checks = [i for i, source in enumerate(sources) if "split_by_scene" in source]
+    assert len(checks) == 1, "expected exactly one cell that reads the split"
+    training = next(i for i, source in enumerate(sources) if "darkvessel train" in source)
+    assert checks[0] < training, "the split check has to run before the GPU time is spent"
+
+    assert "assert held_out" in sources[checks[0]], (
+        "the check has to refuse an empty held-out split, not merely print its size"
+    )
