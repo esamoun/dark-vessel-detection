@@ -1179,3 +1179,50 @@ even if the dataset were fetched into CI. A further change on Kaggle's or the mi
 would not be caught until a run attached to it failed to find its images, and would fail loudly
 rather than quietly — `catalogue`'s `FileNotFoundError` names the directory that came back empty
 — which is the property this repository can actually promise here.
+
+---
+
+## 2026-08-23 — R0, the baseline the ladder is measured against
+
+**Decision.** `docs/runs/r0-baseline.json` is the reference every rung of issue #11's ladder is
+compared to. Its statistic is **F1 0.807**, and the noise band over its last four epochs is
+**0.026**, so R1 is kept only if it reaches strictly more than **0.833**. The rule that produces
+that threshold was written and committed on 2026-08-17, before any of these runs existed; the
+number it yields is only knowable now.
+
+**What the statistic is, exactly.** `best_f1` in `ladder.py` takes the **final** epoch and the
+best F1 across the confidence thresholds *within* it. It is not the best epoch. Epoch 9 of this
+run reached 0.821 and epoch 12 reached 0.807, and 0.807 is the number the ladder uses — a rung
+that trains for twelve epochs is judged on the twelve it was given, not on the one that happened
+to land well. Recorded here because the two are three thousandths apart and easy to confuse when
+reading the table.
+
+**The run, on the held-out scenes 11 to 15.** 3000 tiles, 2378 labelled ships. At epoch 12 and
+threshold 0.75: 1706 ships found, 672 missed, 142 false detections — precision 0.923, recall
+0.717. More than nine in ten of what it reports is a real vessel, and it misses close to three in
+ten of them. It trained on 2246 tiles, which is every ship-bearing tile of the 6000 in the
+training scenes plus one empty tile each, at `empty_per_ship_tile: 1.0`.
+
+**What the epochs show, and why rung 1 exists.** F1 by epoch: 0.485, 0.782, 0.809, 0.803, 0.803,
+0.806, 0.810, 0.775, 0.821, 0.795, 0.804, 0.807. The model reaches the neighbourhood of its
+optimum in three epochs and bounces inside it for nine more, at a learning rate that never
+changes. That is the same behaviour `docs/failures.md` recorded of the first run on 2026-08-14,
+and it is what rung 1 — cosine decay — was put on the ladder to test. The bounce is also what
+sets the bar: the 0.026 band is measured, not assumed, so a configuration that fails to settle
+makes the next change harder to prove rather than easier.
+
+**Which execution these numbers come from.** The interactive session of 2026-08-23, downloaded
+from `/kaggle/working` in the session's own output panel — *not* from a Save Version. The runbook
+tells the operator to take the metrics from the saved artefact, and that instruction exists
+because Save Version re-executes the whole notebook in a fresh machine and the artefact then
+comes from a second run of the same code (`docs/failures.md`, 2026-08-14). Downloading the file
+from the running session avoids that divergence rather than falling into it: this file is the
+execution whose console log was watched. The runbook's instruction is the right default when a
+version is being saved, and is not what happened here, so the provenance is written down instead
+of being left to be inferred from the file's name.
+
+**Cost.** Nothing in the test suite holds this number — it is a measurement, not a decision the
+code can be made to enforce, and a rerun on a different machine will not reproduce it to three
+decimals. What *is* held is the rule that consumes it: `tests/test_ladder.py` pins the arithmetic
+of the band and the strictness of the comparison, so the threshold above cannot drift without a
+test failing.
