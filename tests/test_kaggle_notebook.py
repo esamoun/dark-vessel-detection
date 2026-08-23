@@ -164,3 +164,50 @@ def test_the_clone_is_named_once_and_put_on_the_path_of_both_interpreters() -> N
     )
 
     assert "\n".join(sources).count('"/kaggle/working/repo/src"') == 1, "named once, read twice"
+
+
+def test_the_clone_is_remade_from_scratch_and_refuses_to_go_on_without_it() -> None:
+    """Any previous clone is removed *before* the clone, and the clone's success is checked.
+
+    Observed on Kaggle, 2026-08-23. Kaggle's Persistence setting keeps `/kaggle/working` across
+    sessions, so stopping a session no longer empties it. `git clone` then refuses the directory
+    that is already there and prints `fatal:` — and a `!` line's non-zero exit stops nothing, so
+    `pip install -e` installed the *previous* session's clone and every cell below it ran
+    against code that was not the code on `main`. The two cells that catch a stale environment
+    are the split check and the resume, and neither can see this: a stale clone reads a valid
+    dataset and resumes a valid checkpoint. Nothing would have said the code was old.
+
+    Order is the whole of the first half. A removal that happens after the clone deletes the
+    thing it just fetched; a removal that happens in a later cell deletes it out from under the
+    imports. Both are silent, and both leave the notebook looking like it has a guard.
+
+    The second half is the assertion, and it earns its place separately: a clone can fail with
+    the directory absent — Internet left off is the usual reason, and a freshly imported
+    notebook has it off by default. Without the assertion that failure is reported three cells
+    down as `ModuleNotFoundError`, which reads as a packaging problem rather than as the one
+    line that caused it, and that misreading cost a session on the day this was written.
+    """
+    sources = _code_sources()
+
+    # On the code, not on the prose. The words "git clone" appear in this cell's own comment,
+    # explaining what went wrong -- keying on them made the ordering assertion below measure the
+    # comment rather than the command, and it passed a cell whose rmtree came second. The `!` is
+    # what makes it the executed line.
+    clones = [i for i, source in enumerate(sources) if "!git clone" in source]
+    assert len(clones) == 1, "expected exactly one cell that clones the repository"
+    clone = sources[clones[0]]
+
+    assert "shutil.rmtree" in clone, (
+        "a previous clone has to be removed, not cloned over: git refuses the directory and the "
+        "`!` line's failure stops nothing"
+    )
+    assert clone.index("shutil.rmtree") < clone.index("!git clone"), (
+        "removing the clone after fetching it deletes what was just fetched"
+    )
+    assert 'src" / "darkvessel"' in clone and "assert" in clone, (
+        "the clone's success has to be checked here, or its failure surfaces later as "
+        "ModuleNotFoundError in a cell that did nothing wrong"
+    )
+
+    definitions = next(i for i, source in enumerate(sources) if "SRC =" in source)
+    assert clones[0] < definitions, "the clone has to happen before its src/ is put on the path"
