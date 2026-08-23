@@ -167,3 +167,22 @@ def test_a_rung_of_the_small_target_ladder_changes_exactly_the_one_thing_it_decl
     changed = _differing_keys(load_config(base), load_config(path))
 
     assert changed == {RUNG_OWN_CHANGE[rung], "out.checkpoints", "out.metrics"}
+
+
+@pytest.mark.parametrize("rung", sorted(RUNG_OWN_CHANGE), ids=lambda name: name)
+def test_every_rung_resolves_to_the_cosine_schedule_r1_was_kept_for(rung: str) -> None:
+    """R1 was kept on 2026-08-23 — 0.836 against a bar of 0.833 — so cosine decay is part of the
+    baseline every rung above it stands on, not an option any of them may quietly drop.
+
+    The test above this one does not hold that, and cannot: it compares a rung to *whatever its
+    own `extends` names*, so a rung repointed at `../train.yaml` still differs from its base by
+    exactly one key and passes. That revert was made before this test was written and all 301
+    tests passed. What it would cost is the ladder's whole premise — R2 would gain the anchors
+    and lose the decay while reporting one change, and its band would widen back towards R0's
+    0.026, loosening the bar R3 has to clear rather than tightening it.
+
+    Repointing an `extends` is a documented and expected edit: it is what the runbook prescribes
+    when a rung is *rejected*. This says only where it may point — at a rung that was kept, which
+    on this ladder means at or above R1.
+    """
+    assert load_config(LADDER / rung)["schedule"].get("lr_schedule") == "cosine"
