@@ -78,6 +78,25 @@ def test_a_threshold_that_reported_nothing_scores_zero_rather_than_perfectly() -
     assert best_f1(entry) == pytest.approx(0.6)
 
 
+def test_the_statistic_is_the_final_epoch_and_not_the_best_one() -> None:
+    """A rung is judged on the schedule it was given, not on the epoch that happened to land.
+
+    `best_f1` maximises over the thresholds *inside* one epoch; `judge` then reads that off
+    `epochs[-1]`. Maximising over the epochs as well would be a different rule wearing the same
+    name, and a strictly more flattering one: every rung would be scored at its luckiest point,
+    so the noisier a configuration the better it would look, which inverts what the band beside
+    it is measuring. On the real R0 the two differ — 0.821 at epoch 9 against 0.807 at epoch 12
+    (docs/decisions.md, 2026-08-23) — and neither the band nor the boundary tests above notice
+    the swap, because their fixtures happen to peak on the last epoch.
+
+    The rung below does not: it peaks in the middle and falls back, which is the only shape that
+    tells the two rules apart.
+    """
+    rung = a_rung("R0", [0.5, 0.875, 0.625])
+
+    assert judge([rung])[0].statistic == pytest.approx(0.625)
+
+
 def test_the_band_is_the_range_of_the_statistic_over_the_last_four_epochs() -> None:
     epochs = [
         an_epoch(index + 1, f1, f1) for index, f1 in enumerate([0.25, 0.875, 0.5, 0.625, 0.75])
