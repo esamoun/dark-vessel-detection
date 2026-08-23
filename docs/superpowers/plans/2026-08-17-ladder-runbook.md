@@ -73,17 +73,29 @@ repository. Nothing copies one to the other; that is this table.
 
 | Session | Config | Kaggle writes checkpoints to | Kaggle writes metrics to | Commit the metrics file as |
 | --- | --- | --- | --- | --- |
-| 1 | `configs/train.yaml` | `/kaggle/working/checkpoints` | `/kaggle/working/metrics.json` | `docs/runs/r0-baseline.json` |
-| 2 | `configs/ladder/r1-cosine.yaml` | `/kaggle/working/checkpoints-r1` | `/kaggle/working/metrics-r1-cosine.json` | `docs/runs/r1-cosine.json` |
+| 1 ✅ | `configs/train.yaml` | `/kaggle/working/checkpoints` | `/kaggle/working/metrics.json` | `docs/runs/r0-baseline.json` |
+| 2 ← next | `configs/ladder/r1-cosine.yaml` | `/kaggle/working/checkpoints-r1` | `/kaggle/working/metrics-r1-cosine.json` | `docs/runs/r1-cosine.json` |
 | 3 | `configs/ladder/r2-anchors.yaml` | `/kaggle/working/checkpoints-r2` | `/kaggle/working/metrics-r2-anchors.json` | `docs/runs/r2-anchors.json` |
 | 4 | `configs/ladder/r3-stem.yaml` | `/kaggle/working/checkpoints-r3` | `/kaggle/working/metrics-r3-stem.json` | `docs/runs/r3-stem.json` |
 | 5 | `configs/ladder/r4-sampler.yaml` | `/kaggle/working/checkpoints-r4` | `/kaggle/working/metrics-r4-sampler.json` | `docs/runs/r4-sampler.json` |
+
+**Session 1 ran on 2026-08-23.** R0 scored F1 **0.807**, with a noise band of **0.026** over its
+last four epochs, so **R1 is kept only above 0.833** — and rejected at or below it, the `>` being
+strict. The numbers, what they came from and what they already reproduce of the first run are in
+`docs/decisions.md`, 2026-08-23. Four sessions remain, about ten GPU hours.
 
 Each rung writes to its own `checkpoints-rN` directory, so a rung cannot resume the previous
 rung's finished schedule and report its numbers as its own — the five sessions share one Kaggle
 working directory, and only the config tells them apart.
 
-**Adapting `notebooks/kaggle-train.ipynb`.** The resume cell (cell 3) sets one constant, `CONFIG`,
+**Adapting `notebooks/kaggle-train.ipynb`.** Re-import the notebook from the repository rather
+than editing an old copy in a browser tab — sessions 2 to 5 need the corrections of 2026-08-23,
+which a notebook imported before them does not have. Then turn **Internet on** before running
+anything: without it the clone fails, nothing installs, and every cell below reports a
+`ModuleNotFoundError` that is an echo of that one line rather than a fault of its own. A newly
+imported notebook has Internet off by default, and toggling it restarts the session.
+
+The resume cell sets one constant, `CONFIG`,
 and derives the checkpoint directory, the glob and the metrics filename from it via
 `load_config`; the training cell reads the same constant. For sessions 2 to 5, set `CONFIG` to
 that session's ladder config and nothing else — there is no second edit left to miss. If a rung
