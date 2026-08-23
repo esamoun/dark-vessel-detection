@@ -127,3 +127,40 @@ def test_the_run_is_launched_from_python_rather_than_through_the_notebook_s_shel
 
     assert "!{" not in "\n".join(sources), "a `!` line's brace substitution is not Python's"
     assert "!darkvessel" not in "\n".join(sources), "the console script is not on Kaggle's PATH"
+
+
+def test_the_clone_is_named_once_and_put_on_the_path_of_both_interpreters() -> None:
+    """`SRC` is defined once, before the first import, and reaches the child through the env.
+
+    Observed on Kaggle, 2026-08-23: the repository cloned, `pip install -e` ran against it, and
+    `import darkvessel` still raised ModuleNotFoundError while the console script was not on
+    PATH — the package on disk and invisible to the kernel. Where the install put it is a
+    property of the machine; where the clone is, is not, and this is a src layout of pure Python
+    that needs no install to be importable.
+
+    Three things have to hold together, and each is a way the fix silently stops working. The
+    path has to be set *before* anything imports `darkvessel`, or the cell is decoration. It has
+    to be written once, or the kernel and the child can be pointed at different clones. And the
+    child needs it through `PYTHONPATH`, because a subprocess inherits the parent's environment
+    and not its `sys.path`.
+    """
+    sources = _code_sources()
+
+    definitions = [i for i, source in enumerate(sources) if "SRC =" in source]
+    assert len(definitions) == 1, "expected exactly one cell that names the clone's src"
+    assert "sys.path.insert" in sources[definitions[0]], "naming it is not putting it on the path"
+
+    imports = next(i for i, source in enumerate(sources) if "from darkvessel" in source)
+    assert definitions[0] < imports, "the path has to be set before the first darkvessel import"
+
+    # On the code, not on the prose: every cell here explains itself, and the words PYTHONPATH
+    # and SRC both appear in this cell's comment. Asserting on those passes a cell whose `env=`
+    # has been deleted -- which is how this check was first written, and it let that revert
+    # through.
+    training = sources[_training_cell()]
+    assert '"PYTHONPATH": SRC' in training, (
+        "the child needs the clone through the environment: a subprocess inherits the parent's "
+        "environment, never its sys.path"
+    )
+
+    assert "\n".join(sources).count('"/kaggle/working/repo/src"') == 1, "named once, read twice"

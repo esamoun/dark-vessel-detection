@@ -8,7 +8,13 @@ provider requires — that is what the loop is built for. On Kaggle the notebook
 Python — `subprocess` on `[sys.executable, "-m", "darkvessel", "train", ...]` — and not from a
 `!` shell line, because `pip install -e` puts the console script somewhere the session's shell
 does not look, and a `!` line's `{...}` substitution belongs to the frontend rather than to
-Python and is not performed on that image. Same command, reached without either. Kaggle's *Save Version* re-executes the
+Python and is not performed on that image. Same command, reached without either.
+
+The notebook also puts the clone's `src/` on `sys.path`, and passes it to that subprocess as
+`PYTHONPATH`, rather than trusting the install to have made the package importable: on
+2026-08-23 the clone succeeded, `pip install -e` ran, and `import darkvessel` still raised
+`ModuleNotFoundError`. Where an install lands is a property of the machine; where the clone is,
+is not. Kaggle's *Save Version* re-executes the
 whole notebook in a fresh machine, so the artefact you download is a **second run** of the same
 code, not the session you watched. Take the metrics from the saved version, not from the console.
 
