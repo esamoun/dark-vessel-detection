@@ -75,8 +75,8 @@ repository. Nothing copies one to the other; that is this table.
 | --- | --- | --- | --- | --- |
 | 1 ✅ | `configs/train.yaml` | `/kaggle/working/checkpoints` | `/kaggle/working/metrics.json` | `docs/runs/r0-baseline.json` |
 | 2 ✅ | `configs/ladder/r1-cosine.yaml` | `/kaggle/working/checkpoints-r1` | `/kaggle/working/metrics-r1-cosine.json` | `docs/runs/r1-cosine.json` |
-| 3 ← next | `configs/ladder/r2-anchors.yaml` | `/kaggle/working/checkpoints-r2` | `/kaggle/working/metrics-r2-anchors.json` | `docs/runs/r2-anchors.json` |
-| 4 | `configs/ladder/r3-stem.yaml` | `/kaggle/working/checkpoints-r3` | `/kaggle/working/metrics-r3-stem.json` | `docs/runs/r3-stem.json` |
+| 3 ❌ | `configs/ladder/r2-anchors.yaml` | `/kaggle/working/checkpoints-r2` | `/kaggle/working/metrics-r2-anchors.json` | `docs/runs/r2-anchors.json` |
+| 4 ← next | `configs/ladder/r3-stem.yaml` | `/kaggle/working/checkpoints-r3` | `/kaggle/working/metrics-r3-stem.json` | `docs/runs/r3-stem.json` |
 | 5 | `configs/ladder/r4-sampler.yaml` | `/kaggle/working/checkpoints-r4` | `/kaggle/working/metrics-r4-sampler.json` | `docs/runs/r4-sampler.json` |
 
 **Sessions 1 and 2 both ran on 2026-08-23.** R0 scored F1 **0.807** with a band of **0.026**,
@@ -91,6 +91,13 @@ R1 being kept, `r2-anchors.yaml` keeps `extends: r1-cosine.yaml` — no edit. Th
 now held by a test rather than by this sentence: `test_config.py` asserts every rung resolves to
 `lr_schedule: cosine`, so a rung repointed at the baseline fails on a laptop rather than after a
 GPU evening.
+
+**Session 3 ran on 2026-08-23 and R2 was rejected.** F1 **0.788** against the 0.8454 above, and
+below R0's own 0.807 — the small anchors are worse than the stock ones outright. The anchor census
+predicted this in writing on 2026-08-19, before any rung had run; the numbers and the mechanism
+are in `docs/failures.md`. `r3-stem.yaml` is repointed at `r1-cosine.yaml` accordingly, so R3
+stands on R1 and is measured against it. **The bar for R3 is unchanged at 0.8454** — a rejected
+rung moves neither the standing statistic nor the band. Two sessions remain, about five GPU hours.
 
 Each rung writes to its own `checkpoints-rN` directory, so a rung cannot resume the previous
 rung's finished schedule and report its numbers as its own — the five sessions share one Kaggle
