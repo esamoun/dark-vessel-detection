@@ -432,3 +432,76 @@ neither the standing statistic nor the band.
 the anchor geometry, is what binds — is now the best available explanation for two runs rather
 than one. This ladder does not test it: its five rungs were fixed on 2026-08-17, before the census
 existed. It is the first thing a sixth rung should change.
+
+---
+
+## 2026-08-23 — R3, the single-channel stem: rejected as a draw, to five decimal places
+
+**What was asked for.** Issue #11's first acceptance criterion, an input stage adapted to radar
+polarisation channels. The dual-polarisation stem it names has no data on either side of the chain
+— recorded above, 2026-08-17 — and the single-channel stem was shipped in its place: `conv1` takes
+one channel of radar amplitude rather than three copies of it, its weights folded down from the
+pretrained RGB kernels.
+
+**What was measured.** Twelve epochs on a T4, R1 plus that one change. Statistic **F1 0.83556**
+against R1's **0.83557**. The bar was 0.84543, and the raw difference against R1 is
+**−0.000011** — eleven millionths, in the losing direction. Rejected.
+
+The run block confirms the change is the only one: of the 24 fields R1 and R3 record, two differ,
+and they are the same value written twice — `built.stem` and `stem`, `repeat` to `single`. Same
+seed, same anchors, same cosine schedule, same reporting, same 2246 and 3000 tiles.
+
+At epoch 12 and threshold 0.75, R1 finds 1959 ships with 352 false and R3 finds 1969 with 366.
+Final training loss 0.1174 against 0.1170. There is no version of this comparison in which the two
+stems are distinguishable.
+
+**Which is what the stem's own design predicted.** `docs/decisions.md` records that the folded
+stem agrees with the repeat *inside* the tile at initialisation and differs only over a
+three-pixel border, where `conv1` pads with zeros and a zero does not mean the same raw amplitude
+under the two normalisations. Every parameter outside `conv1` is the repeat's own, trainability
+included. A near-null result was therefore the expected one, and it arrived nearer to null than
+anyone would have bet.
+
+**What that settles about criterion 1.** The three copies were not costing anything. The
+adaptation asked for was dual-polarisation and is blocked on data; the adaptation shipped in its
+place turns out to be, in effect, the null adaptation — measurably identical to the repeat it
+replaces. That is a complete answer to the criterion rather than an evasion of it: the honest
+report is that this axis has nothing in it at this resolution, on this data, and the measurement
+says so at five decimal places.
+
+**Where the two runs do differ, and it does not help.** At threshold 0.05 R3 reports 50439 false
+detections against R1's 27039 — nearly double, for one more ship. The single stem is noisier where
+the detector is not asked to be confident. R3's band is also wider, 0.0146 against R1's 0.0099.
+Neither moves the statistic, which is decided at 0.75.
+
+**A reproducibility datapoint, recorded because this project has almost none.** Epoch 1 of R3 is
+0.762 against R1's 0.801, and by epoch 12 they agree to five decimals. The same shape appeared
+between R0 and R1, whose epoch 1 differed by 0.316 under conditions that were identical. Two pairs
+now say the same thing: this pipeline's early epochs diverge substantially between runs and its
+late epochs do not. That does not make 0.000011 a measurement of the noise floor — a change and a
+noise can cancel — but it is the second observation pointing the same way, and it is why the
+ladder reads its statistic at epoch 12 rather than at the best epoch.
+
+**What was done.** `configs/ladder/r4-sampler.yaml` is repointed from `r3-stem.yaml` to
+`r1-cosine.yaml`, committed with this entry. Its old comment named `r2-anchors.yaml` as the
+fallback if R3 fell, on the assumption that only one of R2 and R3 could — both did, so the last
+kept rung is R1.
+
+The check added with R2's rejection caught this one without being touched:
+`test_no_rung_of_the_shipped_ladder_stands_on_one_the_rule_rejected` failed by name the moment
+`r3-stem.json` landed in `docs/runs/`, naming r4 and the rung it could no longer stand on. It
+derives the rejected set from `judge`, which is why a guard written for one verdict held for the
+next.
+
+**What this costs rung 4, and what was deliberately not done about it.** R4's stated reason for
+`rpn_batch_size_per_image: 32` is the census's finding that a tile offers 3.6 positive anchors, so
+the sampler's ceiling is idle and only the batch size moves the realised fraction — 1.4% at 256,
+11.3% at 32. Those counts are measured **under R2's small anchors**, and R2 is not on this branch.
+Under the stock anchors R4 now inherits, the census puts the realised positive fraction at 16.8%:
+the sampler is not idle, and 32 is not the number that argument produces.
+
+The value is left at 32. It was fixed on 2026-08-17, and choosing it again now, with four runs'
+results in hand, is precisely what this ladder's rule exists to forbid. What rung 4 will measure
+is a smaller RPN batch under the stock anchors — a real question, and not the question its comment
+poses. Recorded here, before the run, so that the gap between the rung's justification and the
+rung's actual condition is on the record rather than discovered in its verdict.
