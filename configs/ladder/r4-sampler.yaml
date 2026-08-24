@@ -7,11 +7,20 @@
 # few positives — 1.4% at 256, 5.6% at 64, 11.3% at 32, 22.5% at 16. See docs/decisions.md
 # 2026-08-19 for the counts and for what the census contradicts.
 #
-# Extends rung 3 because the ladder is greedy: each rung starts from the last one that was kept.
-# If R3 is rejected, this line is repointed at r2-anchors.yaml and the edit goes into
-# docs/failures.md with the rejection.
+# Extends rung 1. R2 and R3 were both rejected on 2026-08-23, so the last rung that was kept is
+# R1 -- not r2-anchors.yaml, which the note here used to name as the fallback on the assumption
+# that only one of the two above could fall. See docs/failures.md.
+#
+# Which voids the paragraph above, and the entry says so rather than letting the comment stand:
+# those counts are measured under R2's small anchors, and R2 is not on this branch. Under the
+# stock anchors this rung now inherits, the census puts the realised positive fraction at 16.8%
+# rather than 1.4%, so the sampler is not idle and 32 is not the number that argument produces.
+# The value is left at 32 anyway -- it was fixed on 2026-08-17, and choosing it again now, with
+# four runs' results in hand, would be the one thing this ladder's rule exists to forbid. What
+# rung 4 measures is therefore a smaller RPN batch under the stock anchors, which is a real
+# question and not the question the comment above poses.
 
-extends: r3-stem.yaml
+extends: r1-cosine.yaml
 
 model:
   rpn_batch_size_per_image: 32
