@@ -20,9 +20,11 @@
 > resolution rather than left unproven.
 >
 > What is not done: the chain has run on one scene; offshore structures are not yet told apart
-> from vessels, so a dark candidate here is not yet a finding about the sea; there is no evaluation
-> report; and the kept rung's weights, which the config now names, have not themselves been run on
-> the scene — every scene-level number below is the 2026-08-14 detector's. See
+> from vessels, so a dark candidate here is not yet a finding about the sea; and the kept rung's
+> weights, which the config now names, have not themselves been run on the scene — every
+> scene-level number below is the 2026-08-14 detector's.
+> [`docs/evaluation.md`](docs/evaluation.md) is the honest account of how well the detector works,
+> where it breaks, and the ten conditions it has never been asked to work under. See
 > [Approach](#approach) for what is real and
 > what is not, [what the first run on the lane showed](#what-the-first-run-on-the-lane-showed--2026-08-14),
 > [Training the detector](#training-the-detector) and [the ladder](#the-ladder--2026-08-23).
@@ -153,6 +155,7 @@ scoped and documented. Where results are modest, they are reported as modest —
 usefully ranks candidates for inspection is a different and more honest claim than a detector
 that maps them.
 
+- [`docs/evaluation.md`](docs/evaluation.md) — how well the detector works, and where it breaks
 - [`docs/decisions.md`](docs/decisions.md) — why each choice was made
 - [`docs/failures.md`](docs/failures.md) — what was tried and did not work
 
@@ -531,11 +534,20 @@ detections. F1 0.836 against 0.807.
 anchor set — which points at the RPN's foreground IoU threshold rather than at anchor geometry or
 sampler batch size. Two rungs have now failed in the region that hypothesis describes and neither
 tested it, because the five rungs were fixed before the census that produced it. It is the first
-thing a sixth rung should change, and this ladder deliberately does not have one.
+thing a sixth rung should change, and this ladder deliberately does not have one; it is now
+[issue #24](https://github.com/esamoun/dark-vessel-detection/issues/24).
 
 ```bash
 darkvessel compare --config configs/ladder.yaml
+darkvessel evaluate --config configs/ladder.yaml --svg docs/figures/precision-recall-r1.svg
 ```
+
+The second of those draws the kept rung's whole precision-recall curve, with the range each point
+covered over the last four epochs.
+[`docs/evaluation.md`](docs/evaluation.md) reads it: where the chain sits on that curve and what
+it pays, what the 683 missed ships are actually made of — 580 of them are found by the detector
+and discarded by the threshold — the failure modes by cause, and the ten conditions none of this
+has ever been tested under.
 
 ## Swapping it into the chain — 2026-08-16
 
