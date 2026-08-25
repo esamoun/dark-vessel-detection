@@ -505,3 +505,63 @@ results in hand, is precisely what this ladder's rule exists to forbid. What run
 is a smaller RPN batch under the stock anchors — a real question, and not the question its comment
 poses. Recorded here, before the run, so that the gap between the rung's justification and the
 rung's actual condition is on the record rather than discovered in its verdict.
+
+---
+
+## 2026-08-23 — R4, the RPN sampler: rejected inside the noise, and the ladder closes
+
+**What was asked for.** Issue #11's third adaptation: the foreground/background imbalance at the
+RPN's loss, addressed by shrinking `rpn_batch_size_per_image` from torchvision's 256 to 32.
+
+**What was measured.** Twelve epochs on a T4, R1 plus that one change — verified as one change:
+of the 24 fields the two run blocks record, exactly one differs. Statistic **F1 0.82689** against
+R1's **0.83557**, so **−0.00869**, against a bar of 0.84543. Rejected.
+
+**How this rejection differs from R2's, and why that matters.** R2 lost 0.048, five times R1's
+noise band, and fell below even R0. R4 loses **0.0087 against a band of 0.0099** — the change is
+*smaller than the noise it had to beat*. The honest statement is not "the smaller sampler batch
+hurts"; it is that R4 and R1 are indistinguishable on this data, and the rule keeps a rung only
+for beating the noise rather than matching it. Recorded as such, because "rejected" covers both
+outcomes in the table and they are not the same finding.
+
+At epoch 12 and threshold 0.75, R4 finds 1913 ships with 336 false against R1's 1959 with 352 —
+46 fewer ships for 16 fewer false alarms.
+
+**What the smaller batch demonstrably did do.** R4's band is **0.0190**, the widest of any rung on
+the kept branch and nearly double R1's. Sixteen positives and sixteen negatives per image is a
+noisier gradient than the 43-odd positives a batch of 256 draws under these anchors, and the
+epoch-to-epoch score shows it: 0.792, 0.795, 0.798, 0.779, 0.808, 0.804, 0.817, 0.797, 0.826,
+0.808, 0.823, 0.827. The training loss moves the same way and for the same reason — 0.2511 at
+epoch 1 against R1's 0.1813, the highest first epoch of the five runs, because a balanced sample
+is a harder sample. As with R2 in the opposite direction, that loss is not comparable across a
+rung that changes the sampling, and reading it as failure would be the mirror of reading R2's
+0.0374 as success.
+
+**One consistent side-effect across both rejected RPN rungs.** At threshold 0.05, R4 reports 14887
+false detections against R1's 27039, and R2 reported 9883. Both changes that reduce the RPN's
+negative-heaviness cut low-confidence noise, and neither moves the statistic, which is decided at
+0.75. That is now two observations of the same shape rather than one.
+
+**The caveat this run carried before it started.** Recorded with R3's rejection and repeated here:
+R4's stated justification — 3.6 positive anchors per tile, an idle sampler ceiling, and 32 as the
+batch that lifts the realised fraction to 11.3% — is measured under R2's small anchors, and R2 was
+rejected, so R4 inherited the stock anchors instead. Under those the census puts the realised
+fraction at 16.8%, the ceiling is not idle, and 32 is not the number that argument produces. The
+value was left at 32 because it was fixed on 2026-08-17 and rechoosing it with four runs in hand
+is what the ladder's rule forbids. So what this rung measured is a smaller RPN batch under the
+stock anchors — a real question, answered, and not the question its config's comment poses. The
+question the comment poses has not been tested by anything.
+
+**Nothing is repointed.** R4 is the last rung; no config extends it.
+
+**What the five runs say together.** One change of five was kept, and it was the one that was not
+among the ticket's three adaptations: cosine decay of the learning rate, +0.028 over the baseline
+and a noise band cut from 0.026 to 0.010. The three domain adaptations produced, in order, a
+clear harm (−0.048), a draw to five decimal places (−0.000011), and a draw inside the noise
+(−0.0087). On this data, at this resolution, the schedule was the only lever that moved.
+
+The standing explanation for the two RPN rungs remains the census's, written on 2026-08-19 before
+any of them ran: almost no ship reaches an IoU of 0.7 against any anchor in either set, which
+points at the RPN's foreground IoU threshold rather than at anchor geometry or sampler batch size.
+Two rungs have now failed in the region that hypothesis describes, and neither tested it. It is
+the first thing a sixth rung should change, and this ladder deliberately does not have one.
