@@ -48,7 +48,7 @@ The pipeline is built in four levels, each one shippable on its own.
 
 | Level | What it does | Status |
 | --- | --- | --- |
-| **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.71 recall over a held-out split of 3000 sub-images, and the four changes that did not clear the noise are written up rather than removed |
+| **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.71 recall over a held-out split of 3000 sub-images, and the three changes that did not clear the noise are written up rather than removed |
 | **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene with the trained detector in it, since 2026-08-16 |
 | **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching; offshore structures are not yet separated from vessels |
 | **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | planned |
@@ -56,11 +56,10 @@ The pipeline is built in four levels, each one shippable on its own.
 The chain that carries these was built first, deliberately, with a deterministic stand-in where
 the detector would go; the stand-in is still there, behind the same parameter, and is what the
 tests and the synthetic run use. What runs today: scene in, detector injected at the pipeline
-boundary, the
-scene cut into overlapping tiles and the targets they see reconciled into one list, pixel
-coordinates converted to ground coordinates, each declared vessel interpolated along its track to
-the moment of acquisition and the detections matched against those positions within a stated
-tolerance, GeoPackage out. Both ends of that are real now: a Sentinel-1 acquisition fetched
+boundary, the scene cut into overlapping tiles and the targets they see reconciled into one list,
+pixel coordinates converted to ground coordinates, each declared vessel interpolated along its
+track to the moment of acquisition and the detections matched against those positions within a
+stated tolerance, GeoPackage out. Both ends of that are real now: a Sentinel-1 acquisition fetched
 clipped from Earth Engine, and a day of the Danish AIS archive streamed, filtered and cleaned
 with every removal counted, and the detector between them is the trained one. What keeps a dark
 result from being a finding about the sea is no longer the detector: it is that nothing yet tells
