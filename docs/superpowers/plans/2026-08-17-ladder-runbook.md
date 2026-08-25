@@ -92,13 +92,13 @@ now held by a test rather than by this sentence: `test_config.py` asserts every 
 `lr_schedule: cosine`, so a rung repointed at the baseline fails on a laptop rather than after a
 GPU evening.
 
-**Session 5 ran on 2026-08-23. R4 was rejected and the ladder is complete.** F1 **0.827**, so
+**Session 5 ran on 2026-08-25. R4 was rejected and the ladder is complete.** F1 **0.827**, so
 −0.0087 against R1 — *smaller than R1's noise band of 0.0099*, which makes it a draw rather than a
 harm, unlike R2's −0.048. All five runs are in `docs/runs/`; one change of five was kept, and it
 was the one that is not among the ticket's three adaptations. What remains is the section below,
 "When the five are in" — no GPU time is left to spend.
 
-**Session 4 ran on 2026-08-23 and R3 was rejected too.** F1 **0.83556** against R1's
+**Session 4 ran on 2026-08-24 and R3 was rejected too.** F1 **0.83556** against R1's
 **0.83557** — a draw to five decimal places, and the near-null the folded stem's own design
 predicted. Criterion 1 of issue #11 is answered by that number rather than evaded: the three
 copies were not costing anything. `r4-sampler.yaml` is repointed at `r1-cosine.yaml` — its comment

@@ -435,7 +435,7 @@ existed. It is the first thing a sixth rung should change.
 
 ---
 
-## 2026-08-23 — R3, the single-channel stem: rejected as a draw, to five decimal places
+## 2026-08-24 — R3, the single-channel stem: rejected as a draw, to five decimal places
 
 **What was asked for.** Issue #11's first acceptance criterion, an input stage adapted to radar
 polarisation channels. The dual-polarisation stem it names has no data on either side of the chain
@@ -508,7 +508,7 @@ rung's actual condition is on the record rather than discovered in its verdict.
 
 ---
 
-## 2026-08-23 — R4, the RPN sampler: rejected inside the noise, and the ladder closes
+## 2026-08-25 — R4, the RPN sampler: rejected inside the noise, and the ladder closes
 
 **What was asked for.** Issue #11's third adaptation: the foreground/background imbalance at the
 RPN's loss, addressed by shrinking `rpn_batch_size_per_image` from torchvision's 256 to 32.

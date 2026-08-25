@@ -1307,7 +1307,7 @@ against the other would be measuring the machine as much as the change.
 
 ---
 
-## 2026-08-23 — Anchor sizes and pyramid levels, chosen by measurement rather than by default
+## 2026-08-25 — Anchor sizes and pyramid levels, chosen by measurement rather than by default
 
 **Decision.** This project ships torchvision's stock anchor sizes,
 `((32,), (64,), (128,), (256,), (512,))`, over all five levels of the feature pyramid. Criterion 2
@@ -1378,7 +1378,7 @@ answered-and-contradicted rather than reported as satisfied.
 
 ---
 
-## 2026-08-23 — Issue #11, criterion by criterion
+## 2026-08-25 — Issue #11, criterion by criterion
 
 **Decision.** The ladder is complete and issue #11 is answered. Two of its five criteria are met
 as written; three are answered by measurements that did not go the way the criterion's text
@@ -1397,7 +1397,7 @@ costing anything, to five decimal places. The criterion is unmet on data, and th
 measured rather than asserted.
 
 **2. Feature levels and anchor sizing chosen for small targets, with the reasoning here — met,
-with its premise contradicted.** The entries of 2026-08-19 and 2026-08-23 above carry the counts
+with its premise contradicted.** The entries of 2026-08-19 and 2026-08-25 above carry the counts
 and the argument. The reasoning takes the form the criterion asked for — per-level positive-anchor
 counts over 3637 ships rather than an inference from stride arithmetic — and its conclusion is the
 opposite of the criterion's premise: anchors sized *for* small targets lost by 0.048, and what the
@@ -1407,7 +1407,7 @@ reasoned and deferred to a rung this ladder does not have.
 
 **3. Foreground/background imbalance addressed at the loss — addressed, rejected inside the
 noise.** R4 took `rpn_batch_size_per_image` from 256 to 32 and lost 0.0087 against a band of
-0.0099 — indistinguishable from the configuration it changed. `docs/failures.md`, 2026-08-23, also
+0.0099 — indistinguishable from the configuration it changed. `docs/failures.md`, 2026-08-25, also
 records that the arithmetic justifying 32 was measured under R2's anchors, which the ladder
 rejected, so what R4 actually measured is a smaller batch under the stock anchors. The value was
 not rechosen after the fact, and the entry says why.
@@ -1422,8 +1422,8 @@ before the first run existed. `darkvessel compare` applies it mechanically;
 `test_no_rung_of_the_shipped_ladder_stands_on_one_the_rule_rejected` holds the greedy chain, which
 it caught in the wild the moment R3's journal landed.
 
-**5. Changes that did not help recorded in the failure log — met.** Three entries dated
-2026-08-23, one per rejected rung, each with its numbers, its mechanism and its distinction from
+**5. Changes that did not help recorded in the failure log — met.** Three entries, dated
+2026-08-23, 24 and 25, one per rejected rung, each with its numbers, its mechanism and its distinction from
 the others: a clear harm, a draw to five decimals, and a draw inside the noise. The entry for R2
 also records that the anchor census predicted its failure in writing on 2026-08-19, before any
 rung had run.
