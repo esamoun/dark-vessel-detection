@@ -1304,3 +1304,140 @@ from `/kaggle/working` in the session's own output panel — not from a Save Ver
 have re-executed the notebook in a fresh machine and produced a second run of the same code. Same
 provenance as R0, deliberately: a bar of 0.8335 computed from one kind of execution and compared
 against the other would be measuring the machine as much as the change.
+
+---
+
+## 2026-08-23 — Anchor sizes and pyramid levels, chosen by measurement rather than by default
+
+**Decision.** This project ships torchvision's stock anchor sizes,
+`((32,), (64,), (128,), (256,), (512,))`, over all five levels of the feature pyramid. Criterion 2
+of issue #11 asks for that choice and its reasoning in the decision log; this entry is the
+reasoning, and what is new in it is that the choice is now the outcome of a measurement rather
+than the default nobody had tested.
+
+**Why the stock sizes.** Because the alternative was run and lost. `configs/ladder/r2-anchors.yaml`
+took the sizes down to `((4,), (8,), (16,), (32,), (64,))` — 40 m upwards at 10 m resolution
+rather than 320 m upwards — on the argument that the smallest stock anchor is longer than nearly
+anything in the training set. It scored F1 0.788 against R1's 0.836 and against R0's own 0.807:
+worse than the configuration it changed, and worse than the untouched baseline. `docs/failures.md`
+carries the numbers and the mechanism.
+
+So "the stock sizes" is not "we did not look". It is a rejected alternative, with a session of GPU
+time spent establishing it and a pre-registered prediction that called it.
+
+**What the sizes are actually doing, which is not what they appear to be doing.** The census of
+2026-08-19 counted, over the 1123 ship-bearing training tiles and their 3637 ships, a mean of 97.6
+positive anchors per tile under the stock set. That number is an artefact. Ninety percent of ships
+never reach the 0.7 foreground IoU threshold against any stock anchor; they are matched only
+because `allow_low_quality_matches` guarantees every box its best anchor, and when a 16 px ship
+sits inside a 32 px anchor the overlap is `256/1024 = 0.25` for *every* anchor containing it,
+identically — so they tie at the maximum and the rescue rule forces all of them positive at once.
+One tile produced 3098 that way.
+
+The stock anchors therefore work here **through the rescue rule rather than through fitting the
+targets**, and the honest statement of criterion 2 is that: the sizes that win are not the sizes
+that match, they are the sizes whose failure to match is repaired most usefully.
+
+**How big a ship actually is.** Longest side, over the same 3637: 6.0 px at the fifth percentile,
+**16.0 px at the median**, 42.0 px at the ninety-fifth. At 10 m that is a median hull of 160 m.
+Recorded again here because this repository said in several places that the problem is "a hull
+three pixels across" — arithmetic that is right about the fifth percentile and wrong as a
+description of the set, which is three times larger than that.
+
+**Feature levels, and where the earlier argument no longer holds.** The census settled the levels
+by counting which ones ever match a ship, rather than by arguing from stride arithmetic, and that
+was the form criterion 2 asked for. But the count depends on the anchor set, and the entry of
+2026-08-19 read it under the set the ladder then expected to keep:
+
+| anchor set | positive anchors, by pyramid level |
+| --- | --- |
+| small `((4,) … (64,))` | `{0: 469, 1: 1338, 2: 1507, 3: 662, 4: 57}` |
+| stock `((32,) … (512,))` | `{0: 109506, 1: 121}` |
+
+Under the small sizes the matches spread across all five levels, and keeping five was the
+conclusion. Under the stock sizes — the ones this project now ships, R2 having been rejected —
+**three of the five levels never match anything at all**, and level 1 matches 121 times against
+level 0's 109506. The argument for five levels was contingent on a rung that fell.
+
+**What follows, and what deliberately does not.** Levels 2, 3 and 4 carry parameters and produce
+proposals that can only ever be negatives, on this data with these sizes. Trimming them is a
+reasoned candidate for a sixth rung: it would reduce the model without touching what it detects,
+and the census already says what it would cost, which is nothing in positives.
+
+It is not done here, for the reason every deferral in this ticket gives. The five rungs were fixed
+on 2026-08-17, and a change introduced after the ladder's results are known is a change measured
+against nothing — this ladder's rule exists precisely to refuse that. Trimming the pyramid is
+recorded as reasoned and deferred, which is the state the design document anticipated for it on
+2026-08-17, before the census had run.
+
+**Cost.** Three of five pyramid levels are shipped doing no detection work, knowingly, until a
+rung tests removing them. And criterion 2 is answered with a measurement whose sign is the
+opposite of the criterion's premise: the ticket asks for anchors "chosen for small targets", and
+what the data supports is anchors that are far too large, rescued by a matching rule. Recorded as
+answered-and-contradicted rather than reported as satisfied.
+
+---
+
+## 2026-08-23 — Issue #11, criterion by criterion
+
+**Decision.** The ladder is complete and issue #11 is answered. Two of its five criteria are met
+as written; three are answered by measurements that did not go the way the criterion's text
+assumes. This entry says which is which, because a ticket closed on "three architectural changes
+shipped" would be false, and one closed on "nothing worked" would be false too.
+
+**1. An input stage adapted to radar polarisation channels — not met as written, answered.**
+The criterion, sharpened by `model.py` to "a dual-polarisation stem trained as one", has no data
+on either side of the chain: LS-SSDD-v1.0 is VV throughout, and the Kattegat export is VV because
+Earth Engine's 48 MiB limit forced a choice between area and polarisation. Recorded in
+`docs/failures.md`, 2026-08-17, with what a real answer would cost.
+
+A single-channel stem shipped in its place, folded down from the pretrained RGB kernels, and R3
+measured it: F1 0.83556 against 0.83557. The three copies of one amplitude channel were not
+costing anything, to five decimal places. The criterion is unmet on data, and the substitute is
+measured rather than asserted.
+
+**2. Feature levels and anchor sizing chosen for small targets, with the reasoning here — met,
+with its premise contradicted.** The entries of 2026-08-19 and 2026-08-23 above carry the counts
+and the argument. The reasoning takes the form the criterion asked for — per-level positive-anchor
+counts over 3637 ships rather than an inference from stride arithmetic — and its conclusion is the
+opposite of the criterion's premise: anchors sized *for* small targets lost by 0.048, and what the
+data supports is anchors far too large, rescued by `allow_low_quality_matches`. Also recorded
+there: under the shipped sizes three of five pyramid levels match nothing, and trimming them is
+reasoned and deferred to a rung this ladder does not have.
+
+**3. Foreground/background imbalance addressed at the loss — addressed, rejected inside the
+noise.** R4 took `rpn_batch_size_per_image` from 256 to 32 and lost 0.0087 against a band of
+0.0099 — indistinguishable from the configuration it changed. `docs/failures.md`, 2026-08-23, also
+records that the arithmetic justifying 32 was measured under R2's anchors, which the ladder
+rejected, so what R4 actually measured is a smaller batch under the stock anchors. The value was
+not rechosen after the fact, and the entry says why.
+
+**4. Each change measured against the previous configuration on the same held-out split — met.**
+This is the criterion the design document called one of the two that decide whether the ticket is
+worth anything, and it is the one this work spent most of its effort on. Five runs of twelve
+epochs, one line different each, every one scored over scenes 11 to 15 entire — 3000 sub-images,
+2378 ships — with the keep/reject rule and its noise band written and committed on 2026-08-17,
+before the first run existed. `darkvessel compare` applies it mechanically;
+`tests/test_ladder.py` pins the arithmetic and the strictness of the `>`; and
+`test_no_rung_of_the_shipped_ladder_stands_on_one_the_rule_rejected` holds the greedy chain, which
+it caught in the wild the moment R3's journal landed.
+
+**5. Changes that did not help recorded in the failure log — met.** Three entries dated
+2026-08-23, one per rejected rung, each with its numbers, its mechanism and its distinction from
+the others: a clear harm, a draw to five decimals, and a draw inside the noise. The entry for R2
+also records that the anchor census predicted its failure in writing on 2026-08-19, before any
+rung had run.
+
+**What the ticket produced.** One kept change out of five, and it is the one that was not among
+the ticket's three adaptations: cosine decay of the learning rate, +0.028 over the baseline and a
+noise band cut from 0.026 to 0.010. That is a smaller architectural result than the issue text
+anticipates and a larger methodological one — the ladder now measures changes at a resolution the
+2026-08-14 run could not have supported, and the three adaptations are refuted at that resolution
+rather than left unproven.
+
+**Cost, and the thing still standing.** Almost no ship reaches an IoU of 0.7 against any anchor in
+either set, which points at the RPN's foreground IoU threshold rather than at anchor geometry or
+sampler batch size. Two rungs failed in the region that hypothesis describes and neither tested
+it, because the five were fixed before the census that produced it. Issue #11 closes without
+having tested the most likely explanation of its own results, and that is stated here rather than
+left for a reader to notice.

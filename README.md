@@ -451,6 +451,82 @@ darkvessel train --config configs/train.yaml   # locally: proves it starts, then
 
 The reasoning behind each of these is in [`docs/decisions.md`](docs/decisions.md).
 
+### The ladder — 2026-08-23
+
+Issue #11 asks for three adaptations for small targets and extreme imbalance. Measuring them is
+the hard part, and the first run is why: at a learning rate that never decayed, precision at a
+fixed threshold went 0.55, 0.74, 0.75, 0.41 … 0.28, 0.80 across twelve epochs. Adjacent epochs
+differed by more than any of the three changes was likely to be worth, so comparing one final
+number against another would have described the draw rather than the change — with three decimal
+places, which is worse than describing nothing.
+
+So the rule was written and committed on 2026-08-17, before any of these runs existed: **a change
+is kept only if it beats the previous kept configuration by more than the noise that configuration
+was already showing.** The noise is measured, not assumed — the spread of the statistic over a
+run's last four epochs. A threshold chosen after seeing the numbers is a narration of them.
+
+Five runs of twelve epochs, one line different each, every one scored over the same held-out
+scenes 11 to 15 — 3000 sub-images, 2378 ships. `darkvessel compare --config configs/ladder.yaml`
+reads the five journals in [`docs/runs/`](docs/runs/) and prints:
+
+| Rung | What changed | Best F1 | Against | Band | Gain | |
+| --- | --- | --- | --- | --- | --- | --- |
+| R0 | nothing — the baseline, re-run under the corrected seeding | 0.807 | — | — | — | kept |
+| R1 | cosine decay of the learning rate | 0.836 | R0 | 0.026 | +0.028 | kept |
+| R2 | `anchor_sizes` to `[[4], [8], [16], [32], [64]]` | 0.788 | R1 | 0.010 | −0.048 | rejected |
+| R3 | single-channel stem | 0.836 | R1 | 0.010 | −0.000 | rejected |
+| R4 | `rpn_batch_size_per_image` 256 → 32 | 0.827 | R1 | 0.010 | −0.009 | rejected |
+
+**One change of five was kept, and it is the one that is not among the ticket's three
+adaptations.** Cosine decay bought +0.028 and, more usefully, cut the noise band from 0.026 to
+0.010 — the baseline reached the neighbourhood of its optimum by epoch 3 and bounced there for
+nine more, and R1 climbs instead: 0.828, 0.826, 0.833, 0.836 over its last four.
+
+The three adaptations gave, in order, a clear harm, a draw to five decimal places, and a draw
+inside the noise. Each has its numbers and its mechanism in
+[`docs/failures.md`](docs/failures.md):
+
+- **R2, the small anchors.** The realised positive-anchor fraction falls from 16.8% to 1.4%, so
+  the RPN's sampler fills a batch of 256 with about 3.6 positives instead of about 43 and the head
+  has an order of magnitude fewer examples from which to learn confidence. The anchor census
+  predicted this in writing on 2026-08-19, before any rung ran.
+- **R3, the single-channel stem.** 0.83556 against R1's 0.83557. The folded stem agrees with the
+  three-copy repeat inside the tile at initialisation and differs only over a three-pixel border,
+  so a near-null was expected; it arrived nearer to null than anyone would have bet. The three
+  copies were not costing anything, and that is a measured answer rather than an assumed one.
+- **R4, the RPN sampler.** −0.0087 against a band of 0.0099 — the change is smaller than the noise
+  it had to beat, which makes it a draw rather than a harm. What it demonstrably did do is widen
+  the band to 0.019, the noisiest run on the kept branch: sixteen positives and sixteen negatives
+  per image is a noisier gradient than 43-odd positives out of 256.
+
+Training losses are not comparable across rungs that move the anchors or the sampler, and both
+directions of that trap appear here: R2's final loss is 0.044 against R1's 0.117 on a detector
+that is measurably worse, and R4's first epoch is the highest of the five because a balanced
+sample is a harder one.
+
+**What the kept configuration does.** R1 at epoch 12, over the entire held-out split:
+
+| Score threshold | Precision | Recall | Found | False | Missed |
+| --- | --- | --- | --- | --- | --- |
+| 0.25 | 0.529 | 0.928 | 2206 | 1964 | 172 |
+| 0.50 | 0.710 | 0.886 | 2107 | 859 | 271 |
+| **0.75** | **0.848** | **0.824** | 1959 | 352 | 419 |
+| 0.90 | 0.950 | 0.713 | 1695 | 90 | 683 |
+
+Against the 2026-08-14 baseline at the same threshold — precision 0.941, recall 0.706 — the
+schedule trades precision for a good deal more recall: 279 more ships found, 246 more false
+detections. F1 0.836 against 0.807.
+
+**What is left standing.** Almost no ship reaches an IoU of 0.7 against any anchor, in either
+anchor set — which points at the RPN's foreground IoU threshold rather than at anchor geometry or
+sampler batch size. Two rungs have now failed in the region that hypothesis describes and neither
+tested it, because the five rungs were fixed before the census that produced it. It is the first
+thing a sixth rung should change, and this ladder deliberately does not have one.
+
+```bash
+darkvessel compare --config configs/ladder.yaml
+```
+
 ## Swapping it into the chain — 2026-08-16
 
 The trained model now satisfies the same `detector` parameter the threshold stand-in satisfies,
