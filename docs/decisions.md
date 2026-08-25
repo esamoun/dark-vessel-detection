@@ -1441,3 +1441,68 @@ sampler batch size. Two rungs failed in the region that hypothesis describes and
 it, because the five were fixed before the census that produced it. Issue #11 closes without
 having tested the most likely explanation of its own results, and that is stated here rather than
 left for a reader to notice.
+
+---
+
+## 2026-08-25 — The chain loads the rung the ladder kept, at the operating point the swap chose
+
+**Decision.** `configs/kattegat-lane.yaml` loads `models/r1-epoch-012.pt` — epoch 12 of R1, the
+one rung of issue #11's ladder that was kept — at `score_threshold: 0.90`. It loaded the weights
+of 2026-08-14 at 0.75 until now.
+
+**Why this is an entry at all.** The ladder closed on 2026-08-25 having established that R1 scores
+F1 0.836 against the baseline's 0.807, and the chain went on loading the baseline. Nothing
+reported it: five rungs' worth of tests, a rule applied mechanically by `darkvessel compare`, a
+test that holds the greedy chain of rungs — and not one of them looks at which checkpoint the
+pipeline actually opens. The ladder proves which weights are best; the config is free to name any
+others, and did, for two days. That is the gap this entry closes, and the reason the closing is a
+test rather than a corrected line.
+
+**Why 0.90, when the old config said 0.75.** Because the operating point is the decision and the
+threshold is only its coordinate, and the coordinate does not survive a change of weights. Cosine
+decay moves the calibration of the scores — the same property the 2026-08-14 run's oscillation was
+made of, where precision at a fixed 0.50 went 0.55, 0.74, 0.75, 0.41 across adjacent epochs while
+the loss sat still. So the two detectors read the same number differently:
+
+| | threshold | precision | recall | found | false |
+| --- | --- | --- | --- | --- | --- |
+| Baseline, 2026-08-14 | 0.75 | 0.941 | 0.706 | 1680 | 106 |
+| R1 | 0.75 | 0.848 | 0.824 | 1959 | 352 |
+| **R1** | **0.90** | **0.950** | **0.713** | **1695** | **90** |
+| Baseline, 2026-08-14 | 0.90 | 0.986 | 0.535 | 1272 | 18 |
+
+Carrying 0.75 across would have moved this chain from one false alarm in seventeen to one in
+seven inside a commit about a checkpoint path — a change of what the project is willing to accuse
+a vessel of, made silently and by inheritance. Held at the precision the swap of 2026-08-16 was
+decided on, R1 dominates the configuration it replaces on all three figures at once: 15 more ships
+found, 16 fewer false alarms, 0.009 more precision. Nothing was traded, which is why this move
+needed no argument about what a miss is worth against a false alarm. The rung that does trade —
+R1 at 0.75, 279 more ships for 246 more false alarms — is a real option and a different decision,
+and it is not this one.
+
+**What is verified, and what is not.** Verified: the held-out numbers above, read out of
+`docs/runs/r1-cosine.json`, and two tests in `tests/test_config.py` —
+`test_the_chain_runs_the_weights_of_the_rung_the_ladder_kept` reads the ladder's verdict rather
+than the string "R1", so the next rung to be kept fails it until the chain is repointed, and
+`test_the_chains_score_threshold_holds_the_precision_the_swap_was_decided_on` refuses a threshold
+the kept rung never scored or that buys less than 0.94 precision. Both were confirmed by reverting
+this config and watching them fail.
+
+**Not verified: anything this scene says.** R1's weights are on Kaggle, not on this machine —
+330 MB, and `*.pt` is ignored — so the Kattegat run has not been executed under them. Everything
+the README reports about that scene was measured with the baseline at 0.75 and stands unrepeated:
+6 detections for 6 hulls with none on open water, the azimuth correction's 5 matched against 1
+dark, and the decibel window's sweep, of which "every width from 25 to 45 recovers all six hulls"
+is the part that was measured against a detector. The window's *floor* is unaffected — it is fixed
+by LS-SSDD's sea sitting at 0.2000, which is a property of the amplitude domain both detectors
+were fitted in, not of either one's weights.
+
+**Cost.** Between this commit and that download, the shipped config names a file that exists on no
+machine here, and `darkvessel run --config configs/kattegat-lane.yaml` fails until it does. That
+is deliberate. The alternative — a config that describes R1 in its comments and loads the baseline
+— is precisely the state this entry exists to end, and it is the state that survived two days
+because it looked fine.
+
+**What closes it.** Bring `/kaggle/working/checkpoints-r1/epoch-012.pt` down to
+`models/r1-epoch-012.pt`, run the chain, and record the scene-level table again beside the one
+from 2026-08-16. Until then the README says which of its numbers are the baseline's.

@@ -11,9 +11,20 @@ from pathlib import Path
 import pytest
 import yaml
 
+from darkvessel.cli import ladder_request_from
 from darkvessel.config import load_config
+from darkvessel.detect.checkpoints import Journal
+from darkvessel.detect.ladder import WINDOW, Rung, Verdict, judge
 
-LADDER = Path(__file__).resolve().parents[1] / "configs" / "ladder"
+CONFIGS = Path(__file__).resolve().parents[1] / "configs"
+LADDER = CONFIGS / "ladder"
+
+# The precision the swap of 2026-08-16 fixed the chain's operating point at: 0.941 on the
+# held-out split, from the weights of 2026-08-14 at a score threshold of 0.75. Rounded down to
+# two figures because it is a decision about what this chain is for — a detection it fails to
+# match becomes a dark vessel and possibly an accusation — and not a number to be matched to
+# the third decimal by whatever weights happen to be loaded.
+DECIDED_PRECISION = 0.94
 
 # The one key each shipped rung's own comment says it changes, dotted so it can be read off a
 # flattened config. Hand-written rather than derived, because the whole point is to catch a rung
@@ -186,3 +197,75 @@ def test_every_rung_resolves_to_the_cosine_schedule_r1_was_kept_for(rung: str) -
     on this ladder means at or above R1.
     """
     assert load_config(LADDER / rung)["schedule"].get("lr_schedule") == "cosine"
+
+
+def _the_ladder() -> tuple[dict[str, Rung], list[Verdict]]:
+    """The shipped ladder, read the way `darkvessel compare` reads it, and its verdicts.
+
+    Read rather than hard-coded: these two tests are about the chain agreeing with the ladder, and
+    a copy of the ladder's answer written into a test would agree with itself.
+    """
+    path = CONFIGS / "ladder.yaml"
+    config = load_config(path)
+
+    rungs = {}
+    for requested in ladder_request_from(config, path.parent):
+        journal = Journal(requested["metrics"])
+        rungs[requested["label"]] = Rung(
+            label=requested["label"],
+            changed=requested["changed"],
+            run=journal.run(),
+            epochs=journal.entries(),
+        )
+
+    window = int(config["ladder"].get("window", WINDOW))
+    return rungs, judge(list(rungs.values()), window=window)
+
+
+def test_the_chain_runs_the_weights_of_the_rung_the_ladder_kept() -> None:
+    """The chain's checkpoint is the last rung the rule kept, and nothing else.
+
+    This is the one thing in the ladder that measured nobody. Five rungs ran, R1 was kept, and
+    `configs/kattegat-lane.yaml` went on naming the weights of 2026-08-14 — F1 0.807 against
+    R1's 0.836 — for two days. Every test passed throughout, because a checkpoint path is not a
+    number anything compares: the ladder proves which weights are best and the chain is free to
+    load any others.
+
+    Written against the verdict rather than against the string "R1", so that the next rung to be
+    kept fails this test until the chain is repointed at it. That failure is the whole point.
+    """
+    rungs, verdicts = _the_ladder()
+    kept = [verdict for verdict in verdicts if verdict.kept][-1]
+
+    checkpoint = Path(load_config(CONFIGS / "kattegat-lane.yaml")["run"]["trained"]["checkpoint"])
+
+    assert checkpoint.name.startswith(f"{kept.label.lower()}-"), (
+        f"the ladder keeps {kept.label} and the chain loads {checkpoint.name}"
+    )
+
+
+def test_the_chains_score_threshold_holds_the_precision_the_swap_was_decided_on() -> None:
+    """A threshold does not survive a change of weights; the operating point is what does.
+
+    0.75 buys 0.941 precision from the detector of 2026-08-14 and 0.848 from R1, because cosine
+    decay moves the calibration of the scores — the same property the baseline's oscillation was
+    made of. Carrying the number across and calling it "unchanged" would have quietly moved this
+    chain from one false alarm in seventeen to one in seven, in a commit about a checkpoint path.
+
+    So the threshold is held to what it buys, at whichever value the kept rung reports it: a
+    precision no worse than the swap was decided on. The threshold must also be one the rung
+    actually scored, because a precision this test cannot read is a precision nobody has.
+    """
+    rungs, verdicts = _the_ladder()
+    kept = [verdict for verdict in verdicts if verdict.kept][-1]
+
+    trained = load_config(CONFIGS / "kattegat-lane.yaml")["run"]["trained"]
+    threshold = float(trained["score_threshold"])
+    reported = {
+        round(float(point["score"]), 3): point for point in rungs[kept.label].epochs[-1]["at"]
+    }
+
+    assert round(threshold, 3) in reported, (
+        f"the chain scores at {threshold}, which {kept.label} never reported: {sorted(reported)}"
+    )
+    assert reported[round(threshold, 3)]["precision"] >= DECIDED_PRECISION

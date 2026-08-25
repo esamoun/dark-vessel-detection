@@ -114,22 +114,37 @@ run:
   output: ../outputs/kattegat-lane-trained.gpkg
   detector: trained
   trained:
-    # Not in the repository — 330 MB of weights, and *.pt is ignored. Epoch 12 of the run of
-    # 2026-08-14, brought down from its Kaggle output; the run, the epoch and the file's
-    # sha256 are in docs/decisions.md. `keep: 2` had already deleted epoch 9, which scored
-    # slightly better.
-    checkpoint: ../models/epoch-012.pt
-    # What built the model these weights came from. Restated here because this checkpoint
-    # predates train.py recording its own build block; they are configs/train.yaml's, at seed
-    # 20260814. A checkpoint that does carry the block is checked against these and refused on
-    # a disagreement — anchors leave no trace in a state dict, so nothing else would catch it.
+    # Not in the repository — 330 MB of weights, and *.pt is ignored. Epoch 12 of **R1**, the one
+    # rung of the ladder in issue #11 that was kept, brought down from that run's Kaggle output
+    # at /kaggle/working/checkpoints-r1 and renamed on the way in, because the baseline's own
+    # epoch 12 is already in models/ under the name Kaggle gives them all.
+    #
+    # Until 2026-08-25 this named ../models/epoch-012.pt — the run of 2026-08-14, F1 0.807
+    # against R1's 0.836. The ladder ran, kept a rung, and nothing repointed the chain at it: a
+    # checkpoint path is measured by nothing, so the gap sat here for two days without a failing
+    # test or a wrong number anywhere to show it. `test_the_chain_runs_the_weights_of_the_rung
+    # _the_ladder_kept` now reads the verdict out of docs/runs/ and holds this line against it.
+    checkpoint: ../models/r1-epoch-012.pt
+    # What built the model these weights came from. R1 differs from configs/train.yaml by one
+    # line — the learning rate schedule — and a schedule leaves no trace in a build block, so
+    # these are the values the 2026-08-14 checkpoint carried too, at seed 20260814. R1's
+    # checkpoints do carry their own block, and `TrainedDetector` refuses a disagreement rather
+    # than preferring one side of it; against the baseline, which predates train.py recording
+    # one, these were the only statement of them.
     tile_px: 800
     anchor_sizes: [[32], [64], [128], [256], [512]]
-    # Precision 0.941 against recall 0.706 on the held-out LS-SSDD split. Every detection this
-    # chain does not match against AIS becomes a dark vessel, which is a claim someone may be
-    # sent out on: a miss costs a ship nobody looked at, a false alarm costs an inspection and
-    # an accusation. The training run reports the whole table so this can be moved on numbers.
-    score_threshold: 0.75
+    # Precision 0.950 against recall 0.713 on the held-out LS-SSDD split — R1 at epoch 12, from
+    # docs/runs/r1-cosine.json. Every detection this chain does not match against AIS becomes a
+    # dark vessel, which is a claim someone may be sent out on: a miss costs a ship nobody looked
+    # at, a false alarm costs an inspection and an accusation.
+    #
+    # The number moved from 0.75 to 0.90 with the weights so that the operating point would not.
+    # A threshold is not portable across a rung that changes the schedule: cosine decay moves the
+    # calibration of the scores, which is the very thing the 2026-08-14 run's oscillation was
+    # made of, and 0.75 buys 0.941 precision from those weights and 0.848 from these. Held at the
+    # precision the swap of 2026-08-16 was decided on, R1 finds 15 more ships (1695 against 1680)
+    # and raises 16 fewer false alarms (90 against 106). See docs/decisions.md, 2026-08-25.
+    score_threshold: 0.90
     # The window between the decibels this scene is in and the amplitude the model was fitted
     # on. The floor is measured: LS-SSDD's offshore held-out sea sits at 0.2000, and putting
     # this scene's sea (-21.84 dB) there fixes it once the width is known. The width could not
