@@ -77,7 +77,7 @@ repository. Nothing copies one to the other; that is this table.
 | 2 ✅ | `configs/ladder/r1-cosine.yaml` | `/kaggle/working/checkpoints-r1` | `/kaggle/working/metrics-r1-cosine.json` | `docs/runs/r1-cosine.json` |
 | 3 ❌ | `configs/ladder/r2-anchors.yaml` | `/kaggle/working/checkpoints-r2` | `/kaggle/working/metrics-r2-anchors.json` | `docs/runs/r2-anchors.json` |
 | 4 ❌ | `configs/ladder/r3-stem.yaml` | `/kaggle/working/checkpoints-r3` | `/kaggle/working/metrics-r3-stem.json` | `docs/runs/r3-stem.json` |
-| 5 ← next | `configs/ladder/r4-sampler.yaml` | `/kaggle/working/checkpoints-r4` | `/kaggle/working/metrics-r4-sampler.json` | `docs/runs/r4-sampler.json` |
+| 5 ❌ | `configs/ladder/r4-sampler.yaml` | `/kaggle/working/checkpoints-r4` | `/kaggle/working/metrics-r4-sampler.json` | `docs/runs/r4-sampler.json` |
 
 **Sessions 1 and 2 both ran on 2026-08-23.** R0 scored F1 **0.807** with a band of **0.026**,
 putting R1's bar at 0.833. R1 scored **0.836** — kept, by 0.0021 — and collapsed the band to
@@ -91,6 +91,12 @@ R1 being kept, `r2-anchors.yaml` keeps `extends: r1-cosine.yaml` — no edit. Th
 now held by a test rather than by this sentence: `test_config.py` asserts every rung resolves to
 `lr_schedule: cosine`, so a rung repointed at the baseline fails on a laptop rather than after a
 GPU evening.
+
+**Session 5 ran on 2026-08-23. R4 was rejected and the ladder is complete.** F1 **0.827**, so
+−0.0087 against R1 — *smaller than R1's noise band of 0.0099*, which makes it a draw rather than a
+harm, unlike R2's −0.048. All five runs are in `docs/runs/`; one change of five was kept, and it
+was the one that is not among the ticket's three adaptations. What remains is the section below,
+"When the five are in" — no GPU time is left to spend.
 
 **Session 4 ran on 2026-08-23 and R3 was rejected too.** F1 **0.83556** against R1's
 **0.83557** — a draw to five decimal places, and the near-null the folded stem's own design
