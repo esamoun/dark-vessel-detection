@@ -5,20 +5,27 @@
 [![CI](https://github.com/esamoun/dark-vessel-detection/actions/workflows/ci.yml/badge.svg)](https://github.com/esamoun/dark-vessel-detection/actions/workflows/ci.yml)
 
 > **Status — work in progress.** The chain runs end to end today on real data at both ends: a real
-> Sentinel-1 scene, and a real day of the Danish Maritime Authority's AIS archive, with a
-> threshold on bright pixels standing in for the detector. Three commands in — the scene, the
-> declarations, the chain — and a georeferenced GeoPackage out that opens in QGIS where it should.
-> It tiles a scene larger than one tile and reports a target sitting on a tile boundary exactly
-> once. The study area is now measured rather than picked, and sits on the Kattegat shipping lane:
-> the latest run has six commercial ships in one frame, four of them trailing a wake. The detector
-> is still the placeholder *in the chain*, and the run surfaced the next real problem — a ship
-> making twelve knots is imaged half a kilometre from where it is. The detector itself is now
-> trained: twelve epochs on a free-tier GPU, interrupted after the first and resumed, finding
-> 1680 of 2378 ships on a held-out split of 3000 sub-images with 106 false alarms. It has not
-> been swapped into the chain yet, and the run oscillated rather than converged — both are
-> written down. See [Approach](#approach) for what is real and
+> Sentinel-1 scene, and a real day of the Danish Maritime Authority's AIS archive. Three commands
+> in — the scene, the declarations, the chain — and a georeferenced GeoPackage out that opens in
+> QGIS where it should. It tiles a scene larger than one tile and reports a target sitting on a
+> tile boundary exactly once. The study area is now measured rather than picked, and sits on the
+> Kattegat shipping lane: the latest run has six commercial ships in one frame, four of them
+> trailing a wake. The trained detector took the bright-pixel stand-in's place in the chain on
+> 2026-08-16 — six detections for six hulls and none on open water, where the threshold reported
+> the same six sixteen times — and the problem that run surfaced is fixed: a ship making twelve
+> knots is imaged half a kilometre from where it declared itself, so the declaration is moved to
+> where the radar would have drawn it before anything is matched, which took this scene from two
+> matched vessels to five. The detector was then measured rather than assumed — five runs one line
+> apart, of which one was kept, and the ticket's own three domain adaptations refuted at that
+> resolution rather than left unproven.
+>
+> What is not done: the chain has run on one scene; offshore structures are not yet told apart
+> from vessels, so a dark candidate here is not yet a finding about the sea; there is no evaluation
+> report; and the kept rung's weights, which the config now names, have not themselves been run on
+> the scene — every scene-level number below is the 2026-08-14 detector's. See
+> [Approach](#approach) for what is real and
 > what is not, [what the first run on the lane showed](#what-the-first-run-on-the-lane-showed--2026-08-14),
-> and [Training the detector](#training-the-detector).
+> [Training the detector](#training-the-detector) and [the ladder](#the-ladder--2026-08-23).
 
 ---
 
@@ -39,20 +46,23 @@ The pipeline is built in four levels, each one shippable on its own.
 
 | Level | What it does | Status |
 | --- | --- | --- |
-| **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained: 0.94 precision at 0.71 recall on a held-out split of 3000 scenes, with the run's own instability documented |
-| **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene; awaiting the trained detector |
-| **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | runs on real Danish archives over a measured study area; the tolerance does not yet account for the azimuth shift of a moving ship |
+| **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.71 recall over a held-out split of 3000 sub-images, and the four changes that did not clear the noise are written up rather than removed |
+| **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene with the trained detector in it, since 2026-08-16 |
+| **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching; offshore structures are not yet separated from vessels |
 | **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | planned |
 
-The chain that carries these exists first, deliberately, with a deterministic stand-in where the
-detector will go. What runs today: scene in, detector injected at the pipeline boundary, the
+The chain that carries these was built first, deliberately, with a deterministic stand-in where
+the detector would go; the stand-in is still there, behind the same parameter, and is what the
+tests and the synthetic run use. What runs today: scene in, detector injected at the pipeline
+boundary, the
 scene cut into overlapping tiles and the targets they see reconciled into one list, pixel
 coordinates converted to ground coordinates, each declared vessel interpolated along its track to
 the moment of acquisition and the detections matched against those positions within a stated
 tolerance, GeoPackage out. Both ends of that are real now: a Sentinel-1 acquisition fetched
 clipped from Earth Engine, and a day of the Danish AIS archive streamed, filtered and cleaned
-with every removal counted. What is still a placeholder is the detector — a threshold on bright
-pixels — so dark results are not yet findings about the sea.
+with every removal counted, and the detector between them is the trained one. What keeps a dark
+result from being a finding about the sea is no longer the detector: it is that nothing yet tells
+an offshore structure from a vessel, and that this has run on one scene.
 
 A vessel moves between its last AIS report and the instant the radar images it: at 12 knots, some
 370 m a minute, which is more than the match tolerance. Comparing a detection against a report
@@ -531,6 +541,14 @@ darkvessel compare --config configs/ladder.yaml
 
 The trained model now satisfies the same `detector` parameter the threshold stand-in satisfies,
 and no other stage changed. That is what the seam was built for, and this is where it paid.
+
+> **Which weights, and which numbers.** Everything in this section was run with the detector of
+> 2026-08-14 at a score threshold of 0.75. Since 2026-08-25 the config names R1's weights instead
+> — the one rung of [the ladder](#the-ladder--2026-08-23) that was kept — at a threshold of 0.90,
+> which is where R1 gives the precision this swap was decided on. Those weights have not been run
+> on this scene: they are 330 MB on a Kaggle output and `*.pt` is ignored here, so the chain is
+> repointed and the scene-level table below is unrepeated. `docs/decisions.md`, 2026-08-25, says
+> what that leaves unverified and what closes it.
 
 ```bash
 darkvessel run --config configs/kattegat-lane.yaml
