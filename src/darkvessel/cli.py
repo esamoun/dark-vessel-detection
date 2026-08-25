@@ -26,10 +26,13 @@ from darkvessel.data.synthetic import write_synthetic_inputs
 from darkvessel.data.tiling import Tiling
 from darkvessel.detect.amplitude import DecibelStretch
 from darkvessel.detect.checkpoints import Checkpoints, Journal
+from darkvessel.detect.curve import curve, svg
+from darkvessel.detect.curve import table as curve_table
 from darkvessel.detect.dataset import Layout, Subset, catalogue, split_by_scene
 from darkvessel.detect.detector import Detector
 from darkvessel.detect.geo import write_detections
-from darkvessel.detect.ladder import WINDOW, Rung, judge, table
+from darkvessel.detect.ladder import WINDOW, Rung, judge
+from darkvessel.detect.ladder import table as ladder_table
 from darkvessel.detect.metrics import Reporting
 from darkvessel.detect.threshold import BrightPixelDetector
 from darkvessel.fusion.azimuth import Geometry
@@ -75,6 +78,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     compare_command.add_argument("--config", type=Path, required=True)
 
+    evaluate_command = commands.add_parser(
+        "evaluate", help="the precision-recall curve of one rung, banded by its last epochs"
+    )
+    evaluate_command.add_argument("--config", type=Path, required=True)
+    # Defaults to the rung the ladder kept, which is the one the chain loads. Naming a rejected
+    # rung is allowed and is how the curves are put side by side.
+    evaluate_command.add_argument("--rung", default=None)
+    evaluate_command.add_argument("--svg", type=Path, default=None)
+
     args = parser.parse_args(argv)
 
     if args.command == "synthesise":
@@ -89,6 +101,8 @@ def main(argv: list[str] | None = None) -> int:
         return _train(args.config)
     if args.command == "compare":
         return _compare(args.config)
+    if args.command == "evaluate":
+        return _evaluate(args.config, args.rung, args.svg)
     return _run(args.config)
 
 
@@ -445,26 +459,21 @@ def ladder_request_from(config: dict[str, Any], relative_to: Path) -> list[dict[
     ]
 
 
-def _compare(config_path: Path) -> int:
-    """Read the ladder and say which rungs stand.
+def _read_ladder(config: dict[str, Any], relative_to: Path) -> list[Rung]:
+    """The rungs a ladder config names, as far as they have actually been run.
 
-    A rung whose metrics file is not there has not been run yet, which is the ordinary state of
-    this file for most of the ticket. The comparison reports it as pending and stops there rather
-    than skipping it — a ladder read across a gap would measure a change against the wrong
-    configuration and would not look any different.
+    A rung whose metrics file is not there yet has not been run, which is the ordinary state of
+    this file for most of a ticket. Reading stops there rather than skipping it: a ladder read
+    across a gap would measure a change against the wrong configuration and would not look any
+    different.
 
-    A rung whose file exists, names its run and has scored no epoch is the same kind of pending:
+    A rung whose file exists, names its run and has scored no epoch is the same kind of pending —
     a session killed between `describe` writing the run block and the first epoch landing leaves
-    exactly that file, and `judge` has no epoch to read a statistic off — `best_f1(epochs[-1])`
-    on an empty list is an `IndexError`, not a verdict. Caught here rather than in `judge`,
-    because "not run far enough yet" is reported the same way "not run at all" already is, one
-    line above.
+    exactly that file, and `best_f1(epochs[-1])` on an empty list is an `IndexError` rather than
+    a verdict.
     """
-    config = load_config(config_path)
-    window = int(config["ladder"].get("window", WINDOW))
-
-    rungs = []
-    for requested in ladder_request_from(config, config_path.parent):
+    rungs: list[Rung] = []
+    for requested in ladder_request_from(config, relative_to):
         if not requested["metrics"].exists():
             print(f"{requested['label']}: not run yet ({requested['metrics']})")
             break
@@ -484,11 +493,58 @@ def _compare(config_path: Path) -> int:
             )
         )
 
+    return rungs
+
+
+def _compare(config_path: Path) -> int:
+    """Read the ladder and say which rungs stand."""
+    config = load_config(config_path)
+    window = int(config["ladder"].get("window", WINDOW))
+
+    rungs = _read_ladder(config, config_path.parent)
     if not rungs:
         print("no rung of this ladder has been run yet")
         return 0
 
-    print(table(judge(rungs, window=window)))
+    print(ladder_table(judge(rungs, window=window)))
+    return 0
+
+
+def _evaluate(config_path: Path, label: str | None, svg_path: Path | None) -> int:
+    """Draw one rung's precision-recall curve, banded by the epochs around it.
+
+    Defaults to the rung the ladder kept rather than to the last rung run, because that is the
+    one whose weights the chain loads — a report of the last rung would describe, on this ladder,
+    a change that was rejected.
+    """
+    config = load_config(config_path)
+    window = int(config["ladder"].get("window", WINDOW))
+
+    rungs = _read_ladder(config, config_path.parent)
+    if not rungs:
+        print("no rung of this ladder has been run yet")
+        return 0
+
+    by_label = {rung.label: rung for rung in rungs}
+    if label is None:
+        kept = [verdict for verdict in judge(rungs, window=window) if verdict.kept]
+        chosen = by_label[kept[-1].label]
+    elif label in by_label:
+        chosen = by_label[label]
+    else:
+        print(f"no rung called {label!r} has been run; this ladder has {sorted(by_label)}")
+        return 1
+
+    points = curve(chosen.epochs, window=window)
+    print(f"{chosen.label} — {chosen.changed}")
+    print(f"epoch {chosen.epochs[-1]['epoch']} of {len(chosen.epochs)}, banded over {window}")
+    print(curve_table(points))
+
+    if svg_path is not None:
+        svg_path.parent.mkdir(parents=True, exist_ok=True)
+        svg_path.write_text(svg(points) + "\n")
+        print(f"wrote {svg_path}")
+
     return 0
 
 

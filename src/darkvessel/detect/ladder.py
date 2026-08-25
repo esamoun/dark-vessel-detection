@@ -17,13 +17,14 @@ way, which would produce a published claim that is false, and that belongs on th
 seam a laptop tests in a second.
 """
 
-import math
 from dataclasses import dataclass
 from typing import Any
 
-# How many of a rung's last epochs the noise band is measured over. Four is what a twelve-epoch
-# schedule affords while still being past the point where a decaying learning rate has settled.
-WINDOW = 4
+# How many of a rung's last epochs the noise band is measured over, and the F1 the whole rule
+# turns on. Both come from `curve.py`, which draws the same measurement for a reader: a band the
+# figure shows and a band the rule applies that were computed differently would be two numbers
+# under one name, and the disagreement would surface as a published claim rather than a failure.
+from darkvessel.detect.curve import WINDOW, f1
 
 # What two rungs must agree on before their numbers may be put beside one another.
 SAME_REPORTING = ("tolerance_m", "resolution_m", "thresholds")
@@ -60,7 +61,7 @@ def best_f1(entry: dict[str, Any]) -> float:
     recall at each threshold and no F1 — and one derivation in one place is the only way the
     number in the README and the number the rule is applied to are the same number.
     """
-    return max(_f1(point["precision"], point["recall"]) for point in entry["at"])
+    return max(f1(point["precision"], point["recall"]) for point in entry["at"])
 
 
 def band(epochs: list[dict[str, Any]], window: int = WINDOW) -> float:
@@ -174,20 +175,6 @@ def _check_comparable(earlier: Rung, later: Rung) -> None:
                 f"{earlier.label} and {later.label} were scored over different splits: "
                 f"{field} {here!r} against {there!r}"
             )
-
-
-def _f1(precision: float | None, recall: float | None) -> float:
-    """Zero where a threshold reported nothing.
-
-    `Counts.precision` is NaN when nothing was reported, on the argument that a run which
-    returned nothing was neither right nor wrong. That survives into JSON, and a NaN loose in a
-    `max` would make an empty detector the best rung on the ladder.
-    """
-    if precision is None or recall is None:
-        return 0.0
-    if math.isnan(precision) or math.isnan(recall) or precision + recall == 0.0:
-        return 0.0
-    return 2 * precision * recall / (precision + recall)
 
 
 def _maybe(value: float | None, sign: bool = False) -> str:
