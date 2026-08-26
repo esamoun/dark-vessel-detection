@@ -1,0 +1,90 @@
+# The embedding level, over the same water as `kattegat-lane.yaml` and over many more days of it.
+# Paths are relative to this file. Everything not stated here — the area, the imagery, the tiling,
+# the detector and its window between decibels and amplitude — is that file's, unchanged.
+#
+# Run it in four steps, in this order:
+#   darkvessel scenes   --config configs/kattegat-embeddings.yaml   # needs Earth Engine
+#   darkvessel crops    --config configs/kattegat-embeddings.yaml   # needs the detector extra
+#   darkvessel embed    --config configs/kattegat-embeddings.yaml   # minutes of laptop CPU
+#   darkvessel retrieve --config configs/kattegat-embeddings.yaml   # the check, written down
+extends: kattegat-lane.yaml
+
+# What the representation is fitted on. One acquisition of this box holds six vessels, which is
+# not an archive and is not enough to learn a representation of anything; ten weeks of the same
+# box is. The question this level answers — which detections resemble which — is a question
+# across the record rather than inside one scene, and the archive is what makes it one.
+archive:
+  # Every Sentinel-1 acquisition covering the rectangle, ascending and descending both. A vessel
+  # looks different from the two passes, which is a property of the object the representation
+  # should have to account for rather than one it should be protected from.
+  window:
+    start: 2026-06-01T00:00:00+00:00
+    end: 2026-08-10T00:00:00+00:00
+  scenes: ../data/archive/kattegat
+  crops: ../data/archive/kattegat-crops.npz
+  # Not the 0.90 the chain publishes at. That number was chosen for precision, because every
+  # unmatched detection the chain reports is a claim someone may be sent out on. Nothing here is
+  # published: this is what a representation is fitted on, and one fitted only on the objects the
+  # detector was already certain about has never been shown the ones it was not — which are
+  # exactly the objects this level exists to make separable. See docs/decisions.md.
+  score_threshold: 0.05
+
+embedding:
+  # The optional stage of the chain. Enabled here and nowhere else: `configs/pipeline.yaml` and
+  # `configs/kattegat-lane.yaml` run the chain without it, and their output is unchanged by the
+  # existence of this file.
+  enabled: true
+  # 64 px at 10 m is 640 m of sea around the detection — room for the largest hull in this
+  # archive, 274 m, with its wake and its neighbours. Larger and a crop is mostly water; smaller
+  # and a container ship does not fit inside one.
+  crop_px: 64
+  # Cut around the crop and never shown to the encoder unaugmented. It is the room a view has to
+  # be translated into: rolling a crop around its own edge would put one side of a vessel against
+  # the other, and reaching past what was stored would invent pixels.
+  margin_px: 8
+  # How many numbers describe a detection in the layer. Sixteen is a wide attribute table and a
+  # narrow representation, which is the right way round for an archive of a few hundred objects:
+  # a representation with more dimensions than the archive has crops describes the crops rather
+  # than what is in them.
+  dim: 16
+  # The equivalent number of looks a view is perturbed at, measured on this archive's own scenes
+  # rather than quoted from the product specification — `darkvessel crops` prints the figure for
+  # each scene it cuts. Across the fifty acquisitions it runs from 0.01 to 5.14 against a nominal
+  # 4.4, and the spread is the sea rather than the processor: a calm morning backscatters at
+  # -37 dB, close enough to the noise floor that its variation in decibels is five times a windy
+  # day's. The median is what ships, because a view perturbed at the calmest scene's figure would
+  # be perturbed harder than any real second look at this water. Empty would mean views that
+  # change no pixel value at all. See docs/decisions.md.
+  speckle_looks: 4.1
+  encoder: ../models/embedding-kattegat.pt
+  checkpoints: ../data/archive/embedding-checkpoints
+  keep: 2
+  metrics: ../docs/runs/embedding-kattegat.json
+  schedule:
+    # Minutes of laptop CPU on a few hundred crops of 64 px, which is what an archive this size
+    # deserves. The detector needed a rented GPU and evenings; this does not, and saying so is
+    # part of the honest accounting of what each half of this project costs.
+    epochs: 400
+    # Every crop in the batch that is not the pair is a negative, so the batch size is how many
+    # things the loss has to tell an object apart from at once. Larger is better and the archive
+    # is the ceiling.
+    batch_size: 32
+    learning_rate: 0.001
+    # How sharply the loss distinguishes the pair from the rest. Low, because a small archive
+    # needs the hardest negatives to dominate the gradient.
+    temperature: 0.1
+    # One number, and the run is named by it: the encoder's initialisation, the order the crops
+    # arrive in and every view drawn of them are derived from it. The failure of 2026-08-14, not
+    # repeated here.
+    seed: 20260826
+  retrieval:
+    queries: 6
+    neighbours: 4
+    sheet: ../docs/figures/retrieval-kattegat.svg
+    record: ../docs/runs/retrieval-kattegat.json
+
+run:
+  # The same scene, the same declarations and the same detector as `kattegat-lane.yaml`; what
+  # differs is that the layer carries sixteen more columns. Written to its own file so the two
+  # can be put side by side and the embedding stage shown to change nothing else.
+  output: ../outputs/kattegat-lane-embedded.gpkg
