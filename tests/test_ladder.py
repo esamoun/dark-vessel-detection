@@ -405,3 +405,54 @@ def test_no_rung_of_the_shipped_ladder_stands_on_one_the_rule_rejected() -> None
             f"{path.name} extends {base}, which the rule rejected — the ladder is greedy and a "
             f"rung may only stand on one that was kept"
         )
+
+
+def test_evaluate_draws_a_journal_that_no_ladder_judges(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The run whose weights the chain loads is not always a rung.
+
+    R1 was executed twice — the ladder judged the first, the chain loads the second — so the
+    command has to be able to draw a journal named outright, or the report of the shipped
+    detector would have to be assembled by hand from a file no command reads.
+    """
+    metrics = tmp_path / "metrics-r1-cosine.json"
+    metrics.write_text(
+        json.dumps(
+            {
+                "run": {"reporting": REPORTING},
+                "epochs": [
+                    {
+                        "epoch": 1,
+                        "held_out_tiles": 3000,
+                        "held_out_ships": 2378,
+                        "at": [
+                            {
+                                "score": 0.5,
+                                "precision": 0.9,
+                                "recall": 0.8,
+                                "found": 1,
+                                "false": 2,
+                                "missed": 3,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    figure = tmp_path / "curve.svg"
+
+    assert main(["evaluate", "--metrics", str(metrics), "--svg", str(figure)]) == 0
+
+    printed = capsys.readouterr().out
+    assert "metrics-r1-cosine" in printed  # the journal names itself, having no rung label
+    assert "0.847" in printed  # the F1 of 0.9 and 0.8, derived rather than transcribed
+    assert figure.read_text().startswith("<svg")
+
+
+def test_evaluate_refuses_to_guess_which_run_to_draw() -> None:
+    """Neither a ladder nor a journal is not a default worth having: the two answers differ, and
+    a command that picked one would be picking which detector gets reported."""
+    with pytest.raises(SystemExit):
+        main(["evaluate"])

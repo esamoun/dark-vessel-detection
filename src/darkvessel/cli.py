@@ -79,11 +79,17 @@ def main(argv: list[str] | None = None) -> int:
     compare_command.add_argument("--config", type=Path, required=True)
 
     evaluate_command = commands.add_parser(
-        "evaluate", help="the precision-recall curve of one rung, banded by its last epochs"
+        "evaluate", help="the precision-recall curve of one run, banded by its last epochs"
     )
-    evaluate_command.add_argument("--config", type=Path, required=True)
+    # Either a ladder to read a rung out of, or a journal named outright. The second exists
+    # because the run whose weights the chain loads is not always a rung of a ladder: R1 was
+    # executed twice, and the execution that produced the shipped checkpoint is a journal in
+    # docs/runs/ that no ladder judges.
+    source = evaluate_command.add_mutually_exclusive_group(required=True)
+    source.add_argument("--config", type=Path)
+    source.add_argument("--metrics", type=Path)
     # Defaults to the rung the ladder kept, which is the one the chain loads. Naming a rejected
-    # rung is allowed and is how the curves are put side by side.
+    # rung is allowed and is how the curves are put side by side. Ignored with --metrics.
     evaluate_command.add_argument("--rung", default=None)
     evaluate_command.add_argument("--svg", type=Path, default=None)
 
@@ -102,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "compare":
         return _compare(args.config)
     if args.command == "evaluate":
-        return _evaluate(args.config, args.rung, args.svg)
+        return _evaluate(args.config, args.metrics, args.rung, args.svg)
     return _run(args.config)
 
 
@@ -510,13 +516,29 @@ def _compare(config_path: Path) -> int:
     return 0
 
 
-def _evaluate(config_path: Path, label: str | None, svg_path: Path | None) -> int:
-    """Draw one rung's precision-recall curve, banded by the epochs around it.
+def _evaluate(
+    config_path: Path | None, metrics_path: Path | None, label: str | None, svg_path: Path | None
+) -> int:
+    """Draw one run's precision-recall curve, banded by the epochs around it.
 
-    Defaults to the rung the ladder kept rather than to the last rung run, because that is the
-    one whose weights the chain loads — a report of the last rung would describe, on this ladder,
-    a change that was rejected.
+    Given a ladder, defaults to the rung it kept rather than to the last rung run, because that is
+    the change that stands — a report of the last rung would describe, on this ladder, a change
+    that was rejected. Given a journal, draws that journal, which is how a run nobody judged gets
+    reported.
     """
+    if metrics_path is not None:
+        journal = Journal(metrics_path)
+        entries = journal.entries()
+        if not entries:
+            print(f"no epoch scored yet ({metrics_path})")
+            return 0
+        return _draw(
+            Rung(label=metrics_path.stem, changed="", run=journal.run(), epochs=entries),
+            WINDOW,
+            svg_path,
+        )
+
+    assert config_path is not None  # argparse requires one of the two
     config = load_config(config_path)
     window = int(config["ladder"].get("window", WINDOW))
 
@@ -535,8 +557,13 @@ def _evaluate(config_path: Path, label: str | None, svg_path: Path | None) -> in
         print(f"no rung called {label!r} has been run; this ladder has {sorted(by_label)}")
         return 1
 
+    return _draw(chosen, window, svg_path)
+
+
+def _draw(chosen: Rung, window: int, svg_path: Path | None) -> int:
+    """One run's curve, printed and optionally drawn."""
     points = curve(chosen.epochs, window=window)
-    print(f"{chosen.label} — {chosen.changed}")
+    print(f"{chosen.label}{f' — {chosen.changed}' if chosen.changed else ''}")
     print(f"epoch {chosen.epochs[-1]['epoch']} of {len(chosen.epochs)}, banded over {window}")
     print(curve_table(points))
 
