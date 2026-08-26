@@ -136,6 +136,55 @@ def export_scene(
     return scene
 
 
+def export_archive(
+    *,
+    catalogue: Catalogue,
+    area: Bounds,
+    window: DateWindow,
+    polarisations: Sequence[str],
+    crs: str,
+    resolution_m: float,
+    directory: Path,
+) -> list[SceneRef]:
+    """Fetch every acquisition covering `area` in `window`, one file each, and return them.
+
+    `export_scene` takes the earliest acquisition of a window because a run is defined over one
+    scene. An archive is the other question: the embedding level asks which detections across the
+    record resemble one another, and one 17 km box holds a handful of vessels at any one instant,
+    so what makes that question mean anything is many acquisitions of the same water.
+
+    Resumable, and that is not a convenience. Thirty scenes is thirty downloads over a connection
+    that will drop at least once, and a session that has to start again from the first is a
+    session nobody runs to the end. A scene already on the disk is left alone — by name, which is
+    the acquisition's own identity, so "already fetched" cannot mean a different scene.
+
+    Ordered by acquisition, so the directory listing is the record in the order it was acquired
+    and two runs of this command produce the same archive in the same order.
+    """
+    found = sorted(
+        catalogue.search(area, window, tuple(polarisations)),
+        key=lambda scene: (scene.acquired_at, scene.id),
+    )
+    if not found:
+        raise ValueError(
+            f"no {COLLECTION} acquisition covers {area.as_rectangle()} between "
+            f"{window.start.isoformat()} and {window.end.isoformat()} "
+            f"with polarisations {', '.join(polarisations)}; widen the window or the area"
+        )
+
+    _refuse_a_request_too_large_to_answer(area, tuple(polarisations), crs, resolution_m)
+    directory.mkdir(parents=True, exist_ok=True)
+
+    for scene in found:
+        path = directory / f"{scene.id.rsplit('/', 1)[-1]}.tif"
+        if path.exists():
+            continue
+        path.write_bytes(catalogue.geotiff(scene, area, tuple(polarisations), crs, resolution_m))
+        _record(scene, path)
+
+    return found
+
+
 def _record(scene: SceneRef, path: Path) -> None:
     """Write into the file what the catalogue knew and the pixels do not carry.
 
