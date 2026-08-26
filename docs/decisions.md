@@ -1588,3 +1588,181 @@ vessel is now matched at 186 m against a tolerance of 200 m, where the old detec
 it did. The decibel window was swept under the old weights at 0.75 and has not been re-swept; it
 recovers all six hulls under these, which is what it was chosen to do, but the sweep itself
 belongs to the other detector.
+
+---
+
+## 2026-08-26 — The embedding stage is optional, and the chain has to be unchanged by it
+
+**Decision.** `pipeline.run` takes an `embedder` alongside the detector, defaulting to None. With
+one, each detection's crop is described and the vector travels in the layer, one column per
+dimension. With none, nothing is cut, no framework is imported, and what comes out is what came
+out before this level was written.
+
+**Why it is a parameter and not a stage.** The chain answers one question — which of these
+detections declared themselves — and the seam exists so that the thing which answers it can be
+substituted. A representation of what was found is a second question asked of the same
+detections, and it is not always asked: `configs/pipeline.yaml` runs on a synthetic scene with a
+threshold detector and has no encoder to load, and every config written before today has none
+either. Making it a parameter with a default is what lets both be true at once — the optional
+stage is injected exactly the way the detector is, and absence is spelled `None` rather than
+being a branch inside the pipeline.
+
+**Why the vector goes in the layer.** Sixteen columns is a wide attribute table and a cheap one.
+The alternative is a file of vectors beside the GeoPackage, joined by a row order nobody states —
+and a join that is a convention rather than a key is a join that silently stops corresponding to
+anything the first time a stage sorts. `embedder.attach` refuses a length mismatch for the same
+reason: attached by position, a mismatch would put every vector on the wrong vessel and still
+write a layer that opens in QGIS.
+
+**Verified.** `test_the_chain_runs_end_to_end_with_the_embedding_stage_disabled` and
+`test_the_embedding_stage_adds_columns_and_changes_nothing_else` in `tests/test_pipeline.py`: the
+second asserts the frame without the stage is exactly the frame with it, restricted to the
+columns it had. `test_a_detection_is_described_by_the_pixels_around_it_and_not_by_its_neighbour`
+is the one that would catch a crop order drifting from a row order — two targets, one of them
+beside a bright patch no detection stands on, so a swap changes which row is the crowded one.
+
+---
+
+## 2026-08-26 — The archive is fifty acquisitions of one rectangle, cut at its own operating point
+
+**Decision.** The representation is fitted on 348 crops from 49 acquisitions of the Kattegat box —
+fifty were fetched and one held no detection at all —
+between 2026-06-01 and 2026-08-10, ascending and descending both, cut from detections the trained
+detector returns at a score of 0.05 rather than the 0.90 the chain publishes at.
+
+**Why many acquisitions.** One acquisition of this rectangle holds six vessels. Six objects is not
+an archive and a representation fitted on it has learned six objects; the question this level
+exists to answer — which detections resemble which — is a question across the record rather than
+inside one scene. Ten weeks of the same water is what makes it one, and it costs a gigabyte of
+GeoTIFF and seven minutes of downloading, both of which are cheap against what they buy.
+
+**Why a lower threshold.** 0.90 was chosen on 2026-08-25 for precision, because every unmatched
+detection the chain publishes is a claim someone may be sent out on. Nothing here is published.
+This is what a representation is fitted on, and one fitted only on the objects the detector was
+already certain about has never been shown the ones it was not — which are exactly the objects
+this level exists to make separable after the fact. It is the same detector at a different
+operating point, both stated in one config file, each where it belongs; `_detector_from` takes the
+override rather than a second detector being built.
+
+**Consequence, accepted.** Two thirds of the crops have another detection within 200 m of them in
+their own acquisition, because a detector at 0.05 cuts a large hull more than once. That is not
+noise to be filtered — it is the second cut of a real ship — and what it required was a change to
+how every check at this level counts, recorded below.
+
+---
+
+## 2026-08-26 — Speckle is the augmentation radar allows, and the looks are measured per scene
+
+**Decision.** A contrastive view is one of the eight symmetries of the square, a translation of up
+to eight pixels, and a multiplicative perturbation drawn from a Gamma distribution of 4.1 looks —
+the median of what `views.looks_of` measures across the archive's own scenes. Nothing else.
+
+**Why.** There are no labels at this level, so the augmentations *are* the supervision: what two
+views of one crop have in common is the whole of what the representation is told to keep. The
+spec's rule for the detector applies here with more force — colour and contrast jitter have no
+physical meaning on a backscatter coefficient, and a network told to ignore a shift in decibels is
+told to ignore the one measurement the image carries. Speckle is the exception the physics itself
+provides: a multi-looked intensity image carries a fluctuation that is Gamma distributed with
+shape equal to the number of looks, so a second look at the same sea is that sea times a draw from
+that distribution. `dataset.py` said of it in August that "it needs a speckle model to be argued
+for, and that belongs with the rest of the work on what this data actually is". This is that work.
+
+**Why measured rather than quoted.** The nominal figure for an IW GRDH product is 4.4. Across
+fifty acquisitions of one rectangle the measured figure runs from 0.01 to 5.14, and the spread is
+the sea rather than the processor: a calm morning backscatters at -37 dB, close enough to the
+noise floor that its relative variation in decibels is five times a windy day's. The estimator
+measures the variability of this water, which is what an augmentation should be scaled to. The
+median ships, because a view perturbed at the calmest scene's figure would be perturbed harder
+than any real second look at this sea, and the mean would be dragged down by the same handful of
+scenes.
+
+**Verified.** `test_the_number_of_looks_is_recovered_from_a_sea_that_has_that_many` builds a
+synthetic sea at 4.4 looks and requires the estimator to return it within five per cent — which is
+what forced the sigma clip: cutting the brightest tenth by percentile, the obvious way to exclude
+ships, removes most of what speckle is and reports 6.6.
+
+---
+
+## 2026-08-26 — Two cuts of one hull are one object, and every check at this level says so
+
+**Decision.** `Archive.co_located` marks two crops as the same object when they come from one
+acquisition and stand within the fusion's own match tolerance of each other, and both checks at
+this level — the twin recall recorded every epoch, and the nearest-neighbour share reported by
+`darkvessel retrieve` — count a hit on any of an object's cuts as a hit. The chance level moves
+with the leniency: `chance_of` computes it from the same equivalence rather than assuming `1 / n`.
+
+**Why.** A detector run at 0.05 cuts a large ship more than once. In this archive two thirds of
+the crops have a neighbour within 200 m in their own acquisition, the median distance between
+such a pair is 31 m, and there are 1.78 cuts per object. A ranking that called the second cut of a
+vessel a wrong answer when the first was asked for would be measuring how duplicated the archive
+is, and it would get worse as the detector got better at finding big ships. The same encoder
+scores 0.316 under the strict rule and 0.483 under this one, and the 0.167 between them is
+entirely duplication.
+
+**Why the fusion's tolerance and not a new number.** Because this project already has a distance
+at which two positions are one vessel, it is stated in the config, it is reported beside every
+result the chain publishes, and inventing a second one here would mean two answers to one
+question with nothing to keep them together. It is passed into the training run rather than
+defaulted, so a config that changes it changes what the run reports and `Journal.describe` refuses
+to fold the two into one file.
+
+**What it does not excuse.** Two cuts of one hull are the *easiest* pair in the archive, so a
+representation could score well on this alone. That is why `same_object` reports a third figure
+beside it — how often a neighbour is a different object in the same acquisition, which is where a
+representation that had learned the weather rather than the ship would show up. It comes out at
+4%, against 66% same-object and 0.2% at chance — and the chance level for that figure is the one
+that *excludes* the query, because retrieval takes it out before ranking. `chance_of` carries both
+readings for that reason: the twin recall ranks against the crop's own vector and this does not,
+and using one baseline for both would halve or double an apparent margin.
+
+---
+
+## 2026-08-26 — What the embedding level claims, and what it does not
+
+**Decision.** The level ships with three numbers and a figure, all written by
+`darkvessel retrieve` into `docs/runs/retrieval-kattegat.json` and
+`docs/figures/retrieval-kattegat.svg`. It claims that retrieval returns visually similar objects.
+It claims nothing about separating vessels from fixed structures, which is issue #14.
+
+**What is measured.** Over 348 crops from 49 acquisitions, with a 16-dimensional representation
+fitted in eleven minutes of laptop CPU:
+
+| | measured | at chance |
+| --- | --- | --- |
+| A second view of a crop retrieves its object first | 0.483 | 0.005 |
+| The nearest neighbour is another cut of the query's object | 66% | 0.2% |
+| The nearest neighbour is a different object, same acquisition | 4% | — |
+| The nearest *different* object differs in apparent size by | 20.0 px | 61.0 px |
+
+**What each of them is worth.** The first needs no labels of any kind and is the one that fails
+loudest: a representation that collapses onto a point returns ranked neighbours with similarities
+near one for every query, and scores at chance here. The second is the strongest agreement a
+representation of an object can show, because two cuts of one hull are the most similar pair the
+archive contains. The third is the diagnostic, not a result — see the entry above. The fourth is the
+only one that speaks to resemblance *between* objects, and it is ranked over everything the query
+is not for that reason: measured over all neighbours it reads 2.0 px, which is the duplication in
+the entry above restating itself. It is reported last because apparent size is measured from the
+same pixels the encoder saw and is therefore not an independent label; what it rules out is a
+representation whose neighbours are no closer in size than a crop drawn at random.
+
+**What the figure adds.** Six queries spread over the archive's range of target size, each with
+its four nearest neighbours, drawn through the same decibel window so that two cells side by side
+are two crops in one unit. Two numbers can be satisfied by a representation that has learned
+something real and useless; a reader looking at the sheet can see in a second that the rows are
+coherent — point scatterers with point scatterers, elongated hulls with elongated hulls,
+saturated crosses with saturated crosses. The queries are chosen by spreading them over that
+range rather than by hand, because choosing six by hand is exactly where a flattering figure would
+come from.
+
+**An unannotated class, found.** The first row of the sheet is detections standing on the boundary
+of a nodata hole, and its neighbours are other detections on other holes in other acquisitions.
+Nothing labelled them, nothing was told they exist, and they sit together. That is the claim this
+level was built to support, made on the least interesting class it could have been made on.
+
+**What is not claimed.** That the representation transfers beyond this rectangle: one study area
+does not support a claim about transfer and none is made. That the schedule was long enough — the
+twin recall was still rising when it ended, 0.124 at epoch 1, 0.29 at 80, 0.35 at 200, 0.48 at
+400, and a longer run is the obvious next experiment rather than a finished one. And that
+clustering works, which has not been tried, because the study area moved off the Anholt wind farm
+in August and the archive contains no fixed structures to separate.
+
