@@ -6,6 +6,7 @@ own change is load-bearing rather than a convenience — and its failure modes a
 that is not there, and a merge that drops a key.
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -290,3 +291,52 @@ def test_the_chains_weights_and_the_ladders_verdict_come_from_the_same_config() 
 
     assert shipped["built"] == rungs[kept.label].run["built"]
     assert shipped["schedule"]["lr_schedule"] == rungs[kept.label].run["schedule"]["lr_schedule"]
+
+
+EMBEDDING = CONFIGS / "kattegat-embeddings.yaml"
+EMBEDDING_METRICS = (
+    Path(__file__).resolve().parents[1] / "docs" / "runs" / "embedding-kattegat.json"
+)
+
+
+def test_the_embedding_the_chain_loads_was_fitted_by_the_config_that_names_it() -> None:
+    """The gap `test_the_chain_runs_the_weights_of_the_rung_the_ladder_kept` exists to close,
+    at the level below it.
+
+    An encoder is a file path, and a file path is a number nothing compares. Edit `crop_px` or
+    `dim` in the config, leave the checkpoint alone, and every command still runs: the crops are
+    cut at one size and described by a model fitted at another, the vectors come back, the
+    neighbours are plausible. `ContrastiveEmbedder` reads the geometry off the checkpoint rather
+    than out of the config precisely so that nothing downstream can disagree with it — which
+    leaves the config free to say something else, and this is what stops it.
+
+    Against the journal rather than the weights, because `*.pt` is not in the repository and this
+    test has to run in CI with no torch and no checkpoint.
+    """
+    config = load_config(EMBEDDING)["embedding"]
+    fitted = Journal(EMBEDDING_METRICS).run()
+
+    assert fitted is not None, f"{EMBEDDING_METRICS.name} does not say what run wrote it"
+    for key in ("crop_px", "margin_px", "dim"):
+        assert fitted["built"][key] == config[key], (
+            f"the config asks for {key}={config[key]} and the encoder it names was fitted at "
+            f"{fitted['built'][key]}; re-run `darkvessel embed` or put the config back"
+        )
+    assert fitted["schedule"]["seed"] == config["schedule"]["seed"]
+    assert fitted["speckle"]["looks"] == pytest.approx(config["speckle_looks"])
+
+
+def test_the_recorded_retrieval_check_describes_the_encoder_that_is_shipped() -> None:
+    """The numbers in the README come out of a file a command wrote, and that file has to be
+    about this encoder — the run that produced it, at the epoch it stopped at."""
+    record = json.loads((EMBEDDING_METRICS.parent / "retrieval-kattegat.json").read_text())
+    config = load_config(EMBEDDING)["embedding"]
+    epochs = Journal(EMBEDDING_METRICS).entries()
+
+    assert record["encoder"] == Path(config["encoder"]).name
+    assert record["dim"] == config["dim"]
+    assert record["twin_recall"]["epoch"] == epochs[-1]["epoch"] == config["schedule"]["epochs"]
+    # Above chance by a margin nobody could mistake for noise, and the baseline travels with it:
+    # a check whose chance level is not recorded is a number with no scale.
+    assert record["twin_recall"]["twin_recall"] > 10 * record["twin_recall"]["chance"]
+    assert record["same_object"]["retrieved"] > 10 * record["same_object"]["chance"]

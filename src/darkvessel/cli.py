@@ -8,18 +8,21 @@ Choosing it is a property of the run; the pipeline itself never knows which one 
 """
 
 import argparse
+import json
+import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import geopandas as gpd
+import pandas as pd
 from pyproj import CRS
 
 from darkvessel.config import load_config
 from darkvessel.data.ais import load_ais, slice_for, write_ais
 from darkvessel.data.area import Bounds
 from darkvessel.data.dma import danish_maritime_authority
-from darkvessel.data.gee_export import DateWindow, earth_engine, export_scene
+from darkvessel.data.gee_export import DateWindow, earth_engine, export_archive, export_scene
 from darkvessel.data.scene import Scene
 from darkvessel.data.survey import survey as survey_traffic
 from darkvessel.data.synthetic import write_synthetic_inputs
@@ -30,11 +33,25 @@ from darkvessel.detect.curve import curve, svg
 from darkvessel.detect.curve import table as curve_table
 from darkvessel.detect.dataset import Layout, Subset, catalogue, split_by_scene
 from darkvessel.detect.detector import Detector
-from darkvessel.detect.geo import write_detections
+from darkvessel.detect.geo import to_ground, write_detections
+from darkvessel.detect.infer import detect_scene
 from darkvessel.detect.ladder import WINDOW, Rung, judge
 from darkvessel.detect.ladder import table as ladder_table
 from darkvessel.detect.metrics import Reporting
 from darkvessel.detect.threshold import BrightPixelDetector
+from darkvessel.embed.archive import Archive
+from darkvessel.embed.crops import crops_for
+from darkvessel.embed.embedder import Embedder
+from darkvessel.embed.retrieval import (
+    agreement,
+    contact_sheet,
+    extent,
+    queries_over,
+    retrieve,
+    same_object,
+)
+from darkvessel.embed.retrieval import table as retrieval_table
+from darkvessel.embed.views import Speckle, looks_of
 from darkvessel.fusion.azimuth import Geometry
 from darkvessel.fusion.interpolate import INTERPOLATED, REPORTED
 from darkvessel.fusion.match import DARK, MATCHED
@@ -93,6 +110,26 @@ def main(argv: list[str] | None = None) -> int:
     evaluate_command.add_argument("--rung", default=None)
     evaluate_command.add_argument("--svg", type=Path, default=None)
 
+    scenes_command = commands.add_parser(
+        "scenes", help="fetch every acquisition of the archive's window (needs credentials)"
+    )
+    scenes_command.add_argument("--config", type=Path, required=True)
+
+    crops_command = commands.add_parser(
+        "crops", help="cut the detections out of every archived scene (needs the detector extra)"
+    )
+    crops_command.add_argument("--config", type=Path, required=True)
+
+    embed_command = commands.add_parser(
+        "embed", help="fit a representation to the crops, without labels (needs the extra)"
+    )
+    embed_command.add_argument("--config", type=Path, required=True)
+
+    retrieve_command = commands.add_parser(
+        "retrieve", help="nearest neighbours over the archive, and the check that they hold"
+    )
+    retrieve_command.add_argument("--config", type=Path, required=True)
+
     args = parser.parse_args(argv)
 
     if args.command == "synthesise":
@@ -109,6 +146,14 @@ def main(argv: list[str] | None = None) -> int:
         return _compare(args.config)
     if args.command == "evaluate":
         return _evaluate(args.config, args.metrics, args.rung, args.svg)
+    if args.command == "scenes":
+        return _scenes(args.config)
+    if args.command == "crops":
+        return _crops(args.config)
+    if args.command == "embed":
+        return _embed(args.config)
+    if args.command == "retrieve":
+        return _retrieve(args.config)
     return _run(args.config)
 
 
@@ -145,6 +190,7 @@ def _run(config_path: Path) -> int:
         detector=_detector_from(run_config, relative_to),
         tiling=tiling,
         geometry=geometry_from(config, scene.orbit_pass),
+        embedder=_embedder_from(config, relative_to),
         **fusion,
     )
     output = (relative_to / run_config["output"]).resolve()
@@ -708,16 +754,395 @@ def check_tile_size(run_config: dict[str, Any], tiling: Tiling) -> None:
         )
 
 
-def _detector_from(run_config: dict[str, Any], relative_to: Path) -> Detector:
-    """Build the detector named by the config. This is the injection point."""
+def _detector_from(
+    run_config: dict[str, Any], relative_to: Path, score_threshold: float | None = None
+) -> Detector:
+    """Build the detector named by the config. This is the injection point.
+
+    `score_threshold` overrides the operating point the run declares, and there is exactly one
+    caller that uses it. A run's threshold is chosen for precision, because every unmatched
+    detection it publishes is a claim someone may be sent out on; an archive of crops publishes
+    nothing and makes no claims, and a representation fitted only on the objects the detector was
+    already certain about has never been shown the ones it was not. Passing it here rather than
+    editing the run block is what keeps the two operating points in one config file, each stated
+    where it belongs.
+    """
     name = run_config["detector"]
     if name == "bright-pixel":
-        return BrightPixelDetector(threshold=float(run_config["threshold"]))
+        threshold = run_config["threshold"] if score_threshold is None else score_threshold
+        return BrightPixelDetector(threshold=float(threshold))
     if name == "trained":
         # Imported here rather than at the top of the module, the way `_train` imports torch: the
         # chain's acceptance condition is that it installs and runs with no framework, and a run
         # with the stand-in must not pull two gigabytes of CUDA wheels to threshold bright pixels.
         from darkvessel.detect.trained import TrainedDetector
 
-        return TrainedDetector(**trained_request_from(run_config, relative_to))
+        request = trained_request_from(run_config, relative_to)
+        if score_threshold is not None:
+            request["score_threshold"] = score_threshold
+        return TrainedDetector(**request)
     raise ValueError(f"unknown detector {name!r}; known detectors: 'bright-pixel', 'trained'")
+
+
+def archive_request_from(config: dict[str, Any], relative_to: Path) -> dict[str, Any]:
+    """What the archive of acquisitions is made of, read out of a config file.
+
+    Separate from the commands that run it for the reason `export_request_from` is, doubled: the
+    first of these stages needs Earth Engine credentials and the second needs the detector extra,
+    so between them a mistyped key would surface either to someone who had already authenticated
+    or to someone who had already fetched thirty scenes.
+
+    `score_threshold` is here rather than taken from the run, and it is the one number in this
+    block worth arguing about. The chain's own threshold is chosen for precision, because every
+    unmatched detection it publishes is a claim someone may be sent out on. An archive is not
+    published and makes no claims: it is what a representation is fitted on, and a representation
+    fitted only on the objects a detector is already certain about has never been shown the ones
+    it is not. See docs/decisions.md.
+    """
+    archive = config["archive"]
+    return {
+        "area": Bounds(**config["area"]["bounds"]),
+        "window": DateWindow(**_window_from(archive["window"])),
+        "polarisations": tuple(config["imagery"]["polarisations"]),
+        "crs": config["area"]["crs"],
+        "resolution_m": float(config["imagery"]["resolution_m"]),
+        "directory": (relative_to / archive["scenes"]).resolve(),
+        "crops": (relative_to / archive["crops"]).resolve(),
+        "score_threshold": float(archive["score_threshold"]),
+    }
+
+
+def embedding_request_from(config: dict[str, Any], relative_to: Path) -> dict[str, Any]:
+    """Everything the embedding level takes from a config file.
+
+    Nothing here imports torch, for the reason `training_request_from` states: the framework is
+    an optional extra, so a test that had to import it to check a spelling would not run in CI at
+    all. The schedule comes back as a plain dict and the command that has torch turns it into a
+    `Schedule`.
+
+    `speckle_looks` may be empty, which means views that change no pixel value — the eight
+    symmetries and a translation and nothing else. It is spelled out rather than allowed by
+    omission because it is the strongest statement this level makes about what a representation
+    is asked to ignore.
+    """
+    embedding = config["embedding"]
+    schedule = embedding["schedule"]
+    looks = embedding["speckle_looks"]
+
+    return {
+        "enabled": bool(embedding["enabled"]),
+        "crop_px": int(embedding["crop_px"]),
+        "margin_px": int(embedding["margin_px"]),
+        "dim": int(embedding["dim"]),
+        "speckle": None if looks is None else Speckle(looks=float(looks)),
+        "encoder": (relative_to / embedding["encoder"]).resolve(),
+        "checkpoints": Checkpoints(
+            (relative_to / embedding["checkpoints"]).resolve(), keep=int(embedding["keep"])
+        ),
+        "journal": Journal((relative_to / embedding["metrics"]).resolve()),
+        "schedule": {
+            "epochs": int(schedule["epochs"]),
+            "batch_size": int(schedule["batch_size"]),
+            "learning_rate": float(schedule["learning_rate"]),
+            "temperature": float(schedule["temperature"]),
+            "seed": int(schedule["seed"]),
+        },
+        "retrieval": {
+            "queries": int(embedding["retrieval"]["queries"]),
+            "neighbours": int(embedding["retrieval"]["neighbours"]),
+            "sheet": (relative_to / embedding["retrieval"]["sheet"]).resolve(),
+            "record": (relative_to / embedding["retrieval"]["record"]).resolve(),
+        },
+    }
+
+
+def _scenes(config_path: Path) -> int:
+    """Fetch every acquisition the archive's window covers. The network stage of this level."""
+    config = load_config(config_path)
+    request = archive_request_from(config, config_path.parent)
+    directory = request["directory"]
+    for read_elsewhere in ("crops", "score_threshold"):
+        request.pop(read_elsewhere)
+
+    found = export_archive(
+        catalogue=earth_engine(project=config.get("earthengine", {}).get("project")), **request
+    )
+
+    print(f"{len(found)} acquisition(s) in {directory}")
+    for scene in found:
+        print(f"  {scene.acquired_at.isoformat()}  {scene.orbit_pass.lower()}")
+    return 0
+
+
+def _crops(config_path: Path) -> int:
+    """Cut every detection out of every archived scene, and keep them in one file.
+
+    This runs the detector and places its answers on the ground without going through
+    `pipeline.run`, and that is deliberate rather than a shortcut around the seam. The chain
+    answers one question — which of these detections declared themselves — and it discards the
+    pixel coordinates on the way, because nothing downstream of it needs them. A crop is a window
+    on the image and needs exactly those, and it asks nothing of AIS at all.
+
+    Resumable by acquisition, like `scenes`: the archive already names the scenes it holds, so a
+    session that stopped after twenty of thirty picks up at the twenty-first.
+    """
+    config = load_config(config_path)
+    relative_to = config_path.parent
+    request = archive_request_from(config, relative_to)
+    embedding = embedding_request_from(config, relative_to)
+
+    tiling = _tiling_from(config["tiling"])
+    check_tile_size(config["run"], tiling)
+    detector = _detector_from(
+        config["run"], relative_to, score_threshold=request["score_threshold"]
+    )
+
+    path = request["crops"]
+    archive = Archive.read(path) if path.exists() else None
+    already = set(archive.scenes()) if archive is not None else set()
+
+    scenes = sorted(request["directory"].glob("*.tif"))
+    if not scenes:
+        print(f"no scenes in {request['directory']}; run `darkvessel scenes` first")
+        return 1
+
+    for scene_path in scenes:
+        # Decided before the file is opened, not after. `Scene.from_geotiff` reads the band
+        # eagerly, so a resumed session that opened every scene to find out it had already cut it
+        # would decode a gigabyte to skip it — which is not what "picks up at the twenty-first"
+        # means.
+        if scene_path.stem in already:
+            print(f"  {scene_path.stem}: already in the archive")
+            continue
+
+        scene = Scene.from_geotiff(scene_path)
+        _check_working_crs(scene.crs, config["area"]["crs"])
+        cut = _crops_of(
+            scene,
+            scene_path.stem,
+            detector=detector,
+            tiling=tiling,
+            crop_px=embedding["crop_px"],
+            margin_px=embedding["margin_px"],
+        )
+        archive = cut if archive is None else archive.with_more(cut)
+        archive.write(path)
+        print(
+            f"  {scene_path.stem}: {len(cut)} crop(s) at {looks_of(scene.image):.1f} looks, "
+            f"{len(archive)} in the archive"
+        )
+
+    print(f"{len(archive)} crops from {len(archive.scenes())} scene(s) -> {path}")
+    return 0
+
+
+def _crops_of(
+    scene: Scene,
+    name: str,
+    *,
+    detector: Detector,
+    tiling: Tiling,
+    crop_px: int,
+    margin_px: int,
+) -> Archive:
+    """One scene's detections, as crops with everything needed to point at them again."""
+    found = detect_scene(scene.image, detector, tiling)
+    placed = to_ground(found, scene)
+
+    return Archive(
+        crops=crops_for(scene.image, found, crop_px=crop_px, margin_px=margin_px),
+        provenance=pd.DataFrame(
+            {
+                "scene": [name] * len(found),
+                "acquired_at": [scene.acquired_at.isoformat()] * len(found),
+                "row": [detection.row for detection in found],
+                "col": [detection.col for detection in found],
+                "x": placed.geometry.x.to_numpy(),
+                "y": placed.geometry.y.to_numpy(),
+                "score": [detection.score for detection in found],
+            }
+        ),
+        crop_px=crop_px,
+        margin_px=margin_px,
+    )
+
+
+def _embed(config_path: Path) -> int:
+    """Fit a representation to the archive, without labels.
+
+    torch is imported here rather than at the top of the module, the way `_train` imports it: the
+    chain's acceptance condition is that it installs and runs with no framework, and an embedding
+    stage nobody enabled must not change that.
+    """
+    import torch
+
+    from darkvessel.embed.contrastive import Schedule, train
+
+    config = load_config(config_path)
+    relative_to = config_path.parent
+    request = embedding_request_from(config, relative_to)
+    archive = Archive.read(archive_request_from(config, relative_to)["crops"])
+
+    print(f"{len(archive)} crops of {archive.crop_px} px from {len(archive.scenes())} scene(s)")
+    train(
+        archive=archive,
+        stretch=_stretch_for(config["run"], relative_to),
+        speckle=request["speckle"],
+        schedule=Schedule(**request["schedule"]),
+        dim=request["dim"],
+        # The distance at which this project already says two positions are one vessel. The
+        # embedding level borrows it rather than declaring a second one; see `Archive.co_located`.
+        tolerance_m=fusion_settings_from(config)["tolerance_m"],
+        checkpoints=request["checkpoints"],
+        journal=request["journal"],
+        device=torch.device("cpu"),
+    )
+
+    # Copied into place only once the schedule is finished, so a session that stopped halfway
+    # cannot leave the chain pointing at an encoder that was still moving. The detector level does
+    # this by hand and records the checkpoint's hash in the config; this run is minutes rather
+    # than evenings, so it is done here and said out loud.
+    latest = request["checkpoints"].latest()
+    if latest is not None and latest[0] >= request["schedule"]["epochs"]:
+        request["encoder"].parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(latest[1], request["encoder"])
+        print(f"epoch {latest[0]} -> {request['encoder']}")
+
+    print(f"metrics in {request['journal'].path}")
+    return 0
+
+
+def _retrieve(config_path: Path) -> int:
+    """Ask the archive what resembles what, and write down whether the answer means anything.
+
+    The queries are chosen by spreading them over the range of target sizes in the archive rather
+    than picked out by hand. A contact sheet of six queries is the most flattering figure this
+    level can produce, and choosing the six is exactly where the flattery would get in.
+    """
+    config = load_config(config_path)
+    relative_to = config_path.parent
+    request = embedding_request_from(config, relative_to)
+    retrieval = request["retrieval"]
+
+    from darkvessel.embed.contrastive import ContrastiveEmbedder
+
+    archive = Archive.read(archive_request_from(config, relative_to)["crops"])
+    embedder = ContrastiveEmbedder(checkpoint=request["encoder"])
+    vectors = embedder(archive.crops)
+    names = _names_of(archive)
+
+    sizes = extent(archive.crops, archive.crop_px)
+    same_as = archive.co_located(fusion_settings_from(config)["tolerance_m"])
+    scored = agreement(vectors, sizes, same_as=same_as)
+    objects = same_object(vectors, same_as, archive.provenance["scene"].tolist())
+    queries = queries_over(sizes, retrieval["queries"])
+    found = [retrieve(vectors, names, query, retrieval["neighbours"]) for query in queries]
+
+    epochs = request["journal"].entries()
+    last = epochs[-1] if epochs else None
+
+    print(f"{len(archive)} crops from {len(archive.scenes())} scene(s), {embedder.dim} dimensions")
+    if last is not None:
+        print(
+            f"  twin recall {last['twin_recall']:.3f} against {last['chance']:.3f} at chance, "
+            f"at epoch {last['epoch']}"
+        )
+    print(f"  {scored.line()}")
+    print(f"  {objects.line()}")
+    print(retrieval_table(found))
+
+    retrieval["sheet"].parent.mkdir(parents=True, exist_ok=True)
+    retrieval["sheet"].write_text(
+        contact_sheet(archive.crops, found, stretch=embedder.stretch, crop_px=embedder.crop_px)
+        + "\n"
+    )
+    retrieval["record"].parent.mkdir(parents=True, exist_ok=True)
+    retrieval["record"].write_text(
+        json.dumps(
+            {
+                "archive": {
+                    "crops": len(archive),
+                    "scenes": archive.scenes(),
+                    "crop_px": archive.crop_px,
+                    "margin_px": archive.margin_px,
+                },
+                "encoder": request["encoder"].name,
+                "dim": embedder.dim,
+                "twin_recall": last,
+                "target_size_agreement": {
+                    "retrieved_px": scored.retrieved,
+                    "chance_px": scored.chance,
+                },
+                "same_object": {
+                    "retrieved": objects.retrieved,
+                    "chance": objects.chance,
+                    "elsewhere_in_the_acquisition": objects.elsewhere,
+                    "tolerance_m": fusion_settings_from(config)["tolerance_m"],
+                },
+                "queries": [
+                    {
+                        "query": row.name,
+                        "neighbours": [
+                            {"name": near.name, "similarity": near.similarity} for near in row.found
+                        ],
+                    }
+                    for row in found
+                ],
+                "sheet": retrieval["sheet"].name,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    print(f"wrote {retrieval['sheet']}\nwrote {retrieval['record']}")
+    return 0
+
+
+def _names_of(archive: Archive) -> list[str]:
+    """What each crop is called wherever it is reported: its acquisition, and which one it is.
+
+    Short enough to fit under a cell of the contact sheet and long enough to find again — the
+    provenance in the archive is what turns one of these back into a coordinate.
+    """
+    return [
+        f"{str(acquired)[:16].replace('-', '').replace(':', '')}#{index}"
+        for index, acquired in enumerate(archive.provenance["acquired_at"])
+    ]
+
+
+def _embedder_from(config: dict[str, Any], relative_to: Path) -> Embedder | None:
+    """Build the embedder the config asks for, or none at all. The optional injection point.
+
+    Absent and disabled are the same answer, and both are the answer for every config in this
+    project that predates this level. The import is inside the branch, the way `_detector_from`
+    imports the trained detector: a run with no embedding stage must not pull two gigabytes of
+    CUDA wheels to write a layer that carries no vectors.
+    """
+    embedding = config.get("embedding")
+    if embedding is None or not embedding.get("enabled", False):
+        return None
+
+    from darkvessel.embed.contrastive import ContrastiveEmbedder
+
+    # Through the request function rather than reading the path here, so that the config a run
+    # actually loads its encoder from is the config a test parses. Only `enabled` is read above,
+    # and it is read before the rest because a stage that is off does not have to be spelled out
+    # — every config in this project written before this level has no block at all.
+    return ContrastiveEmbedder(checkpoint=embedding_request_from(config, relative_to)["encoder"])
+
+
+def _stretch_for(run_config: dict[str, Any], relative_to: Path) -> DecibelStretch:
+    """The window between decibels and amplitude the encoder is fitted under.
+
+    The detector's own, rather than a second one declared beside it. A config that stated the
+    window twice would be a config where the two could differ, and the difference would be
+    invisible: both runs would work, and the representation would be fitted on an image the
+    detector never sees. One statement of what a decibel means, per config.
+    """
+    if run_config["detector"] != "trained":
+        raise ValueError(
+            f"this config runs the {run_config['detector']!r} detector, which declares no window "
+            "between decibels and amplitude; the embedding stage is fitted under the trained "
+            "detector's window, so a config that enables it runs the trained detector"
+        )
+    return trained_request_from(run_config, relative_to)["stretch"]

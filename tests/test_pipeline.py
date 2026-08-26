@@ -35,12 +35,20 @@ import yaml
 from affine import Affine
 from shapely import Point
 
-from darkvessel.cli import check_tile_size, fusion_settings_from, main, trained_request_from
+from darkvessel.cli import (
+    archive_request_from,
+    check_tile_size,
+    embedding_request_from,
+    fusion_settings_from,
+    main,
+    trained_request_from,
+)
 from darkvessel.config import load_config
 from darkvessel.data.scene import Scene
 from darkvessel.data.synthetic import BOUNDARY_TARGET, SIZE_PX, write_synthetic_inputs
 from darkvessel.data.tiling import Tiling
 from darkvessel.detect.threshold import BrightPixelDetector
+from darkvessel.embed.embedder import columns, vectors_of
 from darkvessel.pipeline import run
 
 # The scene the tests are built on: 10 m pixels, north-up, in the working CRS. Every expected
@@ -659,4 +667,163 @@ def test_the_shipped_real_config_names_a_tiling_its_detector_can_run_at():
             size_px=int(config["tiling"]["size_px"]),
             overlap_px=int(config["tiling"]["overlap_px"]),
         ),
+    )
+
+
+class Brightness:
+    """A deterministic stand-in embedder: how bright the crop is, and how much it varies.
+
+    The same thing `BrightPixelDetector` is to the trained detector — something that satisfies the
+    contract, needs no weights and no framework, and lets the chain be exercised through the
+    optional stage without any of it. It describes a crop honestly enough to be a representation
+    and badly enough that nobody could mistake it for one.
+    """
+
+    crop_px = 8
+    margin_px = 2
+
+    def __call__(self, crops: np.ndarray) -> np.ndarray:
+        if len(crops) == 0:
+            return np.empty((0, 2), dtype=np.float32)
+        flat = crops.reshape(len(crops), -1)
+        return np.stack([np.nanmean(flat, axis=1), np.nanstd(flat, axis=1)], axis=1)
+
+
+def test_the_chain_runs_end_to_end_with_the_embedding_stage_disabled() -> None:
+    """The claim the ticket rests on, and the reason the parameter defaults to None.
+
+    A representation of what the chain found is a second question asked of the same detections.
+    A run that never asks it must be unaffected by the stage existing at all — not merely able to
+    run, but returning what it returned before the stage was written.
+    """
+    scene = synthetic_scene(targets=[(20, 30), (40, 10)])
+    ais = ais_slice([("219000001", ACQUIRED_AT, 639_345.0, 6_281_795.0)])
+
+    without = detect(scene, ais)
+
+    assert vectors_of(without).shape == (2, 0)
+    assert not [name for name in without.columns if name.startswith("e0")]
+
+
+def test_the_embedding_stage_adds_columns_and_changes_nothing_else() -> None:
+    scene = synthetic_scene(targets=[(20, 30), (40, 10)])
+    ais = ais_slice([("219000001", ACQUIRED_AT, 639_345.0, 6_281_795.0)])
+
+    without = detect(scene, ais)
+    with_vectors = run(
+        scene=scene,
+        ais=ais,
+        detector=BrightPixelDetector(threshold=0.5),
+        tiling=ONE_TILE,
+        tolerance_m=TOLERANCE_M,
+        max_gap=MAX_GAP,
+        embedder=Brightness(),
+    )
+
+    # Every column of the run without the stage, unchanged, in the same order.
+    pd.testing.assert_frame_equal(with_vectors[without.columns], without)
+    assert list(with_vectors.columns[-2:]) == columns(2)
+    # The bright target and the dark one do not describe alike; a stage that attached the same
+    # vector to every row would pass every assertion above.
+    assert vectors_of(with_vectors).shape == (2, 2)
+
+
+def test_a_detection_is_described_by_the_pixels_around_it_and_not_by_its_neighbour() -> None:
+    """Attached by position, and the position has to be the right one.
+
+    Two targets, one of them beside a second bright patch that no detection stands on. If the
+    crops were cut in any order but the detections' own, the vectors would swap and the layer
+    would still open, still carry two rows, and describe each vessel with the other's pixels.
+    """
+    image = np.zeros((64, 64), dtype=np.float32)
+    image[19:22, 29:32] = 1.0  # a lone target
+    image[39:42, 9:12] = 1.0  # a target with company
+    image[39:42, 13:16] = 1.0
+    scene = Scene(
+        image=image,
+        transform=Affine(PIXEL_M, 0.0, ORIGIN_X, 0.0, -PIXEL_M, ORIGIN_Y),
+        crs=WORKING_CRS,
+        acquired_at=ACQUIRED_AT,
+    )
+
+    described = run(
+        scene=scene,
+        ais=None,
+        detector=BrightPixelDetector(threshold=0.5),
+        tiling=ONE_TILE,
+        tolerance_m=TOLERANCE_M,
+        max_gap=MAX_GAP,
+        embedder=Brightness(),
+    )
+
+    lonely = detection_at(described, 639_305.0, 6_281_795.0)
+    crowded = detection_at(described, 639_105.0, 6_281_595.0)
+    # The crowded crop holds more bright pixels than the lonely one, whichever way round the
+    # rows happen to be sorted.
+    assert crowded["e00"] > lonely["e00"]
+
+
+def test_a_scene_with_no_detections_still_writes_the_columns(tmp_path: Path) -> None:
+    """Otherwise a quiet acquisition writes a layer with a different schema from the one beside
+    it, and the archive of layers stops stacking."""
+    scene = synthetic_scene(targets=[])
+
+    described = run(
+        scene=scene,
+        ais=None,
+        detector=BrightPixelDetector(threshold=0.5),
+        tiling=ONE_TILE,
+        tolerance_m=TOLERANCE_M,
+        max_gap=MAX_GAP,
+        embedder=Brightness(),
+    )
+
+    assert len(described) == 0
+    assert list(described.columns[-2:]) == columns(2)
+
+
+EMBEDDING_CONFIG = CONFIGS / "kattegat-embeddings.yaml"
+
+
+def test_the_shipped_embedding_config_is_read_without_the_framework_installed() -> None:
+    """The argument `trained_request_from` makes, on the level whose every stage needs the extra.
+
+    Three of the four commands of this level need either Earth Engine credentials or torch, and
+    the fourth needs an archive that takes an hour to build. Nothing in this suite runs any of
+    them, so the shipped config is checked here, key by key, by the same functions the commands
+    parse it with.
+    """
+    config = load_config(EMBEDDING_CONFIG)
+    relative_to = EMBEDDING_CONFIG.parent
+
+    archive = archive_request_from(config, relative_to)
+    embedding = embedding_request_from(config, relative_to)
+
+    assert archive["window"].start < archive["window"].end
+    # The archive is cut at an operating point of its own, and a lower one: a representation
+    # fitted only on the objects the detector was certain about has never been shown the others.
+    assert archive["score_threshold"] < float(config["run"]["trained"]["score_threshold"])
+    assert embedding["enabled"] is True
+    assert embedding["crop_px"] > 0 and embedding["margin_px"] > 0
+    assert embedding["speckle"] is not None and embedding["speckle"].looks > 0
+    assert embedding["schedule"]["batch_size"] >= 2
+    assert embedding["retrieval"]["neighbours"] >= 1
+
+
+def test_the_shipped_embedding_config_cuts_crops_the_scene_can_hold() -> None:
+    """A crop wider than a tile is a crop the chain can never cut whole, and it would come back
+    padded with holes on every detection near a tile edge rather than on the few at the scene's."""
+    config = load_config(EMBEDDING_CONFIG)
+    embedding = embedding_request_from(config, EMBEDDING_CONFIG.parent)
+
+    assert embedding["crop_px"] + 2 * embedding["margin_px"] < int(config["tiling"]["size_px"])
+
+
+def test_a_config_that_never_heard_of_the_embedding_stage_runs_without_one() -> None:
+    """Every config in this project written before this level, and the synthetic demo since."""
+    from darkvessel.cli import _embedder_from
+
+    assert _embedder_from(load_config(SHIPPED_CONFIG), CONFIGS) is None
+    assert (
+        _embedder_from({"embedding": {"enabled": False, "encoder": "nowhere.pt"}}, CONFIGS) is None
     )
