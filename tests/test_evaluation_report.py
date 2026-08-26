@@ -6,8 +6,11 @@ This project already has a rule that a threshold chosen after seeing the numbers
 threshold; the same argument applies to a table typed after reading them.
 
 So the table and the figure in `docs/evaluation.md` are pinned to what `darkvessel evaluate`
-produces from the committed journal. What is *not* pinned is anything the report says in words —
-that is the author's job, and a test that tried would only pin the author's opinion of the day.
+produces from the committed journal — and from the *right* one: R1 was executed twice and the
+report describes the execution whose weights the chain loads, not the sibling the ladder judged.
+
+What is *not* pinned is anything the report says in words — that is the author's job, and a test
+that tried would only pin the author's opinion of the day.
 """
 
 import json
@@ -20,7 +23,7 @@ from darkvessel.detect.curve import table as curve_table
 ROOT = Path(__file__).resolve().parents[1]
 REPORT = ROOT / "docs" / "evaluation.md"
 FIGURE = ROOT / "docs" / "figures" / "precision-recall-r1.svg"
-JOURNAL = ROOT / "docs" / "runs" / "r1-cosine.json"
+JOURNAL = ROOT / "docs" / "runs" / "r1-cosine-rerun.json"
 
 
 def _points() -> list:

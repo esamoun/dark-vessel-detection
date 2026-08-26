@@ -19,10 +19,12 @@
 > apart, of which one was kept, and the ticket's own three domain adaptations refuted at that
 > resolution rather than left unproven.
 >
-> What is not done: the chain has run on one scene; offshore structures are not yet told apart
-> from vessels, so a dark candidate here is not yet a finding about the sea; and the kept rung's
-> weights, which the config now names, have not themselves been run on the scene — every
-> scene-level number below is the 2026-08-14 detector's.
+> The kept rung now runs in the chain: six detections, six hulls, five matched and one dark on the
+> Kattegat frame, the same six vessels the older detector found and every score higher — and at the
+> threshold this chain runs, the older weights would have returned four of the six. What is not
+> done: the chain has run on one scene; offshore structures are not yet told apart from vessels, so
+> a dark candidate here is not yet a finding about the sea; and the older detector's numbers are
+> still what most of the scene-level analysis below was established with.
 > [`docs/evaluation.md`](docs/evaluation.md) is the honest account of how well the detector works,
 > where it breaks, and the ten conditions it has never been asked to work under. See
 > [Approach](#approach) for what is real and
@@ -48,7 +50,7 @@ The pipeline is built in four levels, each one shippable on its own.
 
 | Level | What it does | Status |
 | --- | --- | --- |
-| **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.71 recall over a held-out split of 3000 sub-images, and the three changes that did not clear the noise are written up rather than removed |
+| **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.73 recall over a held-out split of 3000 sub-images, and the three changes that did not clear the noise are written up rather than removed |
 | **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene with the trained detector in it, since 2026-08-16 |
 | **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching; offshore structures are not yet separated from vessels |
 | **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | planned |
@@ -538,28 +540,39 @@ thing a sixth rung should change, and this ladder deliberately does not have one
 
 ```bash
 darkvessel compare --config configs/ladder.yaml
-darkvessel evaluate --config configs/ladder.yaml --svg docs/figures/precision-recall-r1.svg
+darkvessel evaluate --metrics docs/runs/r1-cosine-rerun.json --svg docs/figures/precision-recall-r1.svg
 ```
 
 The second of those draws the kept rung's whole precision-recall curve, with the range each point
 covered over the last four epochs.
 [`docs/evaluation.md`](docs/evaluation.md) reads it: where the chain sits on that curve and what
-it pays, what the 683 missed ships are actually made of — 580 of them are found by the detector
+it pays, what the 651 missed ships are actually made of — 542 of them are found by the detector
 and discarded by the threshold — the failure modes by cause, and the ten conditions none of this
-has ever been tested under.
+has ever been tested under. It reads the **second** execution of R1, which is the one the chain
+loads; the table above is the first, which is the one the ladder judged. Why there are two, and
+what they agree on, is in [`docs/decisions.md`](docs/decisions.md) under 2026-08-26.
 
 ## Swapping it into the chain — 2026-08-16
 
 The trained model now satisfies the same `detector` parameter the threshold stand-in satisfies,
 and no other stage changed. That is what the seam was built for, and this is where it paid.
 
-> **Which weights, and which numbers.** Everything in this section was run with the detector of
-> 2026-08-14 at a score threshold of 0.75. Since 2026-08-25 the config names R1's weights instead
-> — the one rung of [the ladder](#the-ladder--2026-08-23) that was kept — at a threshold of 0.90,
-> which is where R1 gives the precision this swap was decided on. Those weights have not been run
-> on this scene: they are 330 MB on a Kaggle output and `*.pt` is ignored here, so the chain is
-> repointed and the scene-level table below is unrepeated. `docs/decisions.md`, 2026-08-25, says
-> what that leaves unverified and what closes it.
+> **Which weights, and which numbers.** The tables in this section were produced by the detector of
+> 2026-08-14 at a score threshold of 0.75. The chain now loads R1's weights — the one rung of
+> [the ladder](#the-ladder--2026-08-23) that was kept — at a threshold of 0.90, where R1 gives the
+> precision this swap was decided on.
+>
+> Those weights have been run over this frame since 2026-08-26, and they return the same six
+> vessels by MMSI with every score higher: 0.850 → 0.976 on the 274 m hull, 0.862 → 0.927 on the
+> 24 m one. At 0.90 the older detector would have returned **four** of the six, dropping the
+> largest vessel in the frame and the smallest. What has not been repeated under them is the rest
+> of the analysis below — the count of objects checked by eye, the sidelobe stack, the decibel
+> sweep — all of which belongs to the older detector.
+>
+> They are also not the weights the ladder judged: that session was lost before its checkpoint was
+> ever saved, so R1 was executed a second time from the same config and the same seed.
+> `docs/decisions.md`, 2026-08-26, measures what the two executions agree on — including that the
+> ladder returns the same verdict on all five rungs under either.
 
 ```bash
 darkvessel run --config configs/kattegat-lane.yaml

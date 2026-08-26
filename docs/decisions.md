@@ -1506,3 +1506,85 @@ because it looked fine.
 **What closes it.** Bring `/kaggle/working/checkpoints-r1/epoch-012.pt` down to
 `models/r1-epoch-012.pt`, run the chain, and record the scene-level table again beside the one
 from 2026-08-16. Until then the README says which of its numbers are the baseline's.
+
+---
+
+## 2026-08-26 — R1 run twice, and what two executions of one config agree on
+
+**Decision.** The chain loads the weights of a **second execution** of
+`configs/ladder/r1-cosine.yaml`, journalled in `docs/runs/r1-cosine-rerun.json`, and the config
+names that journal in a new `run.trained.metrics` key. The ladder keeps judging the first
+execution, `docs/runs/r1-cosine.json`, unchanged.
+
+**Why there is a second execution at all.** The run of 2026-08-23 was interactive, and its numbers
+were read out of the session's own output panel rather than a saved version — recorded above,
+deliberately, so that R0 and R1 were compared under the same kind of execution. What that entry
+did not say is that a checkpoint read out of a panel is a checkpoint that exists nowhere else. By
+2026-08-26 the notebook's persistent `/kaggle/working` had been emptied, no version had ever been
+saved, and `epoch-012.pt` was gone. The weights the ladder's whole argument rests on survived for
+three days.
+
+**The operational fact that cost it, now that it is known.** A Kaggle **Quick Save** does not
+publish `/kaggle/working`. It renders the notebook to HTML and saves that; the version's output,
+pulled with `kaggle kernels output`, is a 799-byte conversion log. Only a committed run —
+*Save & Run All* — turns the working directory into an output dataset. Persistence is not a
+substitute: it is a property of a session's workspace, and it was silently empty when it mattered.
+Anything a run produces that is wanted afterwards has to leave through a committed run or be
+downloaded before the session ends.
+
+**What the two executions agree on.** Same config, same seed 20260814, same GPU class, twelve
+epochs each. The run block — build, schedule, reporting, split sizes — is byte-identical between
+the two journals.
+
+| | first (2026-08-23) | second (2026-08-26) |
+| --- | --- | --- |
+| training loss, epoch 1 | 0.1813 | 0.1816 |
+| training loss, epoch 12 | 0.1174 | 0.1167 |
+| best F1, final epoch | 0.83557 | 0.83831 |
+| noise band, last four epochs | 0.00986 | 0.01550 |
+| precision at 0.90 | 0.950 | 0.946 |
+| recall at 0.90 | 0.713 | 0.726 |
+
+Training losses agree to within 0.0016 at every epoch, and the learning rates are identical to
+three significant figures throughout — the cosine schedule is arithmetic and does not drift. The
+statistic the ladder is decided on differs by **0.0027, which is smaller than either run's own
+noise band**, so under the rule this project committed to on 2026-08-17 the two executions are
+indistinguishable: a change of that size would have been rejected as noise.
+
+**The verdicts survive.** Substituting the second execution for R1 and re-running `judge` returns
+the same verdict on all five rungs — R0 and R1 kept, R2, R3 and R4 rejected — with R2 at −0.051
+against −0.048, R3 at −0.003 against −0.000, R4 at −0.011 against −0.009. The conclusions of issue
+#11 are therefore a property of the configurations rather than of the session that ran them, which
+is the first time this project has been able to say so. Before the seeding fix of 2026-08-15 it
+could not: the same config run twice produced two detectors that disagreed at every epoch
+(`docs/failures.md`, 2026-08-14).
+
+**Why the chain quotes the second and the ladder keeps the first.** Because a number must describe
+the thing it is attached to. The ladder's table describes an experiment that was run and judged;
+rewriting it with numbers from a later execution would move published verdicts under cover of
+recovering a file. The chain's config describes weights someone may be sent out on the strength
+of, and those weights come from the second run. So the two live side by side, each pointing at its
+own journal, and `test_the_chains_score_threshold_holds_the_precision_the_swap_was_decided_on`
+reads the one the config names rather than whichever is nearby.
+
+The build blocks are held equal by a second test: an execution of a *different* rung would be a
+different detector wearing R1's name, and anchors, tile size and stem leave no trace in a state
+dict.
+
+**What the chain does with them, on the scene.** `darkvessel run --config
+configs/kattegat-lane.yaml`, fourteen seconds on an M1 laptop: **six detections, five matched, one
+dark**, against twelve declared positions at a 200 m tolerance, every match on a position
+interpolated to the acquisition. The same six vessels the 2026-08-14 detector found, by MMSI, and
+every score higher — 0.850 → 0.976 on the 274 m vessel, 0.862 → 0.927 on the 24 m one.
+
+That last pair is the result worth keeping. **At the 0.90 this chain now runs, the old weights
+would have returned four of the six hulls**, dropping the largest vessel in the frame and the
+smallest, both scored under the bar. The promotion is not a tenth of a point of F1 on a held-out
+split; on this scene it is two ships.
+
+**Cost, and what is still not repeated.** The match distances moved a few metres — the 274 m
+vessel is now matched at 186 m against a tolerance of 200 m, where the old detector put it at
+172 m. Nothing crossed the tolerance, and one match now sits 14 m nearer to being called dark than
+it did. The decibel window was swept under the old weights at 0.75 and has not been re-swept; it
+recovers all six hulls under these, which is what it was chosen to do, but the sweep itself
+belongs to the other detector.

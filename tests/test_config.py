@@ -247,25 +247,46 @@ def test_the_chain_runs_the_weights_of_the_rung_the_ladder_kept() -> None:
 def test_the_chains_score_threshold_holds_the_precision_the_swap_was_decided_on() -> None:
     """A threshold does not survive a change of weights; the operating point is what does.
 
-    0.75 buys 0.941 precision from the detector of 2026-08-14 and 0.848 from R1, because cosine
-    decay moves the calibration of the scores — the same property the baseline's oscillation was
-    made of. Carrying the number across and calling it "unchanged" would have quietly moved this
-    chain from one false alarm in seventeen to one in seven, in a commit about a checkpoint path.
+    0.75 buys 0.941 precision from the detector of 2026-08-14 and 0.851 from these weights,
+    because cosine decay moves the calibration of the scores — the same property the baseline's
+    oscillation was made of. Carrying the number across and calling it "unchanged" would have
+    quietly moved this chain from one false alarm in seventeen to one in seven, in a commit about
+    a checkpoint path.
 
-    So the threshold is held to what it buys, at whichever value the kept rung reports it: a
-    precision no worse than the swap was decided on. The threshold must also be one the rung
-    actually scored, because a precision this test cannot read is a precision nobody has.
+    So the threshold is held to what it buys: a precision no worse than the swap was decided on.
+    It must also be a threshold the run actually scored, because a precision this test cannot
+    read is a precision nobody has.
+
+    Read out of the journal the config *names*, not the ladder's. The two are siblings — same
+    config, same seed, two executions — and the chain loads the weights of one of them. Checking
+    against the other would be the same defect as loading the baseline's weights under R1's
+    numbers, one generation smaller.
+    """
+    trained = load_config(CONFIGS / "kattegat-lane.yaml")["run"]["trained"]
+    journal = Journal((CONFIGS / trained["metrics"]).resolve())
+    threshold = float(trained["score_threshold"])
+
+    reported = {round(float(point["score"]), 3): point for point in journal.entries()[-1]["at"]}
+
+    assert round(threshold, 3) in reported, (
+        f"the chain scores at {threshold}, which its own run never reported: {sorted(reported)}"
+    )
+    assert reported[round(threshold, 3)]["precision"] >= DECIDED_PRECISION
+
+
+def test_the_chains_weights_and_the_ladders_verdict_come_from_the_same_config() -> None:
+    """The chain may load a re-execution of the kept rung, but not a different rung.
+
+    R1's session was lost before its checkpoint was saved, so the shipped weights come from a
+    second execution of `configs/ladder/r1-cosine.yaml`. That is allowed and recorded. What is not
+    is the build block quietly differing — anchors, tile size and stem leave no trace in a state
+    dict, and `TrainedDetector` can only refuse a disagreement it is told about.
     """
     rungs, verdicts = _the_ladder()
     kept = [verdict for verdict in verdicts if verdict.kept][-1]
 
     trained = load_config(CONFIGS / "kattegat-lane.yaml")["run"]["trained"]
-    threshold = float(trained["score_threshold"])
-    reported = {
-        round(float(point["score"]), 3): point for point in rungs[kept.label].epochs[-1]["at"]
-    }
+    shipped = Journal((CONFIGS / trained["metrics"]).resolve()).run()
 
-    assert round(threshold, 3) in reported, (
-        f"the chain scores at {threshold}, which {kept.label} never reported: {sorted(reported)}"
-    )
-    assert reported[round(threshold, 3)]["precision"] >= DECIDED_PRECISION
+    assert shipped["built"] == rungs[kept.label].run["built"]
+    assert shipped["schedule"]["lr_schedule"] == rungs[kept.label].run["schedule"]["lr_schedule"]
