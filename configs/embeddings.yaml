@@ -1,27 +1,47 @@
-# The embedding level, over the same water as `kattegat-lane.yaml` and over many more days of it.
-# Paths are relative to this file. Everything not stated here — the area, the imagery, the tiling,
-# the detector and its window between decibels and amplitude — is that file's, unchanged.
+# The embedding level. Paths are relative to this file. Everything not stated here — the imagery,
+# the tiling, the detector and its window between decibels and amplitude — is `kattegat-lane.yaml`'s,
+# unchanged; `area` is still the chain's own study area, and the archive below draws on more water
+# than that on purpose.
 #
 # Run it in four steps, in this order:
-#   darkvessel scenes   --config configs/kattegat-embeddings.yaml   # needs Earth Engine
-#   darkvessel crops    --config configs/kattegat-embeddings.yaml   # needs the detector extra
-#   darkvessel embed    --config configs/kattegat-embeddings.yaml   # minutes of laptop CPU
-#   darkvessel retrieve --config configs/kattegat-embeddings.yaml   # the check, written down
+#   darkvessel scenes   --config configs/embeddings.yaml   # needs Earth Engine
+#   darkvessel crops    --config configs/embeddings.yaml   # needs the detector extra
+#   darkvessel embed    --config configs/embeddings.yaml   # minutes of laptop CPU
+#   darkvessel retrieve --config configs/embeddings.yaml   # the check, written down
 extends: kattegat-lane.yaml
 
-# What the representation is fitted on. One acquisition of this box holds six vessels, which is
-# not an archive and is not enough to learn a representation of anything; ten weeks of the same
-# box is. The question this level answers — which detections resemble which — is a question
-# across the record rather than inside one scene, and the archive is what makes it one.
+# What the representation is fitted on. One acquisition of one box holds six vessels, which is not
+# an archive and is not enough to learn a representation of anything; ten weeks of two boxes is.
+# The question this level answers — which detections resemble which — is a question across the
+# record rather than inside one scene, and the archive is what makes it one.
 archive:
-  # Every Sentinel-1 acquisition covering the rectangle, ascending and descending both. A vessel
+  # Every Sentinel-1 acquisition covering each rectangle, ascending and descending both. A vessel
   # looks different from the two passes, which is a property of the object the representation
   # should have to account for rather than one it should be protected from.
   window:
     start: 2026-06-01T00:00:00+00:00
     end: 2026-08-10T00:00:00+00:00
-  scenes: ../data/archive/kattegat
-  crops: ../data/archive/kattegat-crops.npz
+  # Two rectangles, because the archive is not the run. The chain's study area was chosen by
+  # measurement for its traffic and it contains no fixed structure at all — so an archive drawn
+  # from it alone can never show a representation telling a turbine from a ship, whatever the
+  # representation does. The second box is the study area this project used until 2026-08-14 and
+  # gave up for having no ships in it: a documented 111-turbine lattice and almost no traffic.
+  # Between them they hold both halves of the problem. See docs/decisions.md.
+  boxes:
+    kattegat-lane:
+      west: 11.00
+      south: 57.55
+      east: 11.30
+      north: 57.70
+    anholt:
+      west: 11.15
+      south: 56.58
+      east: 11.40
+      north: 56.71
+  # One subdirectory per box below this: a Sentinel-1 product can cover both rectangles, and two
+  # clips of it written flat would be one file under one name.
+  scenes: ../data/archive
+  crops: ../data/archive/crops.npz
   # Not the 0.90 the chain publishes at. That number was chosen for precision, because every
   # unmatched detection the chain reports is a claim someone may be sent out on. Nothing here is
   # published: this is what a representation is fitted on, and one fitted only on the objects the
@@ -56,15 +76,25 @@ embedding:
   # be perturbed harder than any real second look at this water. Empty would mean views that
   # change no pixel value at all. See docs/decisions.md.
   speckle_looks: 4.1
-  encoder: ../models/embedding-kattegat.pt
+  encoder: ../models/embedding-archive.pt
   checkpoints: ../data/archive/embedding-checkpoints
   keep: 2
-  metrics: ../docs/runs/embedding-kattegat.json
+  metrics: ../docs/runs/embedding-archive.json
   schedule:
-    # Minutes of laptop CPU on a few hundred crops of 64 px, which is what an archive this size
-    # deserves. The detector needed a rented GPU and evenings; this does not, and saying so is
-    # part of the honest accounting of what each half of this project costs.
-    epochs: 400
+    # Half an hour of laptop CPU, which is what an archive this size deserves. The detector needed
+    # a rented GPU and evenings; this does not, and saying so is part of the honest accounting of
+    # what each half of this project costs.
+    #
+    # A hundred, where the one-box archive ran four hundred, and it was set to thirty first. The
+    # reasoning for thirty was that the archive had grown thirteenfold, so thirty epochs of 4676
+    # crops is 4380 gradient steps against the 4000 the one-box run took — the same amount of
+    # training, an hour instead of fifteen. It was wrong, and measurably: what four hundred epochs
+    # bought was not four thousand steps, it was four hundred distinct augmented views of every
+    # crop, and thirty gave each crop thirty. On the identical task — the 348 Kattegat crops,
+    # ranked against those 348 — the thirty-epoch encoder scored 0.319 where the one-box encoder
+    # scored 0.489. For a contrastive fit on a fixed archive the unit that matters is the epoch,
+    # because the epoch is how many times a crop is looked at again. See docs/failures.md.
+    epochs: 100
     # Every crop in the batch that is not the pair is a negative, so the batch size is how many
     # things the loss has to tell an object apart from at once. Larger is better and the archive
     # is the ceiling.
@@ -80,8 +110,8 @@ embedding:
   retrieval:
     queries: 6
     neighbours: 4
-    sheet: ../docs/figures/retrieval-kattegat.svg
-    record: ../docs/runs/retrieval-kattegat.json
+    sheet: ../docs/figures/retrieval-archive.svg
+    record: ../docs/runs/retrieval-archive.json
 
 run:
   # The same scene, the same declarations and the same detector as `kattegat-lane.yaml`; what

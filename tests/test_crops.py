@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from darkvessel.detect.detector import PixelDetection
-from darkvessel.embed.crops import centre, crop_at, crops_for, stored_px
+from darkvessel.embed.crops import centre, crop_at, crops_for, has_measurements, stored_px
 
 
 def scene(size: int = 32) -> np.ndarray:
@@ -95,3 +95,17 @@ def test_a_crop_is_never_enlarged_to_the_size_the_encoder_wants() -> None:
     """Resampling radar amplitude is a decision, and the same refusal `check_tile_size` makes."""
     with pytest.raises(ValueError, match="resampling"):
         centre(np.zeros((1, 8, 8), dtype=np.float32), crop_px=16)
+
+
+def test_a_clip_holding_no_measurement_at_all_is_recognised_as_one() -> None:
+    """Earth Engine lists an acquisition whose footprint *intersects* the rectangle, not one that
+    covers it, so a scene can be exported whole and hold no water. Three of the fifty over the
+    Anholt box are like this, and the archive is right to skip them rather than die on the twelfth
+    of ninety-six — but only if it can tell."""
+    assert not has_measurements(np.full((8, 8), np.nan, dtype=np.float32))
+
+    mostly_empty = np.full((8, 8), np.nan, dtype=np.float32)
+    mostly_empty[3, 4] = -21.0
+
+    assert has_measurements(mostly_empty)
+    assert has_measurements(scene())

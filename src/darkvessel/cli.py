@@ -40,7 +40,7 @@ from darkvessel.detect.ladder import table as ladder_table
 from darkvessel.detect.metrics import Reporting
 from darkvessel.detect.threshold import BrightPixelDetector
 from darkvessel.embed.archive import Archive
-from darkvessel.embed.crops import crops_for
+from darkvessel.embed.crops import crops_for, has_measurements
 from darkvessel.embed.embedder import Embedder
 from darkvessel.embed.retrieval import (
     agreement,
@@ -792,16 +792,28 @@ def archive_request_from(config: dict[str, Any], relative_to: Path) -> dict[str,
     so between them a mistyped key would surface either to someone who had already authenticated
     or to someone who had already fetched thirty scenes.
 
-    `score_threshold` is here rather than taken from the run, and it is the one number in this
-    block worth arguing about. The chain's own threshold is chosen for precision, because every
-    unmatched detection it publishes is a claim someone may be sent out on. An archive is not
-    published and makes no claims: it is what a representation is fitted on, and a representation
-    fitted only on the objects a detector is already certain about has never been shown the ones
-    it is not. See docs/decisions.md.
+    `boxes` is a mapping of name to rectangle, and there is more than one of them because the
+    archive is not the run. The chain's own study area is 17 km of open water chosen for its
+    traffic, and it contains no fixed structures at all — so an archive drawn from it alone can
+    never show a representation separating a turbine from a ship, whatever the representation
+    does. The boxes are named rather than listed because a name reaches the provenance: two clips
+    of one acquisition over two rectangles are two different pieces of water, with two sea states
+    and two noise floors, and calling them one scene would put them in the same acquisition for
+    every check that asks.
+
+    `score_threshold` is the other number here worth arguing about. The chain's own threshold is
+    chosen for precision, because every unmatched detection it publishes is a claim someone may
+    be sent out on. An archive is not published and makes no claims: it is what a representation
+    is fitted on, and a representation fitted only on the objects a detector is already certain
+    about has never been shown the ones it is not. See docs/decisions.md.
     """
     archive = config["archive"]
+    boxes = {name: Bounds(**bounds) for name, bounds in archive["boxes"].items()}
+    if not boxes:
+        raise ValueError("an archive with no boxes in it draws on no water at all")
+
     return {
-        "area": Bounds(**config["area"]["bounds"]),
+        "boxes": boxes,
         "window": DateWindow(**_window_from(archive["window"])),
         "polarisations": tuple(config["imagery"]["polarisations"]),
         "crs": config["area"]["crs"],
@@ -857,20 +869,28 @@ def embedding_request_from(config: dict[str, Any], relative_to: Path) -> dict[st
 
 
 def _scenes(config_path: Path) -> int:
-    """Fetch every acquisition the archive's window covers. The network stage of this level."""
+    """Fetch every acquisition the archive's window covers, box by box.
+
+    One subdirectory per box, because the file is named by the acquisition and one Sentinel-1
+    product can cover two of them: written flat, the second clip would either overwrite the first
+    or be skipped as already fetched, and both are the same wrong archive.
+    """
     config = load_config(config_path)
     request = archive_request_from(config, config_path.parent)
-    directory = request["directory"]
-    for read_elsewhere in ("crops", "score_threshold"):
-        request.pop(read_elsewhere)
+    catalogue = earth_engine(project=config.get("earthengine", {}).get("project"))
 
-    found = export_archive(
-        catalogue=earth_engine(project=config.get("earthengine", {}).get("project")), **request
-    )
+    for name, area in request["boxes"].items():
+        found = export_archive(
+            catalogue=catalogue,
+            area=area,
+            window=request["window"],
+            polarisations=request["polarisations"],
+            crs=request["crs"],
+            resolution_m=request["resolution_m"],
+            directory=request["directory"] / name,
+        )
+        print(f"{name}: {len(found)} acquisition(s) in {request['directory'] / name}")
 
-    print(f"{len(found)} acquisition(s) in {directory}")
-    for scene in found:
-        print(f"  {scene.acquired_at.isoformat()}  {scene.orbit_pass.lower()}")
     return 0
 
 
@@ -884,7 +904,9 @@ def _crops(config_path: Path) -> int:
     on the image and needs exactly those, and it asks nothing of AIS at all.
 
     Resumable by acquisition, like `scenes`: the archive already names the scenes it holds, so a
-    session that stopped after twenty of thirty picks up at the twenty-first.
+    session that stopped after twenty of thirty picks up at the twenty-first. A scene is named by
+    its box as well as its acquisition, so the same product clipped to two rectangles is two
+    scenes here — which is what it is.
     """
     config = load_config(config_path)
     relative_to = config_path.parent
@@ -901,25 +923,38 @@ def _crops(config_path: Path) -> int:
     archive = Archive.read(path) if path.exists() else None
     already = set(archive.scenes()) if archive is not None else set()
 
-    scenes = sorted(request["directory"].glob("*.tif"))
+    scenes = [
+        (name, scene_path)
+        for name in request["boxes"]
+        for scene_path in sorted((request["directory"] / name).glob("*.tif"))
+    ]
     if not scenes:
-        print(f"no scenes in {request['directory']}; run `darkvessel scenes` first")
+        print(f"no scenes under {request['directory']}; run `darkvessel scenes` first")
         return 1
 
-    for scene_path in scenes:
+    for box, scene_path in scenes:
+        name = f"{box}/{scene_path.stem}"
         # Decided before the file is opened, not after. `Scene.from_geotiff` reads the band
         # eagerly, so a resumed session that opened every scene to find out it had already cut it
         # would decode a gigabyte to skip it — which is not what "picks up at the twenty-first"
         # means.
-        if scene_path.stem in already:
-            print(f"  {scene_path.stem}: already in the archive")
+        if name in already:
             continue
 
         scene = Scene.from_geotiff(scene_path)
         _check_working_crs(scene.crs, config["area"]["crs"])
+        # An acquisition the catalogue listed and the clip came back empty of. `search` asks
+        # whether a footprint *intersects* the rectangle, not whether it covers it, so a scene
+        # can be exported whole and hold no water at all: three of the fifty over the Anholt box
+        # are like this. Skipped and said out loud rather than crashing the run — an empty clip
+        # is a known state of this archive, not a fault in it.
+        if not has_measurements(scene.image):
+            print(f"  {name}: no water in this clip; the acquisition does not cover the box")
+            continue
+
         cut = _crops_of(
             scene,
-            scene_path.stem,
+            name,
             detector=detector,
             tiling=tiling,
             crop_px=embedding["crop_px"],
@@ -928,10 +963,13 @@ def _crops(config_path: Path) -> int:
         archive = cut if archive is None else archive.with_more(cut)
         archive.write(path)
         print(
-            f"  {scene_path.stem}: {len(cut)} crop(s) at {looks_of(scene.image):.1f} looks, "
+            f"  {name}: {len(cut)} crop(s) at {looks_of(scene.image):.1f} looks, "
             f"{len(archive)} in the archive"
         )
 
+    for box in request["boxes"]:
+        held = archive.provenance["scene"].str.startswith(f"{box}/").sum()
+        print(f"{box}: {held} crops")
     print(f"{len(archive)} crops from {len(archive.scenes())} scene(s) -> {path}")
     return 0
 
