@@ -293,10 +293,11 @@ def test_the_chains_weights_and_the_ladders_verdict_come_from_the_same_config() 
     assert shipped["schedule"]["lr_schedule"] == rungs[kept.label].run["schedule"]["lr_schedule"]
 
 
-EMBEDDING = CONFIGS / "kattegat-embeddings.yaml"
-EMBEDDING_METRICS = (
-    Path(__file__).resolve().parents[1] / "docs" / "runs" / "embedding-kattegat.json"
-)
+EMBEDDING = CONFIGS / "embeddings.yaml"
+# The two-box archive's run. The one-box run beside it — `embedding-kattegat.json` and
+# `retrieval-kattegat.json` — is kept as the numbers issue #13 was closed on, and is deliberately
+# not what the shipped config points at.
+EMBEDDING_METRICS = Path(__file__).resolve().parents[1] / "docs" / "runs" / "embedding-archive.json"
 
 
 def test_the_embedding_the_chain_loads_was_fitted_by_the_config_that_names_it() -> None:
@@ -329,7 +330,7 @@ def test_the_embedding_the_chain_loads_was_fitted_by_the_config_that_names_it() 
 def test_the_recorded_retrieval_check_describes_the_encoder_that_is_shipped() -> None:
     """The numbers in the README come out of a file a command wrote, and that file has to be
     about this encoder — the run that produced it, at the epoch it stopped at."""
-    record = json.loads((EMBEDDING_METRICS.parent / "retrieval-kattegat.json").read_text())
+    record = json.loads((EMBEDDING_METRICS.parent / "retrieval-archive.json").read_text())
     config = load_config(EMBEDDING)["embedding"]
     epochs = Journal(EMBEDDING_METRICS).entries()
 
@@ -340,3 +341,21 @@ def test_the_recorded_retrieval_check_describes_the_encoder_that_is_shipped() ->
     # a check whose chance level is not recorded is a number with no scale.
     assert record["twin_recall"]["twin_recall"] > 10 * record["twin_recall"]["chance"]
     assert record["same_object"]["retrieved"] > 10 * record["same_object"]["chance"]
+
+
+def test_the_archive_draws_on_water_the_chain_itself_never_looks_at() -> None:
+    """The reason the archive names boxes rather than borrowing the run's area.
+
+    The study area was chosen by measurement for its traffic and holds no fixed structure at all,
+    so an archive drawn from it alone can never show a representation telling a turbine from a
+    ship — whatever the representation does. Asserted rather than left to a comment, because a
+    config edited back to one box would leave every test here green and issue #14 unanswerable.
+    """
+    config = load_config(EMBEDDING)
+    boxes = config["archive"]["boxes"]
+    run_area = config["area"]["bounds"]
+
+    assert len(boxes) > 1, "an archive of one box cannot hold both halves of the problem"
+    assert any(box != run_area for box in boxes.values()), (
+        "every box in this archive is the chain's own study area, which has no turbines in it"
+    )

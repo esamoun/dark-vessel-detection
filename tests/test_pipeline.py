@@ -782,7 +782,7 @@ def test_a_scene_with_no_detections_still_writes_the_columns(tmp_path: Path) -> 
     assert list(described.columns[-2:]) == columns(2)
 
 
-EMBEDDING_CONFIG = CONFIGS / "kattegat-embeddings.yaml"
+EMBEDDING_CONFIG = CONFIGS / "embeddings.yaml"
 
 
 def test_the_shipped_embedding_config_is_read_without_the_framework_installed() -> None:
@@ -800,6 +800,9 @@ def test_the_shipped_embedding_config_is_read_without_the_framework_installed() 
     embedding = embedding_request_from(config, relative_to)
 
     assert archive["window"].start < archive["window"].end
+    assert len(archive["boxes"]) >= 1
+    for name, box in archive["boxes"].items():
+        assert box.west < box.east and box.south < box.north, f"{name} is not a rectangle"
     # The archive is cut at an operating point of its own, and a lower one: a representation
     # fitted only on the objects the detector was certain about has never been shown the others.
     assert archive["score_threshold"] < float(config["run"]["trained"]["score_threshold"])

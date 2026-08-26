@@ -42,6 +42,22 @@ def stored_px(crop_px: int, margin_px: int) -> int:
     return crop_px + 2 * margin_px
 
 
+def has_measurements(image: np.ndarray) -> bool:
+    """Whether this clip holds a single pixel the product actually measured.
+
+    A clip of nothing is a real state of an archive rather than a fault in one. Earth Engine's
+    search asks whether an acquisition's footprint *intersects* the rectangle, not whether it
+    covers it, so a scene can be listed, exported whole and come back entirely nodata: three of
+    the fifty over the Anholt box are like this. Everything downstream is right to refuse such a
+    scene — `sea_level` will not measure a sea that is not there — and the archive is right to
+    skip it and say so, rather than dying on the twelfth of ninety-six.
+
+    Named here rather than written as a condition at the call site, so that the one place that
+    decides what "empty" means is the module that knows what a hole is.
+    """
+    return bool(np.isfinite(image).any())
+
+
 def crop_at(image: np.ndarray, row: float, col: float, size_px: int) -> np.ndarray:
     """The `size_px` square of `image` centred on the pixel (`row`, `col`) falls in.
 
