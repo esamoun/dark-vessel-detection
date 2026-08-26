@@ -210,10 +210,10 @@ only other one that needs credentials:
 
 ```bash
 pip install -e ".[detector]"
-darkvessel scenes   --config configs/kattegat-embeddings.yaml  # ten weeks of acquisitions
-darkvessel crops    --config configs/kattegat-embeddings.yaml  # every detection, cut out
-darkvessel embed    --config configs/kattegat-embeddings.yaml  # fitted, without labels
-darkvessel retrieve --config configs/kattegat-embeddings.yaml  # what resembles what
+darkvessel scenes   --config configs/embeddings.yaml  # ten weeks, two rectangles
+darkvessel crops    --config configs/embeddings.yaml  # every detection, cut out
+darkvessel embed    --config configs/embeddings.yaml  # fitted, without labels
+darkvessel retrieve --config configs/embeddings.yaml  # what resembles what
 ```
 
 `survey` is the command that chose the study area, and it needs no credentials — only the AIS
@@ -679,19 +679,49 @@ times a windy day's.
 
 ### The archive
 
-One acquisition of this box holds six vessels, which is not an archive. So the level is built on
-fifty acquisitions of the same rectangle between 1 June and 9 August 2026, ascending and
-descending both, cut at a detector score of **0.05** rather than the 0.90 the chain publishes at.
+One acquisition of the shipping lane holds six vessels, which is not an archive. So the level is
+built on **two** rectangles, fifty acquisitions each, between 1 June and 9 August 2026, ascending
+and descending both: the Kattegat lane the chain runs over, and the Anholt box the study area
+moved off in August. Anholt was given up for having no ships in it; what it has instead is a
+documented 111-turbine lattice, and an archive drawn from the lane alone can never show a
+representation telling a turbine from a ship, whatever the representation does.
+
+Both boxes are cut at a detector score of **0.05** rather than the 0.90 the chain publishes at.
 That threshold was chosen for precision because every dark vessel the chain reports is a claim
 someone may be sent out on; nothing here is published, and a representation fitted only on the
 objects the detector was already certain about has never been shown the ones it was not. It comes
-to 348 crops of 64 px from the 49 acquisitions that held a detection at all, and eleven minutes of
-laptop CPU to fit sixteen dimensions to them. The detector needed a rented GPU and several evenings. Both figures are worth
-stating.
+to **4,676 crops of 64 px from 96 acquisitions** — 348 from the lane and 4,328 from Anholt, which
+is the imbalance you would expect from 111 fixed scatterers standing in every frame against five
+or six ships passing through. Three Anholt clips held no water at all: Earth Engine's search asks
+whether a footprint *intersects* the rectangle, not whether it covers it.
+
+A hundred epochs, sixteen dimensions, a bit over an hour of laptop CPU. The detector needed a
+rented GPU and several evenings. Both figures are worth stating.
+
+**The turbines are in there, and that was checked before any method was written to find them.**
+`python3 notebooks/recurrence.py` asks nothing of the embedding: it groups detections whose ground
+positions fall within 100 m and counts how many acquisitions each standing position appears in. A
+ship under way does not come back. A mast does.
+
+| Positions seen in… | kattegat-lane | anholt |
+| --- | --- | --- |
+| 2+ acquisitions | 21 | 91 |
+| 5+ | 2 | **69** |
+| 10+ | 1 | **67** |
+| 20+ | 0 | **65** |
+| most persistent | 11 acquisitions | **46 of 47** |
+| crops at a position seen 5+ times | 18 of 348 | **2,612 of 4,328** |
+
+Sixty-five positions stand still across twenty acquisitions or more, one of them across 46 of the
+47. Against a documented 111 turbines that is a partial recovery, and checking it against the
+farm's real coordinates is the next ticket's second criterion rather than this one's. The lane
+behaves as the control should — except for one position seen in 11 acquisitions, in the box that
+is supposed to have no fixed structures in it. That is not a ship either, and it is written down
+here rather than tidied away.
 
 ### What retrieval returns
 
-![Six queries and their four nearest neighbours](docs/figures/retrieval-kattegat.svg)
+![Six queries and their four nearest neighbours](docs/figures/retrieval-archive.svg)
 
 Each row is one query and its four nearest neighbours in the representation, drawn through the
 same decibel window so that two cells side by side are two crops in one unit. The six queries are
@@ -708,23 +738,30 @@ have been made on.
 
 | | measured | at chance |
 | --- | --- | --- |
-| A second view of a crop retrieves its object first | **0.483** | 0.005 |
-| The nearest neighbour is another cut of the query's own object | **66%** | 0.2% |
-| The nearest neighbour is a different object in the same acquisition | 4% | — |
-| The nearest *different* object differs in apparent size by | **20.0 px** | 61.0 px |
+| A second view of a crop retrieves its object first | **0.066** | 0.0004 |
+| The nearest neighbour is another cut of the query's own object | **71%** | 0.04% |
+| The nearest neighbour is a different object in the same acquisition | 11% | — |
+| The nearest *different* object differs in apparent size by | **6.0 px** | 16.0 px |
 
 The first needs no labels at all, which is why it is recorded every epoch: a representation that
 has collapsed onto a point still returns ranked neighbours with similarities near one for every
-query, and scores at chance here. The third is a diagnostic rather than a result — the decibel
-window is fixed across the archive and the sea under it is not, so a representation that had
-learned the weather would return beautiful neighbours all drawn from one acquisition. It does not.
+query, and scores at chance here. It is also the number that fell hardest when Anholt was added,
+from 0.483 to 0.066, and reading that as a worse encoder would be wrong: telling *this* turbine
+from its sixty-four identical siblings, through a view shaken by speckle, is a harder question
+than the one-box archive ever asked. Put to the identical task — the same 348 lane crops, the same
+twins, ranked against those same 348 — the one-box encoder scores 0.489 and this one 0.422. The
+rest is the question, not the answer.
+
+The third is a diagnostic rather than a result — the decibel window is fixed across the archive
+and the sea under it runs from -37 dB to -11 dB, so a representation that had learned the weather
+would return beautiful neighbours all drawn from one acquisition. It does not.
 
 The fourth is the only one that speaks to resemblance *between* objects, and it is ranked over
-everything the query is not for exactly that reason: measured over all neighbours it reads 2.0 px,
-which is the duplication below restating itself rather than a claim about similarity. Apparent
-size is also not an independent label — it is measured from the same pixels the encoder saw — so
-what it rules out is narrower than what it might seem to prove: a representation whose neighbours
-are no closer in size than a crop drawn at random has not learned the object.
+everything the query is not for exactly that reason: measured over all neighbours it restates the
+duplication below rather than saying anything about similarity. Apparent size is also not an
+independent label — it is measured from the same pixels the encoder saw — so what it rules out is
+narrower than what it might seem to prove: a representation whose neighbours are no closer in size
+than a crop drawn at random has not learned the object.
 
 Both of the first two count a hit on *any* cut of an object, because a detector run at 0.05 cuts a
 large hull more than once: two thirds of these crops have another detection within 200 m of them
@@ -735,19 +772,27 @@ check did not make that distinction and read as a poor result for the wrong reas
 
 ### What is not claimed
 
-The twin recall was still rising when the schedule ended — 0.124 at epoch 1, 0.29 at 80, 0.35 at
-200, 0.48 at 400 — so this is a run that stopped, not one that converged. Nothing here says the
-representation transfers beyond this rectangle; one study area does not support that claim and
-none is made. And separating wind turbines from vessels, which is what the representation is
-ultimately for, has not been attempted: the study area moved onto the shipping lane and off the
-Anholt wind farm in August, so this archive contains no fixed structures to separate. That is
-issue #14, and it needs an archive before it needs a method.
+The twin recall was still rising when the schedule ended — 0.045 at epoch 61, 0.056 at 81, 0.066
+at 100 — so this is a run that stopped, not one that converged. The schedule itself is a corrected
+mistake: it was first set to 30 epochs on the reasoning that a thirteenfold larger archive needed
+a thirteenth of the epochs to do the same number of gradient steps, which held the wall clock and
+cut the training. What 400 epochs bought on the one-box archive was 400 augmented views of every
+crop, not 4,000 steps. [`docs/failures.md`](docs/failures.md) has the measurement.
+
+Nothing here says the representation transfers beyond these two rectangles; two study areas do not
+support that claim and none is made. And separating wind turbines from vessels, which is what the
+representation is ultimately for, has not been attempted — that is issue #14. What changed is that
+it is now attemptable: the archive contains the class.
+
+The one-box run is kept rather than overwritten. `docs/runs/embedding-kattegat.json` and
+`docs/runs/retrieval-kattegat.json` are the numbers issue #13 was closed on, and
+`docs/figures/retrieval-kattegat.svg` is its contact sheet.
 
 The embedding stage is optional and the chain is unchanged by it. `configs/pipeline.yaml` and
 `configs/kattegat-lane.yaml` run without an encoder, import no framework, and write exactly the
-layer they wrote before this level existed. `configs/kattegat-embeddings.yaml` is the same run
-with the stage on: same six detections, same five matched and one dark, and sixteen more columns
-per row in `outputs/kattegat-lane-embedded.gpkg`.
+layer they wrote before this level existed. `configs/embeddings.yaml` is the same run with the
+stage on: same six detections, same five matched and one dark, and sixteen more columns per row in
+`outputs/kattegat-lane-embedded.gpkg`.
 
 ## Licence
 
