@@ -52,7 +52,7 @@ The pipeline is built in four levels, each one shippable on its own.
 | --- | --- | --- |
 | **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.73 recall over a held-out split of 3000 sub-images, and the three changes that did not clear the noise are written up rather than removed |
 | **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene with the trained detector in it, since 2026-08-16 |
-| **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching; offshore structures are not yet separated from vessels |
+| **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching; detections are now described by a representation learned without labels, and retrieval across ten weeks of acquisitions returns the same object 66% of the time against 0.2% at chance — separating offshore structures from vessels waits on an archive that contains some |
 | **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | planned |
 
 The chain that carries these was built first, deliberately, with a deterministic stand-in where
@@ -127,7 +127,8 @@ src/darkvessel/
               and ingestion, tiling, fixtures
   detect/     detector contract, labelled dataset and augmentations, model, training,
               checkpoints and resume, precision/recall, inference, pixel->geo
-  embed/      contrastive representation learning, clustering
+  embed/      detection crops, contrastive views and training, the archive they
+              accumulate in, nearest-neighbour retrieval and its checks
   fusion/     AIS interpolation to acquisition time, spatio-temporal matching
   context/    Earth Engine contextual layers
   viz/        GeoJSON export for the web map
@@ -202,6 +203,17 @@ darkvessel survey --config configs/survey.yaml        # where the traffic is
 darkvessel export --config configs/kattegat-lane.yaml # the scene
 darkvessel ais    --config configs/kattegat-lane.yaml # what declared itself in it
 darkvessel run    --config configs/kattegat-lane.yaml # the chain
+```
+
+The embedding level is four more commands over the same water, and the first of them is the
+only other one that needs credentials:
+
+```bash
+pip install -e ".[detector]"
+darkvessel scenes   --config configs/kattegat-embeddings.yaml  # ten weeks of acquisitions
+darkvessel crops    --config configs/kattegat-embeddings.yaml  # every detection, cut out
+darkvessel embed    --config configs/kattegat-embeddings.yaml  # fitted, without labels
+darkvessel retrieve --config configs/kattegat-embeddings.yaml  # what resembles what
 ```
 
 `survey` is the command that chose the study area, and it needs no credentials — only the AIS
@@ -644,6 +656,98 @@ them. 40 dB is the middle of what works, and the shipped window is −29.84 to +
 
 That is one free parameter tuned on the scene it is then reported on. It is written down as that.
 The numbers that carry weight are still the held-out LS-SSDD table above.
+
+## Describing what it found — 2026-08-26
+
+The chain says where the vessels are. It says nothing about what they are, and it never will:
+there are no labels for that, and there is no prospect of any. What there is instead is a lot of
+unlabelled detections, and a way of learning from exactly that.
+
+A second, small model is fitted on the crops the detector returns, with no labels anywhere in it.
+What supervises it is a statement rather than an annotation: two views of one crop are the same
+object, and two views of different crops are not. Which transformations may stand between the two
+views is therefore the whole specification, and radar narrows it sharply — colour and contrast
+jitter have no physical meaning on a backscatter coefficient, so a view is one of the eight
+symmetries of the square, a translation of a few pixels, and **speckle**, which is the one
+value-changing augmentation the physics itself provides. A multi-looked intensity image carries a
+fluctuation that is Gamma distributed with shape equal to the number of looks, so a second look at
+the same sea is that sea times a draw from that distribution. The number of looks is measured on
+the archive's own scenes rather than quoted: across fifty acquisitions it runs from 0.01 to 5.14
+against a nominal 4.4, and the low end is not more speckle but less sea — a calm morning
+backscatters at −37 dB, close enough to the noise floor that its variation in decibels is five
+times a windy day's.
+
+### The archive
+
+One acquisition of this box holds six vessels, which is not an archive. So the level is built on
+fifty acquisitions of the same rectangle between 1 June and 9 August 2026, ascending and
+descending both, cut at a detector score of **0.05** rather than the 0.90 the chain publishes at.
+That threshold was chosen for precision because every dark vessel the chain reports is a claim
+someone may be sent out on; nothing here is published, and a representation fitted only on the
+objects the detector was already certain about has never been shown the ones it was not. It comes
+to 348 crops of 64 px from the 49 acquisitions that held a detection at all, and eleven minutes of
+laptop CPU to fit sixteen dimensions to them. The detector needed a rented GPU and several evenings. Both figures are worth
+stating.
+
+### What retrieval returns
+
+![Six queries and their four nearest neighbours](docs/figures/retrieval-kattegat.svg)
+
+Each row is one query and its four nearest neighbours in the representation, drawn through the
+same decibel window so that two cells side by side are two crops in one unit. The six queries are
+spread over the archive's range of apparent target size rather than picked by hand — choosing six
+by hand is exactly where a flattering figure would come from.
+
+The rows are coherent, and the top one is the most interesting. Those are detections standing on
+the boundary of a hole in the product, and their neighbours are other detections on other holes in
+other acquisitions. Nothing labelled them, nothing was told they exist, and they sit together —
+which is the claim this level was built to support, made on the least glamorous class it could
+have been made on.
+
+### What the check says
+
+| | measured | at chance |
+| --- | --- | --- |
+| A second view of a crop retrieves its object first | **0.483** | 0.005 |
+| The nearest neighbour is another cut of the query's own object | **66%** | 0.2% |
+| The nearest neighbour is a different object in the same acquisition | 4% | — |
+| The nearest *different* object differs in apparent size by | **20.0 px** | 61.0 px |
+
+The first needs no labels at all, which is why it is recorded every epoch: a representation that
+has collapsed onto a point still returns ranked neighbours with similarities near one for every
+query, and scores at chance here. The third is a diagnostic rather than a result — the decibel
+window is fixed across the archive and the sea under it is not, so a representation that had
+learned the weather would return beautiful neighbours all drawn from one acquisition. It does not.
+
+The fourth is the only one that speaks to resemblance *between* objects, and it is ranked over
+everything the query is not for exactly that reason: measured over all neighbours it reads 2.0 px,
+which is the duplication below restating itself rather than a claim about similarity. Apparent
+size is also not an independent label — it is measured from the same pixels the encoder saw — so
+what it rules out is narrower than what it might seem to prove: a representation whose neighbours
+are no closer in size than a crop drawn at random has not learned the object.
+
+Both of the first two count a hit on *any* cut of an object, because a detector run at 0.05 cuts a
+large hull more than once: two thirds of these crops have another detection within 200 m of them
+in their own acquisition, 31 m apart at the median. Under the strict rule the same encoder scores
+0.316 rather than 0.483, and the gap is duplication and nothing else. The first version of this
+check did not make that distinction and read as a poor result for the wrong reason —
+[`docs/failures.md`](docs/failures.md) records how that came apart.
+
+### What is not claimed
+
+The twin recall was still rising when the schedule ended — 0.124 at epoch 1, 0.29 at 80, 0.35 at
+200, 0.48 at 400 — so this is a run that stopped, not one that converged. Nothing here says the
+representation transfers beyond this rectangle; one study area does not support that claim and
+none is made. And separating wind turbines from vessels, which is what the representation is
+ultimately for, has not been attempted: the study area moved onto the shipping lane and off the
+Anholt wind farm in August, so this archive contains no fixed structures to separate. That is
+issue #14, and it needs an archive before it needs a method.
+
+The embedding stage is optional and the chain is unchanged by it. `configs/pipeline.yaml` and
+`configs/kattegat-lane.yaml` run without an encoder, import no framework, and write exactly the
+layer they wrote before this level existed. `configs/kattegat-embeddings.yaml` is the same run
+with the stage on: same six detections, same five matched and one dark, and sixteen more columns
+per row in `outputs/kattegat-lane-embedded.gpkg`.
 
 ## Licence
 

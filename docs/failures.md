@@ -565,3 +565,44 @@ any of them ran: almost no ship reaches an IoU of 0.7 against any anchor in eith
 points at the RPN's foreground IoU threshold rather than at anchor geometry or sampler batch size.
 Two rungs have now failed in the region that hypothesis describes, and neither tested it. It is
 the first thing a sixth rung should change, and this ladder deliberately does not have one.
+
+---
+
+## 2026-08-26 — The first check at the embedding level measured the archive, not the encoder
+
+**What happened.** The representation's own check — take a crop, take a second view of it through
+the training augmentations, ask where the twin ranks against the whole archive — was written the
+obvious way: correct if the twin's nearest neighbour is the crop itself. The first run scored
+0.247 against a chance of 0.003, which reads as a representation that works about a quarter of the
+time and is bad news for a level whose whole claim is retrieval.
+
+**What was actually happening.** Two thirds of the crops in this archive have another detection
+within 200 m of them in their own acquisition, at a median distance of 31 m. Those pairs are not
+two objects that resemble each other; they are one ship, cut twice, because the detector is run at
+0.05 to build the archive and a 274 m hull comes back as more than one box. Under the strict rule,
+a twin landing on the *other* cut of its own vessel was a wrong answer. The same encoder that
+scores 0.316 strictly scores 0.483 when an object's other cuts count, and the whole of the gap is
+duplication.
+
+**How it surfaced.** Not from the recall, which looked like an ordinary bad number. From a second
+figure recorded beside it: 70% of nearest neighbours came from the query's own acquisition against
+2% at chance, which reads as a representation that has learned the sea state — the window between
+decibels and amplitude is fixed across the archive and the sea under it runs from -37 dB to -11 dB.
+That reading was wrong too, and measuring it is what showed both: of the 70%, 64 points were within
+200 m of the query. The confound was duplication, not weather. The shipped encoder splits the same
+70% into 66 points of same-object and 4 of a different object in the same acquisition, and it is
+the second number that would have to be large for the weather reading to have been right.
+
+**What it cost.** One training run, redone, and the check redefined — `Archive.co_located`, the
+`same_as` argument to `twin_recall`, and `chance_of` so that the baseline moves with the leniency
+rather than staying at `1 / n` while the rule gets easier. It cost a second correction after
+review, too: the size agreement was left ranking over *all* neighbours, so it went on reporting
+2.0 px — which is two cuts of one hull agreeing about their own size, the very thing this entry is
+about. Ranked over everything the query is not, it reads 20.0 px against 61.0 px at chance. A fix
+applied to two of the three checks is a fix that leaves the third saying the old thing.
+
+**What it changes.** A diagnostic that can only report one number cannot tell two explanations
+apart, and both of the explanations here were plausible enough to act on. The second figure was
+added on a hunch about sea state, and it disproved the hunch. That is the argument for recording
+the thing you expect to be fine.
+
