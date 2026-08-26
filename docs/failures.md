@@ -606,3 +606,46 @@ apart, and both of the explanations here were plausible enough to act on. The se
 added on a hunch about sea state, and it disproved the hunch. That is the argument for recording
 the thing you expect to be fine.
 
+---
+
+## 2026-08-26 — A schedule held constant in steps cut the training thirteenfold
+
+**What happened.** The archive grew from 348 crops to 4676 when the Anholt box was added, and the
+schedule was cut from 400 epochs to 30 to keep the run under an hour. The reasoning was explicit
+and looked careful: an epoch is a pass over the archive, so 30 epochs of 4676 crops in batches of
+32 is 4380 gradient steps against the 4000 the one-box run took. Same amount of training, a
+thirteenth of the wall time.
+
+**Why it was wrong.** What 400 epochs bought was not 4000 steps. It was 400 distinct augmented
+views of every crop — a crop is looked at again once per epoch, through a view drawn from the
+epoch number, and that is the entire supervision at this level. Thirty epochs gave each crop
+thirty views. The step count was held constant by giving thirteen times as many crops thirteen
+times less attention each.
+
+**What it cost, measured.** The archive-wide twin recall fell from 0.483 to 0.034, which on its own
+says nothing: the archive changed too, and telling one turbine from its sixty-four identical
+siblings is a harder question than the one-box archive ever asked. So the two encoders were put to
+the *identical* task — the same 348 Kattegat crops, at the same indices, with the same augmented
+twins, ranked against those same 348 candidates:
+
+| encoder | twin recall on the 348 Kattegat crops | at chance |
+| --- | --- | --- |
+| One-box, 400 epochs | 0.489 | 0.005 |
+| Two-box, 30 epochs | 0.319 | 0.005 |
+| Two-box, 100 epochs | 0.422 | 0.005 |
+
+0.170 of that gap was the schedule and not the archive, because nothing else about the task moved,
+and refitting at 100 epochs took 0.103 of it back. The remaining 0.067 is what the archive costs:
+93% of what this encoder now sees is turbines, so the ships get a smaller share of a fixed
+capacity. That part is a trade rather than a fault, and it is the trade issue #14 needs made.
+
+**What surfaced it.** Not the loss, which fell from 1.27 to 0.31 and looked like a run converging.
+Not the archive-wide recall, which had a ready explanation — the turbines — that happened to be
+true and happened to be incomplete. What surfaced it was refusing to accept that explanation
+without splitting it: the same measurement, restricted to the population that had not changed.
+
+**What it changes.** For a contrastive fit on a fixed archive, the epoch is the unit, because the
+epoch is how many times a crop is looked at again. Step count is a statement about wall clock. The
+shipped config now carries that reasoning next to the number, so the next person to resize an
+archive reads why the epochs are not a budget to be spent on however many crops there are.
+

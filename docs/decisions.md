@@ -1766,3 +1766,101 @@ twin recall was still rising when it ended, 0.124 at epoch 1, 0.29 at 80, 0.35 a
 clustering works, which has not been tried, because the study area moved off the Anholt wind farm
 in August and the archive contains no fixed structures to separate.
 
+---
+
+## 2026-08-26 — The archive draws on two rectangles, and the second one is the farm the study area left
+
+**Supersedes** *The archive is fifty acquisitions of one rectangle, cut at its own operating
+point*, in the part that says one rectangle. Everything else in that entry stands, and the run it
+describes is kept: `docs/runs/embedding-kattegat.json` and `docs/runs/retrieval-kattegat.json` are
+the one-box archive, and they are the numbers issue #13 was closed on.
+
+**Decision.** `configs/embeddings.yaml` names the boxes the archive draws on rather than borrowing
+the run's study area, and it names two: the Kattegat lane the chain runs over, and the Anholt box
+(11.15–11.40 E, 56.58–56.71 N) the study area moved off on 2026-08-14. A scene is named by its box
+as well as its acquisition, and the scenes live one subdirectory per box.
+
+**Why.** Issue #14 asks that fixed structures cluster separately in the embedding space and be
+verified against known offshore wind farm locations. The archive it inherited could not answer
+that at any quality of representation, because it contained no fixed structures: the study area
+was moved onto the shipping lane precisely because Anholt had turbines and no ships, and the
+archive was built from the lane alone. A clustering fitted on data holding no instance of the
+class it exists to find is a figure, not a finding — so the missing half was fetched before the
+method was written, rather than after it had produced something.
+
+The two boxes are complements rather than a bigger sample of the same thing. The lane holds five
+or six commercial hulls at an arbitrary instant and no fixed structure; Anholt holds a documented
+111-turbine lattice and, across thirty acquisitions in 2026, never a vessel longer than 15 m.
+Between them the archive holds both halves of the problem the representation exists to separate,
+and neither box alone does.
+
+**Why the box is a name and not a bounding box in the provenance.** Because a name reaches the
+checks. One Sentinel-1 product can cover both rectangles, and written flat the second clip would
+share a file name with the first — one of them silently skipped as already fetched. Named, they
+are two scenes, which is what they are: two pieces of water, two sea states, two noise floors.
+The `elsewhere` diagnostic in `same_object` asks whether a neighbour comes from the query's own
+acquisition, and folding two clips into one acquisition would answer it wrongly in the direction
+that flatters.
+
+**Cost.** Another gigabyte of GeoTIFF, and the encoder refitted from scratch: the run block names
+the crops and the scenes, so `Journal.describe` refuses to fold the two archives into one file —
+which is the behaviour, not an obstacle to it.
+
+---
+
+## 2026-08-27 — What the two-box archive says, and what the one-box run still stands for
+
+**Supersedes** *What the embedding level claims, and what it does not*, in its numbers. The run
+that entry describes is kept whole — `docs/runs/embedding-kattegat.json`,
+`docs/runs/retrieval-kattegat.json` and `docs/figures/retrieval-kattegat.svg` are the one-box
+archive, and they are what issue #13 was closed on. What follows is a different archive, and
+therefore a different measurement rather than a correction of that one.
+
+**What the archive is.** 4676 crops from 96 acquisitions: 348 from the Kattegat lane and 4328 from
+the Anholt box. The imbalance is the point rather than a flaw — 111 fixed scatterers stand in
+every Anholt frame while five or six ships pass through the lane — and it is what makes the
+archive hold both halves of the problem.
+
+**The class is present, checked before a method was written to find it.**
+`notebooks/recurrence.py` asks nothing of the embedding: it groups detections whose ground
+positions fall within 100 m and counts the acquisitions each standing position appears in.
+
+| Positions seen in… | kattegat-lane | anholt |
+| --- | --- | --- |
+| 2+ acquisitions | 21 | 91 |
+| 5+ | 2 | 69 |
+| 10+ | 1 | 67 |
+| 20+ | 0 | 65 |
+| most persistent | 11 acquisitions | 46 of 47 |
+| crops at a position seen 5+ times | 18 of 348 | 2612 of 4328 |
+
+The lane is a real control and not a rhetorical one: same detector, same threshold, same ten weeks,
+same crop geometry, different water. Sixty-five standing positions against a documented 111
+turbines is a partial recovery, and verifying which is #14's second criterion rather than this
+check's. The lane's one position seen in 11 acquisitions is not a ship, is not explained here, and
+is written down rather than tidied away.
+
+**What the representation measures now.**
+
+| | measured | at chance |
+| --- | --- | --- |
+| A second view of a crop retrieves its object first | 0.066 | 0.0004 |
+| The nearest neighbour is another cut of the query's object | 71% | 0.04% |
+| The nearest neighbour is a different object, same acquisition | 11% | — |
+| The nearest *different* object differs in apparent size by | 6.0 px | 16.0 px |
+
+**Why the first number is not the encoder getting worse.** It fell from 0.483 to 0.066, and the
+archive changed underneath it: retrieving *this* turbine rather than one of its sixty-four
+identical siblings, from a view shaken by speckle, is a question the one-box archive never asked.
+So the two encoders were put to the identical task — the same 348 lane crops at the same indices,
+the same augmented twins, ranked against those same 348 candidates. The one-box encoder scores
+0.489 and this one 0.422. Of the 0.067 between them, none is a mystery: 93% of what this encoder
+sees is turbines, so ships get a smaller share of a fixed capacity. That is the trade #14 needs
+made, and it is stated rather than absorbed.
+
+**What is still open.** The recall was rising when the schedule ended, so a longer fit is the
+obvious next experiment. Whether 65 standing positions are 65 turbines is unverified. And the
+window between decibels and amplitude is still the one fitted to a single Kattegat scene, applied
+across two boxes whose seas run from -37 dB to -11 dB — the `elsewhere` figure says the
+representation has not keyed on it at 11%, which is a bound rather than an all-clear.
+
