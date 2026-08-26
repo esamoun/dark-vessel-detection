@@ -1,12 +1,20 @@
 # Evaluation — what the detector finds, what it does not, and what has never been asked of it
 
-**2026-08-25. R1, epoch 12** — the configuration the ladder of issue #11 kept and the weights
-`configs/kattegat-lane.yaml` loads. Scored over the whole of LS-SSDD's held-out split: scenes 11
-to 15, 3000 sub-images, 2378 ships, empty tiles included.
+**2026-08-26. R1, epoch 12** — the configuration the ladder of issue #11 kept, and the weights
+`configs/kattegat-lane.yaml` actually loads. Scored over the whole of LS-SSDD's held-out split:
+scenes 11 to 15, 3000 sub-images, 2378 ships, empty tiles included.
 
-Everything below is derived from `docs/runs/r1-cosine.json`, which is committed, by
-`darkvessel evaluate --config configs/ladder.yaml`. Nothing here needs a GPU, a network or a
-checkpoint to check, and the last section says plainly which questions that leaves unanswerable.
+**Which of the two executions.** R1 was run twice: once on 2026-08-23, which is the run the
+ladder judged, and once on 2026-08-26, after the first session's working directory was lost with
+its checkpoint still in it. This report describes the **second**, because that is the one whose
+weights the chain loads, and a report of its sibling would be a report of a detector nobody runs.
+What the two agree on is measured in `docs/decisions.md`, 2026-08-26: same verdict on all five
+rungs, and a final statistic 0.0027 apart against a noise band of 0.010 to 0.016.
+
+Everything below is derived from `docs/runs/r1-cosine-rerun.json`, which is committed, by
+`darkvessel evaluate --metrics docs/runs/r1-cosine-rerun.json`. Nothing here needs a GPU, a
+network or a checkpoint to check, and the last section says plainly which questions that leaves
+unanswerable.
 
 ---
 
@@ -37,12 +45,12 @@ exactly where a false positive happens.
 
 | Score threshold | Precision | Recall | F1 | Found | False | Missed |
 | --- | --- | --- | --- | --- | --- | --- |
-| 0.05 | 0.078 (0.041–0.078) | 0.957 (0.954–0.960) | 0.144 | 2275 | 27039 | 103 |
-| 0.10 | 0.336 (0.334–0.379) | 0.948 (0.944–0.951) | 0.496 | 2255 | 4458 | 123 |
-| 0.25 | 0.529 (0.525–0.594) | 0.928 (0.911–0.928) | 0.674 | 2206 | 1964 | 172 |
-| 0.50 | 0.710 (0.699–0.767) | 0.886 (0.855–0.887) | 0.789 | 2107 | 859 | 271 |
-| 0.75 | 0.848 (0.840–0.894) | 0.824 (0.770–0.826) | **0.836** | 1959 | 352 | 419 |
-| **0.90** | **0.950** (0.943–0.964) | **0.713** (0.637–0.730) | 0.814 | 1695 | 90 | 683 |
+| 0.05 | 0.082 (0.029–0.168) | 0.954 (0.952–0.963) | 0.152 | 2269 | 25299 | 109 |
+| 0.10 | 0.337 (0.313–0.397) | 0.949 (0.938–0.956) | 0.497 | 2257 | 4447 | 121 |
+| 0.25 | 0.533 (0.499–0.611) | 0.929 (0.908–0.937) | 0.678 | 2210 | 1933 | 168 |
+| 0.50 | 0.715 (0.675–0.782) | 0.889 (0.856–0.891) | 0.792 | 2113 | 843 | 265 |
+| 0.75 | 0.851 (0.821–0.899) | 0.826 (0.782–0.831) | **0.838** | 1965 | 345 | 413 |
+| **0.90** | **0.946** (0.937–0.966) | **0.726** (0.656–0.736) | 0.822 | 1727 | 99 | 651 |
 
 Six points, because six thresholds are what the run scored. It is a coarse curve and it is the
 whole of one: nothing between 0.75 and 0.90 has been measured, and the chain operates in exactly
@@ -51,9 +59,9 @@ that gap's upper end.
 **The interval beside each figure is where it went over the run's last four epochs** — epochs that
 differ from one another by nothing except where the run was stopped. It is the real range and not
 a symmetric error bar: the final epoch usually sits at one end of it. At the threshold the chain
-runs, recall is 0.713 and the last four epochs covered 0.637 to 0.730 — 0.637 at epoch 9, 0.730
-at epoch 11, 0.713 at the epoch that was kept. The same config, the same seed and the same data
-report a recall nine points apart depending on which epoch the session happened to end on.
+runs, recall is 0.726 and the last four epochs covered 0.656 to 0.736 — 0.656 at epoch 9, 0.736
+at epoch 11, 0.726 at the epoch that was kept. The same config, the same seed and the same data
+report a recall eight points apart depending on which epoch the session happened to end on.
 
 That band is the single most important number on this page. The run of 2026-08-14 moved precision
 at a fixed threshold from 0.28 to 0.80 between two adjacent epochs while its training loss sat
@@ -65,35 +73,40 @@ figure on this page should be quoted to three.**
 ## Where the chain sits, and what it pays
 
 `configs/kattegat-lane.yaml` runs at **0.90**, which is not where F1 is best. F1 peaks at 0.75, at
-0.836; the chain gives up 0.022 of it to buy precision from 0.848 to 0.950 — 262 fewer false
-alarms for 264 fewer ships found. That is a deliberate asymmetry and the reason is downstream
+0.838; the chain gives up 0.016 of it to buy precision from 0.851 to 0.946 — 246 fewer false
+alarms for 238 fewer ships found. That is a deliberate asymmetry and the reason is downstream
 rather than statistical: every detection this chain fails to match against AIS is published as a
 dark vessel, which is an accusation someone may be sent out on. A miss costs a ship nobody looked
 at. A false alarm costs an inspection and a claim about a named vessel. The reasoning, and the
 numbers the choice was made on, are in `docs/decisions.md` under 2026-08-16 and 2026-08-25.
 
 The cost of that choice is stated here rather than left implicit: **at 0.90 the detector misses
-28.7% of the ships in the split**, and the operating point is also the least stable one on the
-curve: across the last four epochs precision moved by 0.021 and recall by 0.093.
+27.4% of the ships in the split**, and the operating point is also the least stable one on the
+curve: across the last four epochs precision moved by 0.029 and recall by 0.080.
+
+What it buys on the scene rather than on the split is sharper than the table suggests. Over the
+Kattegat frame, at this same 0.90, the weights of 2026-08-14 return **four** of the six declared
+hulls — they score the 274 m vessel at 0.850 and the 24 m one at 0.862, both under the bar. These
+weights return all six, the lowest at 0.927. Same threshold, same scene, two more ships.
 
 ## What the misses are made of
 
-The 683 ships missed at 0.90 are not 683 ships the detector failed to see.
+The 651 ships missed at 0.90 are not 651 ships the detector failed to see.
 
-At 0.05 the same weights over the same split miss **103**. Every one of the other **580** produced
+At 0.05 the same weights over the same split miss **109**. Every one of the other **542** produced
 a detection within 200 m of the ship and was thrown away by the score threshold rather than by the
-detector. Put the other way: **the detector's proposals cover 95.7% of the ships in the split, and
-the reported recall is 71.3%. Twenty-four points of recall are lost to confidence, not to
+detector. Put the other way: **the detector's proposals cover 95.4% of the ships in the split, and
+the reported recall is 72.6%. Twenty-three points of recall are lost to confidence, not to
 detection.**
 
 Two honest deductions from that number before anything is built on it.
 
-- Some of those 580 are luck. At 0.05 the detector raises 27039 false alarms over 3000 tiles —
-  9.0 per tile, 0.141 per km², against a tolerance disc of 0.126 km². Of order **twelve** of the
-  683 would have a spurious detection land within tolerance by chance alone. Twelve, not 580.
+- Some of those 542 are luck. At 0.05 the detector raises 25299 false alarms over 3000 tiles —
+  8.4 per tile, 0.132 per km², against a tolerance disc of 0.126 km². Of order **eleven** of the
+  651 would have a spurious detection land within tolerance by chance alone. Eleven, not 542.
 - "The threshold throws them away" is not the same as "lowering the threshold would recover them".
-  The curve says what lowering it costs: 0.75 buys 264 of those ships back for 262 extra false
-  alarms, and 0.05 buys 580 back for 26949.
+  The curve says what lowering it costs: 0.75 buys 238 of those ships back for 246 extra false
+  alarms, and 0.05 buys 542 back for 25200.
 
 What this points at is **score calibration** rather than detection capacity, and it is the second
 independent line of evidence pointing at the region
@@ -117,8 +130,8 @@ and it is untested: two rungs failed in the region it describes (R2's anchor geo
 R4's sampler batch, −0.009) and neither changed the threshold itself. That is issue #24.
 
 **2. Confidence wanders between epochs that are otherwise identical.** Recall at 0.90 covered
-0.637–0.730 over the last four epochs; precision at 0.25 covered 0.525–0.594. *Evidence: the
-per-epoch journal, `docs/runs/r1-cosine.json`.* The mechanism recorded on 2026-08-14 is that the
+0.656–0.736 over the last four epochs; precision at 0.25 covered 0.499–0.611. *Evidence: the
+per-epoch journal, `docs/runs/r1-cosine-rerun.json`.* The mechanism recorded on 2026-08-14 is that the
 model reaches the neighbourhood of a minimum in about three epochs and then moves its score
 calibration rather than its detections; the loss curve says nothing about it, and it was found
 only because the held-out split is scored every epoch.
@@ -139,8 +152,8 @@ Fixed by moving the declaration to where the radar would have drawn it before ma
 became 5. This is a fusion failure rather than a detector failure, and it is in this report
 because it is the largest single source of false dark vessels this project has found.
 
-**5. Low-confidence noise, at a scale the statistic does not see.** 27039 false alarms at 0.05
-against 90 at 0.90. Both rejected RPN rungs cut it — R2 to 9883, R4 to 14887 — and neither moved
+**5. Low-confidence noise, at a scale the statistic does not see.** 25299 false alarms at 0.05
+against 99 at 0.90. Both rejected RPN rungs cut it — R2 to 9883, R4 to 14887 — and neither moved
 the statistic, which is decided at 0.75. *Evidence: `docs/failures.md`, 2026-08-23 and 2026-08-25.*
 It matters here only as a description of the proposal distribution: the detector is generous and
 its scores, not its proposals, are what separate.
@@ -177,9 +190,11 @@ The list is long, and its length is the point.
   it is written down as that.
 - **Truthful AIS.** A vessel that spoofs its identity or position while transmitting is matched
   and reported as declared. This chain detects silence, not lies.
-- **The shipped weights, on the scene.** R1 has never been run over the Kattegat frame. The
-  scene-level numbers in causes 3 and 4 above are the 2026-08-14 detector's. See
-  `docs/decisions.md`, 2026-08-25.
+- **More than one execution of the shipped weights, on the scene.** R1 has now been run over the
+  Kattegat frame — six detections, six hulls, five matched and one dark, the same six vessels the
+  2026-08-14 detector found and every score higher. But the scene-level numbers in causes 3 and 4
+  below were established with that older detector, and only the totals have been repeated under
+  these weights. See `docs/decisions.md`, 2026-08-26.
 
 ## What this report cannot say, and what would let it
 
@@ -188,16 +203,17 @@ evidenced by a picture of a tile the detector got wrong**, and no analysis here 
 property of the ship that was missed — its length, its heading, its distance to another ship, the
 scene it came from.
 
-That is not an oversight in the writing; it is what this machine can reach. LS-SSDD is not on this
-machine and neither are R1's weights, so no crop of a missed ship or a false alarm can be produced
-here, and the 683 misses cannot be broken down by anything.
+That is not an oversight in the writing; it is what this machine can reach. R1's weights are here
+now, but **LS-SSDD is not** — the split these numbers describe is 3000 sub-images on Kaggle. Without
+it there is no tile to crop and no box to measure against, so the 651 misses cannot be broken down
+by anything, and the weights being local does not help: what is missing is the data, not the model.
 
 One session on a rented GPU closes it, and the shape of it is known:
 
 1. Score the held-out split once with R1 at a fine grid of thresholds rather than six, so the
    curve between 0.75 and 0.90 — where the chain lives — stops being an interpolation.
 2. For each held-out ship, record the score of the best detection within tolerance, and join that
-   against the ship's box size and scene. The 580/103 split above becomes a distribution instead
+   against the ship's box size and scene. The 542/109 split above becomes a distribution instead
    of two numbers.
 3. Write out the crops: the worst false alarms at 0.90, and the misses at both ends of the size
    distribution.
