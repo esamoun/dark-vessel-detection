@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import Any
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
-from pyproj import CRS
+from pyproj import CRS, Transformer
 
 from darkvessel.config import load_config
 from darkvessel.data.ais import load_ais, slice_for, write_ais
@@ -24,6 +25,8 @@ from darkvessel.data.area import Bounds
 from darkvessel.data.dma import danish_maritime_authority
 from darkvessel.data.gee_export import DateWindow, earth_engine, export_archive, export_scene
 from darkvessel.data.scene import Scene
+from darkvessel.data.structures import Known
+from darkvessel.data.structures import fetch as fetch_known
 from darkvessel.data.survey import survey as survey_traffic
 from darkvessel.data.synthetic import write_synthetic_inputs
 from darkvessel.data.tiling import Tiling
@@ -51,10 +54,20 @@ from darkvessel.embed.retrieval import (
     same_object,
 )
 from darkvessel.embed.retrieval import table as retrieval_table
+from darkvessel.embed.structures import (
+    Standing,
+    cluster,
+    describe,
+    separation,
+    standing,
+    verify,
+)
+from darkvessel.embed.structures import table as cluster_table
 from darkvessel.embed.views import Speckle, looks_of
 from darkvessel.fusion.azimuth import Geometry
 from darkvessel.fusion.interpolate import INTERPOLATED, REPORTED
 from darkvessel.fusion.match import DARK, MATCHED
+from darkvessel.fusion.register import Register, reduction
 from darkvessel.pipeline import run as run_pipeline
 
 
@@ -125,6 +138,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     embed_command.add_argument("--config", type=Path, required=True)
 
+    known_command = commands.add_parser(
+        "known",
+        help="fetch the published positions of fixed offshore structures in the archive's boxes",
+    )
+    known_command.add_argument("--config", type=Path, required=True)
+
+    structures_command = commands.add_parser(
+        "structures",
+        help="find the fixed structures in the archive, verify them, and write the register",
+    )
+    structures_command.add_argument("--config", type=Path, required=True)
+
     retrieve_command = commands.add_parser(
         "retrieve", help="nearest neighbours over the archive, and the check that they hold"
     )
@@ -152,6 +177,10 @@ def main(argv: list[str] | None = None) -> int:
         return _crops(args.config)
     if args.command == "embed":
         return _embed(args.config)
+    if args.command == "known":
+        return _known(args.config)
+    if args.command == "structures":
+        return _structures(args.config)
     if args.command == "retrieve":
         return _retrieve(args.config)
     return _run(args.config)
@@ -191,6 +220,7 @@ def _run(config_path: Path) -> int:
         tiling=tiling,
         geometry=geometry_from(config, scene.orbit_pass),
         embedder=_embedder_from(config, relative_to),
+        structures=_structures_from(run_config, relative_to),
         **fusion,
     )
     output = (relative_to / run_config["output"]).resolve()
@@ -205,6 +235,10 @@ def _run(config_path: Path) -> int:
         # matching was run against — not the number of reports the slice happens to hold.
         declarations=0 if ais is None else int(ais["mmsi"].nunique()),
     )
+    # Always, and before the reader has to ask. A pipeline that excludes detections silently is a
+    # pipeline whose output cannot be audited, and a run configured with no register has to say
+    # that too — otherwise the absence of the line reads as "nothing was excluded".
+    verdict.append(reduction(detections, searched=ais is not None))
     for line in verdict:
         print(f"  {line}")
     return 0
@@ -1169,6 +1203,23 @@ def _embedder_from(config: dict[str, Any], relative_to: Path) -> Embedder | None
     return ContrastiveEmbedder(checkpoint=embedding_request_from(config, relative_to)["encoder"])
 
 
+def _structures_from(run_config: dict[str, Any], relative_to: Path) -> Register | None:
+    """The register this run excludes fixed structures against, or none at all.
+
+    Optional the way the embedder is, and absent for every config in this project that predates
+    this level. Unlike the embedder it changes a verdict rather than adding a column, so the two
+    ways of having no register are kept apart in the reporting rather than here: a run with no
+    key excluded nothing and says so out loud, which is not the same as a run that said nothing.
+
+    The file is read here rather than in the pipeline for the reason the detector is built here:
+    what a run loads is a property of the run, and the seam takes an object.
+    """
+    named = run_config.get("structures")
+    if named is None:
+        return None
+    return Register.read((relative_to / named).resolve())
+
+
 def _stretch_for(run_config: dict[str, Any], relative_to: Path) -> DecibelStretch:
     """The window between decibels and amplitude the encoder is fitted under.
 
@@ -1184,3 +1235,310 @@ def _stretch_for(run_config: dict[str, Any], relative_to: Path) -> DecibelStretc
             "detector's window, so a config that enables it runs the trained detector"
         )
     return trained_request_from(run_config, relative_to)["stretch"]
+
+
+def structures_request_from(config: dict[str, Any], relative_to: Path) -> dict[str, Any]:
+    """Everything the fixed-structure level takes from a config file.
+
+    Separate from the commands for the reason `archive_request_from` is, and here the reason is
+    sharper than usual: three different distances appear below, they mean three different things,
+    and a config that swapped two of them would produce a register that still verified and still
+    ran. `same_position_m` decides what one standing object is, `tolerance_m` how far from a
+    register entry a detection is still that structure, and `verify_tolerance_m` how far a
+    registered structure may sit from a published one and still be called the same structure.
+    """
+    structures = config["structures"]
+    return {
+        "floor": int(structures["floor"]),
+        "same_position_m": float(structures["same_position_m"]),
+        "tolerance_m": float(structures["tolerance_m"]),
+        "verify_tolerance_m": float(structures["verify_tolerance_m"]),
+        "clusters": int(structures["clusters"]),
+        "seed": int(structures["seed"]),
+        "known": {box: (relative_to / path).resolve() for box, path in structures["known"].items()},
+        "register": (relative_to / structures["register"]).resolve(),
+        "record": (relative_to / structures["record"]).resolve(),
+    }
+
+
+def _known(config_path: Path) -> int:
+    """Fetch the published positions of the fixed structures in each of the archive's boxes.
+
+    A box with nothing published in it writes a file with no rows, and that file is the point
+    rather than a failure: the Kattegat lane is this level's control, and "nothing is published
+    here" has to be a recorded answer rather than a missing file.
+    """
+    config = load_config(config_path)
+    relative_to = config_path.parent
+    request = structures_request_from(config, relative_to)
+    boxes = archive_request_from(config, relative_to)["boxes"]
+
+    for box, path in request["known"].items():
+        if box not in boxes:
+            raise ValueError(
+                f"{box!r} has published structures named but is not a box of the archive"
+            )
+        # A margin, so that a structure just outside a rectangle is still recorded. It is what
+        # lets a miss on the edge be reported as the clip cutting the farm rather than as the
+        # method failing to find a mast.
+        known = fetch_known(boxes[box].grown_by(2_000.0))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        known.write(path)
+        kinds = known.positions["kind"].value_counts().to_dict() if len(known) else {}
+        print(
+            f"{box}: {len(known)} published structure(s) {kinds}, "
+            f"{int(known.positions['approximate'].sum()) if len(known) else 0} of them recorded "
+            f"as approximate -> {path}"
+        )
+    return 0
+
+
+def _structures(config_path: Path) -> int:
+    """Find the fixed structures the archive holds, check them, and write the register.
+
+    Two methods are run and only one of them is acted on, which is the whole finding of this
+    level. Recurrence — a position that carries a detection acquisition after acquisition —
+    builds the register. The clustering over the embedding space is measured and printed, because
+    issue #14 asks whether the detections cluster and the honest answer is a number rather than
+    an assertion, and because what it does *not* support is the exclusion.
+
+    torch is imported for the clustering only, and only if the encoder exists. The register does
+    not need it: the one artefact this command produces that the chain depends on is built from
+    coordinates, so a machine with no framework can still rebuild it.
+    """
+    config = load_config(config_path)
+    relative_to = config_path.parent
+    request = structures_request_from(config, relative_to)
+    archive = Archive.read(archive_request_from(config, relative_to)["crops"])
+    crs = config["area"]["crs"]
+
+    found = standing(archive.provenance, tolerance_m=request["same_position_m"])
+    registered = found.seen_in(request["floor"])
+    if registered.empty:
+        # Refused here rather than written, because a register file with no rows carries no CRS
+        # and no radius either — `Register.read` would refuse it three commands later, in a run,
+        # with nothing to say about which number caused it. A study area that genuinely holds no
+        # fixed structure needs no register at all, and a config says that by leaving the key out.
+        print(
+            f"no position in this archive stands in {request['floor']}+ of its "
+            f"{len(archive.scenes())} acquisitions, so there is nothing to register; the most "
+            f"persistent stands in {int(found.positions['acquisitions'].max())}"
+        )
+        return 1
+    register = Register(
+        positions=registered.assign(source=f"archive: seen in {request['floor']}+ acquisitions"),
+        crs=crs,
+        tolerance_m=request["tolerance_m"],
+    )
+
+    print(
+        f"{len(archive)} crops from {len(archive.scenes())} scene(s): "
+        f"{len(found.positions)} distinct positions, {len(register)} of them standing in "
+        f"{request['floor']}+ acquisitions"
+    )
+    verified = _verify_boxes(register, request, config, relative_to, crs)
+    excluded = _exclusion_over(archive, found, request["floor"], config)
+    clustered = _clustering_over(archive, found, request, config_path)
+
+    register.write(request["register"])
+    request["record"].parent.mkdir(parents=True, exist_ok=True)
+    request["record"].write_text(
+        json.dumps(
+            {
+                "archive": {"crops": len(archive), "scenes": len(archive.scenes())},
+                "register": {
+                    "floor": request["floor"],
+                    "same_position_m": request["same_position_m"],
+                    "tolerance_m": request["tolerance_m"],
+                    "positions": len(register),
+                    "path": request["register"].name,
+                },
+                "verification": verified,
+                "exclusion": excluded,
+                "clustering": clustered,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    print(f"wrote {request['register']}\nwrote {request['record']}")
+    return 0
+
+
+def _verify_boxes(
+    register: Register,
+    request: dict[str, Any],
+    config: dict[str, Any],
+    relative_to: Path,
+    crs: str,
+) -> dict[str, Any]:
+    """Check the register against the published coordinates, one box at a time.
+
+    Box by box rather than all at once, because the two boxes make opposite claims and a figure
+    over both would average them into nothing. Anholt asks whether the method found the farm; the
+    lane asks whether it invented a farm where none is published, and its right answer is zero.
+    """
+    boxes = archive_request_from(config, relative_to)["boxes"]
+    verified: dict[str, Any] = {}
+    for box, bounds in boxes.items():
+        published = Known.read(request["known"][box]).inside(bounds)
+        inside = register.positions[
+            register.positions["x"].between(*_span(bounds, crs, "x"))
+            & register.positions["y"].between(*_span(bounds, crs, "y"))
+        ]
+        if published.positions.empty:
+            print(
+                f"  {box}: nothing published in this box, and {len(inside)} structure(s) "
+                "registered from it"
+            )
+            verified[box] = {"published": 0, "registered": len(inside)}
+            continue
+
+        checked = verify(inside, published.placed(crs), request["verify_tolerance_m"])
+        print(f"  {box}: {checked.line()}")
+        verified[box] = {
+            "published": checked.known,
+            "registered": checked.registered,
+            "found": checked.found,
+            "registered_but_unpublished": checked.unpublished,
+            "median_m": checked.median_m,
+            "tolerance_m": checked.tolerance_m,
+            "approximate": int(published.positions["approximate"].sum()),
+            "source": published.source,
+        }
+    return verified
+
+
+def _span(bounds: Bounds, crs: str, axis: str) -> tuple[float, float]:
+    """The rectangle's extent along one axis in the working CRS.
+
+    The corners, projected, and the widest of them taken. A rectangle in degrees is not a
+    rectangle in metres, so a box built from two corners alone would clip a structure that sits
+    inside the degrees and outside the projected corner — which on this archive is a turbine.
+    """
+    into = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
+    xs, ys = into.transform(
+        [bounds.west, bounds.east, bounds.west, bounds.east],
+        [bounds.south, bounds.south, bounds.north, bounds.north],
+    )
+    values = xs if axis == "x" else ys
+    return min(values), max(values)
+
+
+def _exclusion_over(
+    archive: Archive, found: Standing, floor: int, config: dict[str, Any]
+) -> dict[str, Any]:
+    """How many detections the register takes out of the dark count, over the archive.
+
+    Twice, at two thresholds, because they answer different questions. The archive's own
+    threshold is what the representation was fitted on and says how much of this archive is
+    structures. The chain's publishing threshold is what a run would actually have reported, and
+    it is the only one of the two that is a number of claims someone could have been sent out on.
+    """
+    persistent = found.acquisitions_of_crop() >= floor
+    scores = archive.provenance["score"].to_numpy(dtype=float)
+    published_at = _publishing_threshold(config["run"])
+
+    thresholds = [("archive", np.ones(len(scores), dtype=bool))]
+    if published_at is None:
+        # A config can hold an archive without naming a publishing threshold — the stand-in
+        # detector states its own and nothing here can read it. Said rather than assumed: a
+        # default would report the archive's own figure under the other one's name.
+        print("  this config names no publishing threshold, so only the archive figure is given")
+    else:
+        thresholds.append((f"published at {published_at:g}", scores >= published_at))
+
+    counted = {}
+    for name, keep in thresholds:
+        would_report = int(keep.sum())
+        excluded = int((keep & persistent).sum())
+        counted[name] = {
+            "detections": would_report,
+            "excluded": excluded,
+            "remaining": would_report - excluded,
+        }
+        share = excluded / would_report if would_report else 0.0
+        print(
+            f"  {name}: {excluded} of {would_report} detections stand at a registered structure "
+            f"({share:.1%}), leaving {would_report - excluded}"
+        )
+    return counted
+
+
+# What share of a cluster has to stand still before the cluster would be called fixed. Used
+# only to price the alternative this level rejected: the register is built from positions, and
+# this number decides nothing a run depends on.
+_MOSTLY_FIXED = 0.80
+
+
+def _publishing_threshold(run_config: dict[str, Any]) -> float | None:
+    """The score a run publishes at, or None where the config does not state one.
+
+    Only the trained detector declares an operating point this project argues about; the
+    bright-pixel stand-in carries a threshold that means something else entirely, and reporting
+    an exclusion "at 0.5" off it would put a synthetic number beside a real one.
+    """
+    if run_config.get("detector") != "trained":
+        return None
+    return float(run_config["trained"]["score_threshold"])
+
+
+def _clustering_over(
+    archive: Archive, found: Standing, request: dict[str, Any], config_path: Path
+) -> dict[str, Any] | None:
+    """Cluster the embedding space, and report what the clusters are made of.
+
+    Reported, not acted on. Issue #14's premise was that fixed structures cluster apart well
+    enough to be excluded wholesale; they do cluster apart — `separation` says how far, and the
+    share of each cluster that stands still says the rest — and what the numbers do not support
+    is a cut through them. `docs/decisions.md`, 2026-08-27, is that measurement.
+
+    Returns None where there is no encoder to embed with. The register does not depend on one:
+    it is built from coordinates, so a machine with no framework can still rebuild it, and this
+    command has to run there rather than raise.
+    """
+    config = load_config(config_path)
+    encoder = embedding_request_from(config, config_path.parent)["encoder"]
+    if not encoder.exists():
+        print(f"  no encoder at {encoder}, so the clustering is not reported; the register is")
+        return None
+
+    from darkvessel.embed.contrastive import ContrastiveEmbedder
+
+    vectors = ContrastiveEmbedder(checkpoint=encoder)(archive.crops)
+    clustered = cluster(vectors, count=request["clusters"], seed=request["seed"])
+    described = describe(clustered, found, floor=request["floor"])
+    apart = separation(vectors, found, floor=request["floor"])
+
+    print(
+        f"  {request['clusters']} clusters over {vectors.shape[1]} dimensions; the embedding "
+        f"ranks standing crops ahead of the rest at {apart:.3f} against 0.5 at chance"
+    )
+    print(cluster_table(described))
+
+    # And what excluding on them would have cost, which is the measurement that decided this
+    # level. A cluster is called fixed when most of it stands still; the number to read is how
+    # many crops that rule takes out of the box where nothing fixed is published. Its right
+    # answer is zero, and it is not zero.
+    fixed = described.loc[described["persistent"] >= _MOSTLY_FIXED, "cluster"]
+    would_exclude = np.isin(clustered.labels, fixed.to_numpy())
+    boxes = archive.provenance["scene"].str.split("/").str[0].to_numpy()
+    cost = {str(box): int((would_exclude & (boxes == box)).sum()) for box in sorted(set(boxes))}
+    registered = int((found.acquisitions_of_crop() >= request["floor"]).sum())
+    taken = ", ".join(f"{count} {box} crops" for box, count in cost.items())
+    print(
+        f"  excluding on those clusters instead would take out {taken} — where the register "
+        f"takes out {registered}, none of them from a box with nothing published in it"
+    )
+    return {
+        "clusters": request["clusters"],
+        "seed": request["seed"],
+        "encoder": encoder.name,
+        "separation": apart,
+        "by_cluster": described.to_dict(orient="records"),
+        "excluding_on_clusters_instead": {
+            "a_cluster_is_fixed_above": _MOSTLY_FIXED,
+            "clusters_called_fixed": len(fixed),
+            "crops_by_box": cost,
+        },
+    }

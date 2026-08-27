@@ -52,7 +52,7 @@ The pipeline is built in four levels, each one shippable on its own.
 | --- | --- | --- |
 | **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.73 recall over a held-out split of 3000 sub-images, and the three changes that did not clear the noise are written up rather than removed |
 | **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene with the trained detector in it, since 2026-08-16 |
-| **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching; detections are now described by a representation learned without labels, and retrieval across ten weeks of acquisitions returns the same object 66% of the time against 0.2% at chance — separating offshore structures from vessels waits on an archive that contains some |
+| **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | **complete.** Runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching; detections are described by a representation learned without labels, and retrieval across ten weeks of acquisitions returns the same object 71% of the time against 0.02% at chance. Offshore structures are separated from vessels and excluded from the dark count without a single label: 65 fixed positions found by recurrence across 47 acquisitions, every one of them verified against published coordinates to 5.1 m, taking 80.5% of the detections a run over the wind farm would have had to explain |
 | **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | planned |
 
 The chain that carries these was built first, deliberately, with a deterministic stand-in where
@@ -63,9 +63,10 @@ pixel coordinates converted to ground coordinates, each declared vessel interpol
 track to the moment of acquisition and the detections matched against those positions within a
 stated tolerance, GeoPackage out. Both ends of that are real now: a Sentinel-1 acquisition fetched
 clipped from Earth Engine, and a day of the Danish AIS archive streamed, filtered and cleaned
-with every removal counted, and the detector between them is the trained one. What keeps a dark
-result from being a finding about the sea is no longer the detector: it is that nothing yet tells
-an offshore structure from a vessel, and that this has run on one scene.
+with every removal counted, and the detector between them is the trained one. Detections standing
+at a known fixed structure are taken out of the dark count and say so in the layer. What keeps a
+dark result from being a finding about the sea is now one thing rather than three: it has run on
+one scene of one study area.
 
 A vessel moves between its last AIS report and the instant the radar images it: at 12 knots, some
 370 m a minute, which is more than the match tolerance. Comparing a detection against a report
@@ -90,9 +91,13 @@ Two deep learning components sit inside this:
   backbones have to be adapted to single-channel radar amplitude, and only geometry-preserving
   augmentations are physically valid on SAR.
 - **Self-supervised contrastive embeddings** over detection crops. Offshore wind turbines are
-  bright point scatterers that look a great deal like ships; an unsupervised embedding space
-  separates them into distinct clusters without any additional labelling, and doubles as a
-  similarity-search index over the detection archive.
+  bright point scatterers that look a great deal like ships, and an unsupervised embedding space
+  does separate them into distinct clusters without any additional labelling — measurably, at
+  0.768 against 0.5 at chance. It turned out not to separate them *well enough to delete a
+  detection on*, so the exclusion is built on where a thing stands over ten weeks rather than on
+  what it looks like, and the measurement that settled it is
+  [below](#telling-a-turbine-from-a-ship--2026-08-27). The embedding earns its place as a
+  similarity-search index over the detection archive and as the evidence that the clusters exist.
 
 Everything else — AIS interpolation, spatio-temporal matching, contextual analysis — is
 geospatial data engineering, not deep learning, and is described as such.
@@ -124,15 +129,18 @@ src/darkvessel/
   pipeline.py the single seam: scene + AIS + injected detector -> classified detections
   cli.py      the one command; builds the detector and hands it to the pipeline
   data/       study area and the survey that chose it, Sentinel-1 export, Danish AIS archives
-              and ingestion, tiling, fixtures
+              and ingestion, published offshore-structure coordinates, tiling, fixtures
   detect/     detector contract, labelled dataset and augmentations, model, training,
               checkpoints and resume, precision/recall, inference, pixel->geo
   embed/      detection crops, contrastive views and training, the archive they
-              accumulate in, nearest-neighbour retrieval and its checks
-  fusion/     AIS interpolation to acquisition time, spatio-temporal matching
+              accumulate in, nearest-neighbour retrieval and its checks, finding the
+              fixed structures the archive holds and verifying them
+  fusion/     AIS interpolation to acquisition time, spatio-temporal matching, the
+              register of fixed structures a run will not call dark vessels
   context/    Earth Engine contextual layers
   viz/        GeoJSON export for the web map
 configs/      pipeline configuration
+data/reference/  published structure coordinates, and the register built from the archive
 notebooks/    exploration and Kaggle/Colab training entry points
 tests/        unit tests for the geometry-critical paths
 docs/         decision log and failure log
@@ -205,15 +213,25 @@ darkvessel ais    --config configs/kattegat-lane.yaml # what declared itself in 
 darkvessel run    --config configs/kattegat-lane.yaml # the chain
 ```
 
-The embedding level is four more commands over the same water, and the first of them is the
-only other one that needs credentials:
+The embedding level is six more commands over the same water. Only `scenes` needs Earth Engine
+credentials and only `known` needs any other network; the last one needs neither, and neither a
+GPU nor the framework:
 
 ```bash
 pip install -e ".[detector]"
-darkvessel scenes   --config configs/embeddings.yaml  # ten weeks, two rectangles
-darkvessel crops    --config configs/embeddings.yaml  # every detection, cut out
-darkvessel embed    --config configs/embeddings.yaml  # fitted, without labels
-darkvessel retrieve --config configs/embeddings.yaml  # what resembles what
+darkvessel scenes     --config configs/embeddings.yaml  # ten weeks, two rectangles
+darkvessel crops      --config configs/embeddings.yaml  # every detection, cut out
+darkvessel embed      --config configs/embeddings.yaml  # fitted, without labels
+darkvessel retrieve   --config configs/embeddings.yaml  # what resembles what
+darkvessel known      --config configs/embeddings.yaml  # published structure coordinates
+darkvessel structures --config configs/embeddings.yaml  # the register, verified
+```
+
+```
+4676 crops from 96 scene(s): 318 distinct positions, 65 of them standing in 20+ acquisitions
+  kattegat-lane: nothing published in this box, and 0 structure(s) registered from it
+  anholt: 65 of 66 published positions carry a registered structure and 65 of 65 registered structures stand at a published position, 5.1 m apart at the median, within 200 m
+  published at 0.9: 782 of 972 detections stand at a registered structure (80.5%), leaving 190
 ```
 
 `survey` is the command that chose the study area, and it needs no credentials — only the AIS
@@ -710,14 +728,20 @@ ship under way does not come back. A mast does.
 | 10+ | 1 | **67** |
 | 20+ | 0 | **65** |
 | most persistent | 11 acquisitions | **46 of 47** |
-| crops at a position seen 5+ times | 18 of 348 | **2,612 of 4,328** |
+| crops at a position seen 5+ times | 23 of 348 | **4,232 of 4,328** |
 
 Sixty-five positions stand still across twenty acquisitions or more, one of them across 46 of the
-47. Against a documented 111 turbines that is a partial recovery, and checking it against the
-farm's real coordinates is the next ticket's second criterion rather than this one's. The lane
-behaves as the control should — except for one position seen in 11 acquisitions, in the box that
-is supposed to have no fixed structures in it. That is not a ship either, and it is written down
-here rather than tidied away.
+47. The lane behaves as the control should — except for one position seen in 11 acquisitions, in
+the box that is supposed to have no fixed structures in it. That is not a ship either, and it is
+written down here rather than tidied away.
+
+*(The last row of that table read `2,612 of 4,328` until 2026-08-27: the notebook summed
+acquisition counts under a label that said crops. See [`docs/failures.md`](docs/failures.md).
+The figure understated its own argument — 98% of the Anholt archive stands at a persistent
+position, not 60%.)*
+
+Those 65 positions are checked against the farm's published coordinates in the next section, and
+they turn out to be 64 turbines and a transformer platform.
 
 ### What retrieval returns
 
@@ -780,9 +804,9 @@ cut the training. What 400 epochs bought on the one-box archive was 400 augmente
 crop, not 4,000 steps. [`docs/failures.md`](docs/failures.md) has the measurement.
 
 Nothing here says the representation transfers beyond these two rectangles; two study areas do not
-support that claim and none is made. And separating wind turbines from vessels, which is what the
-representation is ultimately for, has not been attempted — that is issue #14. What changed is that
-it is now attemptable: the archive contains the class.
+support that claim and none is made. Separating wind turbines from vessels, which is what the
+representation was ultimately for, is the next section — and the short version is that the
+representation turned out not to be the part that does it.
 
 The one-box run is kept rather than overwritten. `docs/runs/embedding-kattegat.json` and
 `docs/runs/retrieval-kattegat.json` are the numbers issue #13 was closed on, and
@@ -793,6 +817,143 @@ The embedding stage is optional and the chain is unchanged by it. `configs/pipel
 layer they wrote before this level existed. `configs/embeddings.yaml` is the same run with the
 stage on: same six detections, same five matched and one dark, and sixteen more columns per row in
 `outputs/kattegat-lane-embedded.gpkg`.
+
+## Telling a turbine from a ship — 2026-08-27
+
+Every detection this chain cannot explain becomes a dark vessel, and a dark vessel is a claim
+someone may be sent out on. Danish waters are full of offshore wind turbines: bright point
+scatterers on water, which is the definition of what the detector was trained to find. A chain
+that publishes dark vessels here without being able to say which of them are not vessels at all
+is a chain that manufactures findings.
+
+**This completes Level 3.** The exclusion is real, it is verified against coordinates this project
+did not produce, and it is reported in every run's output rather than done silently.
+
+### What identifies a structure, without a single label
+
+Not what it looks like. Where it stands, over ten weeks.
+
+A ship under way is somewhere else a week later. A mast is not. `standing()` groups detections
+whose ground positions fall within 100 m of one another and counts the distinct acquisitions each
+group appears in, and the two boxes of the archive answer completely differently: 65 positions in
+the Anholt box stand across 20 or more of its 47 acquisitions, and **zero** do in the Kattegat
+shipping lane. That is the whole signal, and nothing was labelled to get it.
+
+The floor of 20 acquisitions was not chosen by feel. It is the lowest floor at which every entry
+in the register stands on a structure somebody else published:
+
+| floor | positions registered | published structures found | **registered but unpublished** |
+| --- | --- | --- | --- |
+| 5 | 71 | 66 of 66 | 3 |
+| 10 | 68 | 66 of 66 | 2 |
+| **20** | **65** | 65 of 66 | **0** |
+| 30 | 63 | 63 of 66 | 0 |
+
+The last column is the one that matters. A registered position nobody published is a coordinate at
+which this chain would stop reporting dark vessels on the strength of its own archive alone — and
+at a floor of 10 the register contains the object in the shipping lane that stands in 11
+acquisitions and that nothing explains. What 20 gives up is one turbine **73 m from the western
+edge of the box**, cut off by the clip rather than missed by the method, which goes on being
+reported as a dark candidate. An over-report, which is the safe direction.
+
+### Verified against somebody else's coordinates
+
+`darkvessel known` fetches the published positions of the fixed structures in each archive box
+from OpenStreetMap and keeps them in `data/reference/`, so nothing downstream needs a network.
+
+| | |
+| --- | --- |
+| Published structures inside the Anholt box | 66 — 65 turbines and one transformer platform |
+| Registered by the archive | 65 |
+| Registered positions standing on a published one | **65 of 65** |
+| Published positions carrying a registered structure | 65 of 66 |
+| Distance between a matched pair | **5.1 m at the median**, 15.8 m at the worst |
+| Published in the Kattegat lane | 0 |
+| Registered from the Kattegat lane | **0** |
+
+Half a pixel apart at the median. **The reference is not authoritative and the file says so**:
+Energistyrelsen's Stamdataregister is the authority for Danish turbines and is published through a
+map viewer rather than as a file this could fetch, and 108 of the 112 OSM structures carry OSM's
+own `note=position only approximate`. What survives that is the agreement itself — an approximate
+volunteer list and an independent ten-week radar archive do not place the same 65 objects within
+half a pixel of each other by accident, in either direction.
+
+The transformer platform is in the reference deliberately. It is the most persistent non-mast
+object in the archive — 37 acquisitions, 1,759 m from the nearest turbine — and a reference of
+turbines alone would have reported the method's one true positive as its one false alarm.
+
+### The clusters are real. Excluding on them is not.
+
+Issue #14's premise was that turbines cluster apart in the embedding space and can be excluded
+wholesale. Half of that is true, and the half that is not is the half the ticket needed.
+
+Eight spherical k-means clusters over the 16-dimensional embeddings. Seven of them are 94–97%
+standing crops and the eighth is 51%. Ranked by similarity to the centre of the crops recurrence
+is sure about — no threshold, no label — the embedding orders standing crops ahead of the rest at
+**0.768 against 0.5 at chance**. The clusters exist and the representation knows the difference.
+
+Then price it as an exclusion rule. Call a cluster fixed when 80% or more of it stands still:
+
+| | kattegat-lane crops excluded, of 348 | anholt crops excluded, of 4,328 |
+| --- | --- | --- |
+| Excluding on the clusters | **62** | 4,007 |
+| Excluding on the register | **0** | 4,187 |
+
+Sixty-two dark candidates deleted in a box that contains no fixed structure at all, published or
+found. And the rule is not the problem: labelling every cluster by its own majority against the
+published coordinates — an oracle no unlabelled method could have — still leaves 71 to 115 lane
+crops inside structure-majority clusters at every k from 12 to 32, and at k ≤ 8 that oracle calls
+*everything* a structure, because 92.5% of this archive is structures. A ranking can be good while
+every cut through it is bad. That is what a 0.768 separation buys against a 93/7 class balance.
+
+So the clustering is fitted, measured and reported in
+[`docs/runs/structures-archive.json`](docs/runs/structures-archive.json), and the register is built
+from positions. No amount of representation quality outweighs 62 undeclared vessels that would
+have stopped being reported.
+
+### What it excludes, and what the output says
+
+At the operating point the chain actually publishes at — 0.90, chosen for precision:
+
+| | detections | at a registered structure | remaining |
+| --- | --- | --- | --- |
+| the archive, at its own 0.05 | 4,676 | 4,187 (89.5%) | 489 |
+| **published at 0.90** | **972** | **782 (80.5%)** | **190** |
+
+Four in five of the detections a run over this water would have had to explain are turbines.
+
+**Nothing is dropped.** An excluded detection keeps its row, its geometry and its score, carries
+`status = structure` instead of `dark`, and carries `structure_distance_m` saying how far it stood
+from the register entry that explained it — so anyone who suspects the register of eating a ship
+can check. Every run prints the count, including runs that excluded nothing:
+
+```
+darkvessel run --config configs/anholt-structures.yaml
+  47 detections in EPSG:25832 -> outputs/anholt-structures.gpkg
+  no AIS supplied: nothing was searched, so no detection here is a dark vessel
+  47 detection(s) excluded as fixed structures, leaving 0 unsearched: without the register this run would have reported 47
+```
+
+That config exists because `configs/embeddings.yaml` runs over the shipping lane, where the
+register excludes nothing — a stage demonstrated only where it has no effect has not been
+demonstrated. It has no AIS behind it, so it says `unsearched` rather than borrowing the stronger
+word.
+
+An AIS match beats a register entry. A vessel moored at a turbine keeps `status = matched` and its
+MMSI, and carries the structure distance anyway so the case is visible rather than merely handled.
+
+### What is not claimed
+
+The register is a file, not a rule. One acquisition cannot tell a mast from a ship that happens to
+be there, so only an archive can build one — which means a new study area needs ten weeks of
+imagery before it needs this, and a farm built next year needs the reference refetched. That is a
+property of the method rather than a gap in it, and it is why the exclusion crosses the seam as a
+small CSV a person can open and correct against a chart.
+
+Two boxes do not support a claim about Danish waters, and none is made. The one turbine on the box
+edge is not found. The recurring object in the Kattegat lane — 11 acquisitions, 16 crops, nothing
+published within 6 km of it — is still unexplained, and is deliberately *not* in the register: it
+is the clearest case in the whole archive of something this method must not quietly delete.
 
 ## Licence
 

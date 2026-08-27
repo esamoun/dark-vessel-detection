@@ -113,8 +113,55 @@ embedding:
     sheet: ../docs/figures/retrieval-archive.svg
     record: ../docs/runs/retrieval-archive.json
 
+# Separating fixed structures from vessels, which is what the embedding level was ultimately for.
+# Run after `embed`, and it needs no GPU and no network:
+#   darkvessel known      --config configs/embeddings.yaml   # needs a network, run once
+#   darkvessel structures --config configs/embeddings.yaml   # seconds of laptop CPU
+structures:
+  # How many distinct acquisitions a position must carry a detection in before this project will
+  # stop calling detections there dark. Twenty, and the number was chosen by measurement rather
+  # than by feel: it is the lowest floor at which every entry in the register stands on a
+  # structure somebody else published. At ten the register also contains the object in the
+  # Kattegat lane that nothing explains — and silently excluding an unexplained recurring object
+  # in a shipping lane is the exact failure this whole chain exists not to commit. What twenty
+  # costs is one turbine 73 m from the western edge of the box, which keeps being reported as a
+  # dark candidate: an over-report, which is the safe direction. See docs/decisions.md.
+  floor: 20
+  # How close two detections must be to be the same standing object. Measured: a registered
+  # structure's own detections sit 13 m from its centre at the median and 108 m at the worst,
+  # and the masts stand 583 m apart at the closest. A sixth of the spacing and beyond the wobble.
+  same_position_m: 100
+  # The radius a register entry explains at run time. The same number, because it is the same
+  # question — is this detection that standing object — and not the fusion's 200 m, which asks
+  # whether a declared position could explain a detection. Two questions, two numbers, both
+  # stated. At 200 m a register entry would cover a third of the water between two masts.
+  tolerance_m: 100
+  # How far a registered structure may stand from a published one and still be called the same
+  # structure. Loose on purpose and load-bearing for nothing: the matches it accepts sit 5.1 m
+  # apart at the median and 15.8 m at the worst, and the one position it rejects is 602 m out.
+  verify_tolerance_m: 200
+  # What the published coordinates are, one file per box, fetched by `darkvessel known` and kept
+  # in the repository so nothing else here needs a network. The lane's file is empty, and that is
+  # the control: no fixed structure is published in that box, and none is registered from it.
+  known:
+    anholt: ../data/reference/anholt-structures.csv
+    kattegat-lane: ../data/reference/kattegat-lane-structures.csv
+  # The clustering, which is what issue #14 expected to do the exclusion and does not. Eight,
+  # because the archive holds a few hundred distinct objects and a partition with more parts than
+  # the archive has kinds describes the crops rather than what is in them. It is reported rather
+  # than acted on; the measurement that decided that is in docs/decisions.md, 2026-08-27.
+  clusters: 8
+  seed: 20260827
+  register: ../data/reference/fixed-structures.csv
+  record: ../docs/runs/structures-archive.json
+
 run:
   # The same scene, the same declarations and the same detector as `kattegat-lane.yaml`; what
   # differs is that the layer carries sixteen more columns. Written to its own file so the two
   # can be put side by side and the embedding stage shown to change nothing else.
   output: ../outputs/kattegat-lane-embedded.gpkg
+  # The fixed structures this run will not call dark vessels, written by `darkvessel structures`.
+  # Over this scene it excludes nothing, because the study area contains no fixed structure — the
+  # exclusion is still applied, still reported, and the layer still carries the column. A stage
+  # that only shows its effect where the effect is convenient has not been demonstrated.
+  structures: ../data/reference/fixed-structures.csv

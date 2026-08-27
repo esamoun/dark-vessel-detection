@@ -1,0 +1,42 @@
+# The chain run over the Anholt wind farm, with the fixed-structure register in it.
+#
+# This exists because `configs/embeddings.yaml` runs over the shipping lane, where the register
+# excludes nothing — the study area was chosen for having no fixed structure in it. A stage that
+# has only ever been demonstrated where it has no effect has not been demonstrated. This is the
+# same chain, the same detector at the same operating point, over the box the turbines are in.
+#
+# It has no AIS. The Danish archive is fetched for the day of an acquisition and this water was
+# never the study area, so nothing was ingested for it — which means every detection here is
+# `unsearched` rather than `dark`, and the register's effect is on the count of detections that
+# would have needed explaining. That is a weaker demonstration than a dark count and it is the
+# honest one available; the reduction in dark candidates over the whole archive, at the
+# threshold the chain publishes at, is quantified by `darkvessel structures`.
+#
+#   darkvessel run --config configs/anholt-structures.yaml
+extends: embeddings.yaml
+
+area:
+  name: anholt
+  crs: EPSG:25832
+  # The box the archive draws its second half from — the study area this project used until
+  # 2026-08-14 and left for having no traffic. A documented 111-turbine lattice stands south and
+  # west of Anholt island; 65 of them, and the farm's transformer platform, are inside this
+  # rectangle. See docs/decisions.md.
+  bounds:
+    west: 11.15
+    south: 56.58
+    east: 11.40
+    north: 56.71
+
+run:
+  # One acquisition of the archive, chosen for holding the most detections above the chain's
+  # publishing threshold of any of the forty-seven — so what the register does is visible on it
+  # rather than inferred. Nothing about the scene is special otherwise: it is a descending pass
+  # like half the archive, and `darkvessel structures` reports the figure over all of them.
+  scene: ../data/archive/anholt/S1C_IW_GRDH_1SDV_20260627T053936_20260627T054001_008287_01063E_AE5A.tif
+  # Spelled out rather than omitted. No declarations were ever ingested for this water, so
+  # nothing was searched and no detection here is a dark vessel — the chain says `unsearched`,
+  # which is the distinction `fusion/match.py` exists to keep.
+  ais: null
+  output: ../outputs/anholt-structures.gpkg
+  structures: ../data/reference/fixed-structures.csv

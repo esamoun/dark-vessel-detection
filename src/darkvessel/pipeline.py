@@ -24,6 +24,7 @@ from darkvessel.embed.crops import crops_for
 from darkvessel.embed.embedder import Embedder, attach
 from darkvessel.fusion.azimuth import Geometry
 from darkvessel.fusion.match import classify
+from darkvessel.fusion.register import Register, without_a_register
 
 
 def run(
@@ -36,6 +37,7 @@ def run(
     max_gap: timedelta,
     geometry: Geometry | None = None,
     embedder: Embedder | None = None,
+    structures: Register | None = None,
 ) -> gpd.GeoDataFrame:
     """Run the chain over one scene and return its detections, georeferenced.
 
@@ -52,6 +54,11 @@ def run(
         embedder: What to describe each detection with, or None to describe none. Optional
             because the representation is a second question asked of the same detections, and a
             chain that does not ask it must not need a framework to answer it.
+        structures: The fixed structures this run will not call dark vessels, or None to
+            exclude nothing. Optional the way the embedder is, and unlike the embedder it
+            changes the verdict rather than adding to it — so a run without one writes the same
+            column, empty, and says in the layer that it excluded nothing rather than saying
+            nothing at all.
 
     Returns:
         A GeoDataFrame in the scene's CRS, one row per detection.
@@ -59,6 +66,12 @@ def run(
     found = detect_scene(scene.image, detector, tiling)
     detections = classify(
         to_ground(found, scene), ais, scene.acquired_at, tolerance_m, max_gap, geometry
+    )
+    # After the matching, never before it. A detection a declared vessel explains is a vessel,
+    # whatever else stands at that coordinate — see `Register.mark`, which keeps the distance on
+    # the row anyway so that a ship moored at a mast is visible rather than merely handled.
+    detections = (
+        without_a_register(detections) if structures is None else structures.mark(detections)
     )
     if embedder is None:
         return detections

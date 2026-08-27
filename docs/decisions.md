@@ -1832,7 +1832,11 @@ positions fall within 100 m and counts the acquisitions each standing position a
 | 10+ | 1 | 67 |
 | 20+ | 0 | 65 |
 | most persistent | 11 acquisitions | 46 of 47 |
-| crops at a position seen 5+ times | 18 of 348 | 2612 of 4328 |
+| crops at a position seen 5+ times | 23 of 348 | 4232 of 4328 |
+
+*(The last row read `18 of 348` and `2612 of 4328` until 2026-08-27. The notebook that produced
+it summed acquisition counts under a label that said crops — see docs/failures.md. The corrected
+figures are above; nothing else in this entry depended on them.)*
 
 The lane is a real control and not a rhetorical one: same detector, same threshold, same ten weeks,
 same crop geometry, different water. Sixty-five standing positions against a documented 111
@@ -1864,3 +1868,136 @@ window between decibels and amplitude is still the one fitted to a single Katteg
 across two boxes whose seas run from -37 dB to -11 dB — the `elsewhere` figure says the
 representation has not keyed on it at 11%, which is a bound rather than an all-clear.
 
+
+---
+
+## 2026-08-27 — Fixed structures are excluded on where they stand, not on what they look like
+
+**Supersedes** *What the embedding level claims, and what it does not*, in the sentence that says
+this project claims nothing about separating vessels from fixed structures. It does now. It also
+answers the open question left by *What the two-box archive says* — whether the 65 standing
+positions are turbines — and the answer is 64 turbines and a transformer platform.
+
+**Decision.** The chain will not report a detection as a dark vessel when it stands at a position
+in `data/reference/fixed-structures.csv`. That register holds 65 positions, every one of them a
+place the archive carried a detection in 20 or more distinct acquisitions, and every one verified
+against coordinates published by somebody else. The exclusion is applied after the AIS matching,
+the excluded rows stay in the layer carrying `status = structure` and `structure_distance_m`, and
+every run prints what it excluded whether or not it excluded anything.
+
+**The clustering over the embedding space is not what does it.** Issue #14's premise was that
+turbines cluster apart from vessels and can therefore be excluded wholesale, without labels. They
+do cluster apart; that is measured below and it is a real result. Excluding on it is not.
+
+### What recurrence says
+
+A position that carries a detection acquisition after acquisition is not a ship. `standing()`
+groups detections within 100 m of one another and counts the distinct acquisitions each group
+appears in. Over the two-box archive, 318 distinct positions, of which:
+
+| positions seen in… | kattegat-lane | anholt |
+| --- | --- | --- |
+| 2+ acquisitions | 21 | 91 |
+| 5+ | 2 | 69 |
+| 10+ | 1 | 67 |
+| 20+ | **0** | **65** |
+
+**Why the floor is 20.** It is the lowest floor at which every entry in the register stands on a
+structure somebody else published — and that is the property that matters, because a register
+entry nobody published is a coordinate at which this chain stops reporting dark vessels on the
+strength of its own archive alone.
+
+| floor | registered | published positions found | registered but unpublished |
+| --- | --- | --- | --- |
+| 5 | 71 | 66 of 66 | 3 |
+| 10 | 68 | 66 of 66 | 2 |
+| **20** | **65** | **65 of 66** | **0** |
+| 30 | 63 | 63 of 66 | 0 |
+
+At a floor of 10 the register contains the object in the Kattegat shipping lane that stands in 11
+acquisitions and that nothing published explains. Silently excluding an unexplained recurring
+object in a shipping lane is precisely the failure this chain exists not to commit, and it is
+worth more than the one turbine that 20 gives up — which sits **73 m from the western edge of the
+box**, is cut by the clip rather than missed by the method, and goes on being reported as a dark
+candidate. An over-report, which is the safe direction. `test_the_shipped_register_holds_no
+_position_the_published_lists_cannot_explain` fails if a future archive puts an unexplained entry
+back in.
+
+**The three distances, because swapping two of them would still verify and still run.** 100 m
+decides what one standing object is: a registered structure's own detections sit 13 m from its
+centre at the median and 108 m at the worst, and the masts stand 583 m apart at the closest, so it
+is six times the wobble and a sixth of the spacing. 100 m again is the radius a register entry
+explains at run time — the same number because it is the same question. 200 m is how far a
+registered structure may sit from a published one and still be called the same structure, and it
+is load-bearing for nothing: the matches it accepts are 5.1 m apart at the median and 15.8 m at
+the worst, and the one position it rejects is 602 m out.
+
+### What it was verified against, and what that reference is worth
+
+**OpenStreetMap, through the Overpass API**, fetched by `darkvessel known` into
+`data/reference/*-structures.csv` and kept in the repository so nothing else needs a network. It
+is not the authoritative source: the authority for Danish turbines is Energistyrelsen's
+Stamdataregister, which as of today is published through a map viewer rather than as a file this
+could fetch. Two limits, both recorded per row in the file rather than left for a reader to find:
+**108 of the 112 structures carry OSM's own `note=position only approximate`**, and OSM is a
+volunteer record with no completeness guarantee.
+
+What survives those limits is the agreement itself. An approximate volunteer list and an
+independent ten-week radar archive place the same 65 objects **5.1 m apart at the median** — half
+a pixel. A list that were badly wrong could not do that, and neither could a method that were.
+The count agrees too, at the level the archive can see: OSM records 111 turbines at Anholt, which
+is the documented size of the farm, and 65 of them plus the farm's transformer platform fall
+inside the archive's rectangle.
+
+**The platform is in the reference on purpose.** A reference containing only turbines would have
+reported the single most persistent non-mast object in the archive — 37 acquisitions, 1759 m from
+the nearest turbine — as this method's one false alarm. It is `Transformerplatform Anholt
+Havmøllepark`, and it is a fixed structure by every argument that makes a mast one.
+
+### What the clustering says, and why it is reported rather than acted on
+
+Eight spherical k-means clusters over the 16-dimensional embeddings, seed 20260827. The embedding
+**does** carry the distinction: ranked by similarity to the centre of the crops recurrence is sure
+about, it orders standing crops ahead of the rest at **0.768** against 0.5 at chance, with no
+threshold involved. Seven of the eight clusters are 94–97% standing crops and the eighth is 51%.
+Those are identifiable clusters, and that is issue #14's first criterion met.
+
+The second criterion is where it fails. Calling a cluster fixed when 80% or more of it stands
+still, and excluding on that, would take out **62 of the 348 Kattegat lane crops** — 18% of the
+box that contains no fixed structure at all, published or found. The register takes out **zero**
+from that box. Nor is the rule the problem: labelling every cluster by its own majority against
+the published coordinates — an oracle no unlabelled method could have — still leaves 71 to 115
+lane crops inside structure-majority clusters at every k from 12 to 32, and at k ≤ 8 the oracle
+calls *everything* a structure, because 92.5% of this archive is structures. A ranking can be good
+while every cut through it is bad, and that is what a 0.768 separation with a 93/7 class balance
+buys.
+
+**So the honest reading of the premise is that it is half right.** The structures are separable in
+the embedding space, measurably. They are not separable *well enough to delete a detection on*,
+and deleting detections is what this was for. The number that decides it is 62 dark candidates
+that would have stopped being reported in a shipping lane, and no representation quality argument
+outweighs that.
+
+### What it excludes, quantified
+
+Over the archive, at the chain's own publishing threshold of 0.90 — the detections a run would
+actually have reported:
+
+| | detections | at a registered structure | remaining |
+| --- | --- | --- | --- |
+| archive, at its own 0.05 | 4676 | 4187 (89.5%) | 489 |
+| **published at 0.90** | **972** | **782 (80.5%)** | **190** |
+
+On one scene, end to end: `darkvessel run --config configs/anholt-structures.yaml` returns 47
+detections over the farm and the register explains all 47. That config exists because
+`configs/embeddings.yaml` runs over the shipping lane, where the register excludes nothing — a
+stage demonstrated only where it has no effect has not been demonstrated. It has no AIS behind it,
+so its detections are `unsearched` rather than `dark`, and the printed line says `unsearched`
+rather than borrowing the stronger word.
+
+**Cost.** A fourth value in the `status` column, a column on every layer this chain writes
+including the ones that exclude nothing, and a reference file per archive box that has to be
+refetched when a farm is built. The exclusion is a file rather than a rule inferred at run time,
+which means one acquisition can never produce one: only the archive can, which is correct — a
+single scene cannot tell a mast from a ship that happens to be there — and it means a new study
+area needs an archive before it needs this.

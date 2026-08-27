@@ -1,7 +1,10 @@
 # Data and outputs — never committed.
 # Anchored to the repository root: unanchored, `data/` also matches the source package
 # src/darkvessel/data/ and silently drops it from the repository.
-/data/
+# `/data/*` rather than `/data/`, so that the one exception below can be made: git does not
+# descend into an ignored directory, and a negation under one is never reached.
+/data/*
+!/data/reference/
 /outputs/
 /checkpoints/
 *.tif

@@ -41,14 +41,19 @@ from darkvessel.cli import (
     embedding_request_from,
     fusion_settings_from,
     main,
+    structures_request_from,
     trained_request_from,
 )
 from darkvessel.config import load_config
 from darkvessel.data.scene import Scene
+from darkvessel.data.structures import Known
 from darkvessel.data.synthetic import BOUNDARY_TARGET, SIZE_PX, write_synthetic_inputs
 from darkvessel.data.tiling import Tiling
 from darkvessel.detect.threshold import BrightPixelDetector
 from darkvessel.embed.embedder import columns, vectors_of
+from darkvessel.embed.structures import verify
+from darkvessel.fusion.match import DARK, MATCHED, UNSEARCHED
+from darkvessel.fusion.register import STRUCTURE, Register
 from darkvessel.pipeline import run
 
 # The scene the tests are built on: 10 m pixels, north-up, in the working CRS. Every expected
@@ -829,4 +834,176 @@ def test_a_config_that_never_heard_of_the_embedding_stage_runs_without_one() -> 
     assert _embedder_from(load_config(SHIPPED_CONFIG), CONFIGS) is None
     assert (
         _embedder_from({"embedding": {"enabled": False, "encoder": "nowhere.pt"}}, CONFIGS) is None
+    )
+
+
+STRUCTURES_CONFIG = CONFIGS / "anholt-structures.yaml"
+
+
+def a_register(places: list[tuple[float, float]], tolerance_m: float = 100.0) -> Register:
+    return Register(
+        positions=pd.DataFrame(
+            {
+                "x": [x for x, _ in places],
+                "y": [y for _, y in places],
+                "acquisitions": [40] * len(places),
+                "source": ["a test"] * len(places),
+            }
+        ),
+        crs=WORKING_CRS,
+        tolerance_m=tolerance_m,
+    )
+
+
+def test_a_run_with_no_register_writes_the_column_and_calls_nothing_a_structure() -> None:
+    """The claim the whole optional stage rests on, made where the chain actually runs."""
+    scene = synthetic_scene(targets=[(20, 30), (40, 10)])
+
+    plain = detect(scene, None)
+
+    assert plain["structure_distance_m"].isna().all()
+    assert set(plain["status"]) == {UNSEARCHED}
+
+
+def test_a_register_over_a_detection_takes_it_out_of_the_dark_count_through_the_whole_chain():
+    """End to end, because the exclusion is applied inside `run` and nowhere a unit test reaches.
+
+    The target at row 20, column 30 lands at 639_305, 6_281_795 — worked out from the affine
+    transform above, the way every other coordinate in this file is.
+    """
+    scene = synthetic_scene(targets=[(20, 30), (40, 10)])
+    ais = ais_slice([])
+
+    excluded = run(
+        scene=scene,
+        ais=ais,
+        detector=BrightPixelDetector(threshold=0.5),
+        tiling=ONE_TILE,
+        tolerance_m=TOLERANCE_M,
+        max_gap=MAX_GAP,
+        structures=a_register([(639_305.0, 6_281_795.0)]),
+    )
+
+    on_the_mast = detection_at(excluded, 639_305.0, 6_281_795.0)
+    elsewhere = detection_at(excluded, 639_105.0, 6_281_595.0)
+    assert on_the_mast["status"] == STRUCTURE
+    assert elsewhere["status"] == DARK
+    # And it is still in the layer, with the evidence on it: the exclusion is reported, not done.
+    assert len(excluded) == 2
+    assert on_the_mast["structure_distance_m"] == pytest.approx(0.0, abs=1.0)
+
+
+def test_the_register_leaves_every_other_column_of_the_run_exactly_as_it_was() -> None:
+    """The same promise the embedding stage makes, and this one changes a verdict rather than
+    adding to it — so what has to hold is that it changes *only* the rows it explains."""
+    scene = synthetic_scene(targets=[(20, 30), (40, 10)])
+    ais = ais_slice([("219000001", ACQUIRED_AT, 639_345.0, 6_281_795.0)])
+
+    without = detect(scene, ais)
+    with_register = run(
+        scene=scene,
+        ais=ais,
+        detector=BrightPixelDetector(threshold=0.5),
+        tiling=ONE_TILE,
+        tolerance_m=TOLERANCE_M,
+        max_gap=MAX_GAP,
+        # Far from either target, so nothing is excluded and the layer must be the old one.
+        structures=a_register([(600_000.0, 6_200_000.0)]),
+    )
+
+    pd.testing.assert_frame_equal(with_register[without.columns], without)
+
+
+def test_a_vessel_that_declared_itself_survives_a_register_entry_on_top_of_it() -> None:
+    """A moored ship is a ship. The AIS match names an MMSI; a register entry names a coordinate."""
+    scene = synthetic_scene(targets=[(20, 30)])
+    ais = ais_slice([("219000001", ACQUIRED_AT, 639_345.0, 6_281_795.0)])
+
+    both = run(
+        scene=scene,
+        ais=ais,
+        detector=BrightPixelDetector(threshold=0.5),
+        tiling=ONE_TILE,
+        tolerance_m=TOLERANCE_M,
+        max_gap=MAX_GAP,
+        structures=a_register([(639_305.0, 6_281_795.0)]),
+    )
+
+    assert both["status"].tolist() == [MATCHED]
+    assert both["mmsi"].tolist() == ["219000001"]
+    # Recorded anyway, so a vessel sitting on a registered structure is visible to anyone reading
+    # the layer rather than merely handled correctly and never mentioned.
+    assert both["structure_distance_m"].iloc[0] == pytest.approx(0.0, abs=1.0)
+
+
+def test_a_config_that_never_heard_of_the_register_runs_without_one() -> None:
+    """Every config in this project written before this level, and the synthetic demo since."""
+    from darkvessel.cli import _structures_from
+
+    assert _structures_from(load_config(SHIPPED_CONFIG)["run"], CONFIGS) is None
+
+
+def test_the_shipped_structures_config_is_read_without_the_framework_installed() -> None:
+    """Key by key, by the same function the command parses it with. No command here is runnable
+    in CI — the register needs an hour of archive behind it — so the config is what can be held."""
+    config = load_config(EMBEDDING_CONFIG)
+    request = structures_request_from(config, EMBEDDING_CONFIG.parent)
+
+    assert request["floor"] >= 2
+    assert request["clusters"] >= 2
+    # Every box the archive draws on has a published reference named for it, including the one
+    # whose reference is empty: "nothing is published here" is this level's control, and a box
+    # with no file at all could not state it.
+    assert set(request["known"]) == set(
+        archive_request_from(config, EMBEDDING_CONFIG.parent)["boxes"]
+    )
+    for box, path in request["known"].items():
+        assert path.exists(), f"{box} names a reference that is not in the repository"
+
+
+def test_the_run_time_radius_is_the_distance_that_defines_one_standing_object() -> None:
+    """Three distances, three questions, and swapping two of them would still verify and still run.
+
+    The radius a register entry explains at is the distance at which two detections are the same
+    standing object — not the fusion's tolerance, which asks whether a declared position could
+    explain a detection. The config states both, and this holds them apart.
+    """
+    config = load_config(EMBEDDING_CONFIG)
+    request = structures_request_from(config, EMBEDDING_CONFIG.parent)
+
+    assert request["tolerance_m"] == request["same_position_m"]
+    assert request["tolerance_m"] < fusion_settings_from(config)["tolerance_m"]
+
+
+def test_the_shipped_register_holds_no_position_the_published_lists_cannot_explain() -> None:
+    """The floor was chosen for exactly this, and nothing else measures whether it still holds.
+
+    A register entry nobody published is a coordinate at which this chain will stop reporting
+    dark vessels on the strength of its own archive alone. At a floor of 10 the register contains
+    the recurring object in the Kattegat shipping lane that nothing explains; at 20 it does not,
+    and that is the whole argument for the number. If a future archive puts an unexplained entry
+    back into the register, this fails rather than the exclusion quietly widening.
+    """
+    config = load_config(EMBEDDING_CONFIG)
+    relative_to = EMBEDDING_CONFIG.parent
+    request = structures_request_from(config, relative_to)
+    if not request["register"].exists():
+        pytest.skip("no register built in this checkout; `darkvessel structures` writes it")
+
+    register = Register.read(request["register"])
+    published = pd.concat(
+        [
+            Known.read(path)
+            .inside(archive_request_from(config, relative_to)["boxes"][box])
+            .placed(config["area"]["crs"])
+            for box, path in request["known"].items()
+        ],
+        ignore_index=True,
+    )
+
+    checked = verify(register.positions, published, request["verify_tolerance_m"])
+
+    assert checked.unpublished == 0, (
+        f"{checked.unpublished} registered structure(s) stand where nothing is "
+        "published; the chain would stop reporting dark vessels there on its own word"
     )

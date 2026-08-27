@@ -170,10 +170,15 @@ The list is long, and its length is the point.
   untested because there is no data for it — `docs/failures.md`, 2026-08-17.
 - **No land in the frame, ever.** The study area is open water by construction. Nothing in this
   chain masks land, and no coastline has been put in front of it.
-- **No fixed structures in the frame.** The study area was moved off the Anholt wind farm on
-  2026-08-14. Offshore turbines are bright point scatterers that a ship detector returns happily;
-  separating them is issue #14 and it has not been built, so a dark candidate here is not yet a
-  finding about the sea.
+- **Fixed structures are excluded only where an archive has seen them.** Offshore turbines are
+  bright point scatterers that a ship detector returns happily, and since 2026-08-27 the chain
+  will not call one a dark vessel: `data/reference/fixed-structures.csv` holds 65 positions the
+  Anholt archive carried a detection at in 20+ acquisitions, every one verified against published
+  coordinates to 5.1 m at the median. The limit is what builds that file. Only an archive can —
+  one acquisition cannot tell a mast from a ship that happens to be there — so a structure in
+  water this project has not watched for ten weeks is still reported as a dark candidate. The
+  study area itself has none, published or found, which is why the exclusion changes nothing over
+  the lane and everything over the farm.
 - **Calm water only.** High wind roughens the sea surface and raises the clutter floor. No scene
   in a high sea state has been run, and the behaviour is not extrapolable from these numbers.
 - **Sparse traffic only.** Six vessels in the frame. Nothing has been run over a port approach,
