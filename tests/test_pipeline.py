@@ -45,6 +45,7 @@ from darkvessel.cli import (
     trained_request_from,
 )
 from darkvessel.config import load_config
+from darkvessel.context.gee_layers import CONTEXT, UNAVAILABLE
 from darkvessel.data.scene import Scene
 from darkvessel.data.structures import Known
 from darkvessel.data.synthetic import BOUNDARY_TARGET, SIZE_PX, write_synthetic_inputs
@@ -853,6 +854,25 @@ def a_register(places: list[tuple[float, float]], tolerance_m: float = 100.0) ->
         crs=WORKING_CRS,
         tolerance_m=tolerance_m,
     )
+
+
+def test_the_chain_writes_the_contextual_columns_on_a_run_that_can_never_sample_them() -> None:
+    """The synthetic run has no network behind it, and still has to carry the same schema.
+
+    Sampling the contextual layers needs Earth Engine, so it is a command of its own; what the
+    chain owes them is the columns. Without this, a layer written before `darkvessel context` and
+    one written after it have different attribute tables and cannot be stacked — and the four
+    empty columns are also what says the layers were not sampled, rather than sampled and empty.
+    """
+    scene = synthetic_scene(targets=[(20, 30), (40, 10)])
+
+    plain = detect(scene, None)
+
+    assert all(name in plain.columns for name in CONTEXT)
+    assert plain["distance_to_shore_m"].isna().all()
+    assert plain["depth_m"].isna().all()
+    assert plain["fishing_hours"].isna().all()
+    assert set(plain["eez"]) == {UNAVAILABLE}
 
 
 def test_a_run_with_no_register_writes_the_column_and_calls_nothing_a_structure() -> None:
