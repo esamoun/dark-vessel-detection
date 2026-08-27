@@ -53,7 +53,7 @@ The pipeline is built in four levels, each one shippable on its own.
 | **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.73 recall over a held-out split of 3000 sub-images, and the three changes that did not clear the noise are written up rather than removed |
 | **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene with the trained detector in it, since 2026-08-16 |
 | **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | **complete.** Runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching; detections are described by a representation learned without labels, and retrieval across ten weeks of acquisitions returns the same object 71% of the time against 0.02% at chance. Offshore structures are separated from vessels and excluded from the dark count without a single label: 65 fixed positions found by recurrence across 47 acquisitions, every one of them verified against published coordinates to 5.1 m, taking 80.5% of the detections a run over the wind farm would have had to explain |
-| **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | planned |
+| **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | the four variables are sampled server-side and travel on the detections, with a value nobody could sample kept missing rather than zeroed; the sampling has not yet been run against Earth Engine, and the analysis it feeds is not started |
 
 The chain that carries these was built first, deliberately, with a deterministic stand-in where
 the detector would go; the stand-in is still there, behind the same parameter, and is what the
@@ -137,7 +137,8 @@ src/darkvessel/
               fixed structures the archive holds and verifying them
   fusion/     AIS interpolation to acquisition time, spatio-temporal matching, the
               register of fixed structures a run will not call dark vessels
-  context/    Earth Engine contextual layers
+  context/    contextual variables sampled at each detection: distance to shore, water
+              depth, EEZ membership, fishing effort
   viz/        GeoJSON export for the web map
 configs/      pipeline configuration
 data/reference/  published structure coordinates, and the register built from the archive
@@ -954,6 +955,77 @@ Two boxes do not support a claim about Danish waters, and none is made. The one 
 edge is not found. The recurring object in the Kattegat lane — 11 acquisitions, 16 crops, nothing
 published within 6 km of it — is still unexplained, and is deliberately *not* in the register: it
 is the clearest case in the whole archive of something this method must not quietly delete.
+
+## Where a detection is standing — 2026-08-27
+
+A detection is a coordinate and a score. Whether it is interesting depends on the water it is in:
+eight kilometres off a coast, in twelve metres, inside a national EEZ, in a square where fishing
+effort has always been recorded, is a different object from the same score in four hundred metres
+on the high seas. None of that is in the radar scene and all of it is in somebody's published
+raster.
+
+`darkvessel context` samples four of them at every detection of a run and writes them back onto
+the rows:
+
+```bash
+darkvessel context --config configs/kattegat-lane.yaml
+```
+
+What it reports — the shape of the answer rather than a run that has been made, for the reason in
+[What is not claimed](#what-is-not-claimed-3) below:
+
+```
+6 detections sampled against the catalogue -> outputs/kattegat-lane-trained.gpkg
+  distance to shore: 6 of 6 detection(s) carry a value
+  water depth: 6 of 6 detection(s) carry a value
+  fishing effort: 6 of 6 detection(s) carry a value
+  EEZ: 0 in a named EEZ, 0 on the high seas, 6 unavailable
+```
+
+The sampling happens on Google's side of the connection: every detection of the scene goes across
+as one feature collection and comes back as one table of values, never a raster. Fetching four
+global products to sample a few hundred points is tens of gigabytes, and it is the same reason the
+Sentinel-1 export clips and reprojects server-side.
+
+**It is a command of its own, not a stage of `run`.** The chain is a thing that executes with
+nothing behind it — that is what the injected detector buys and what the synthetic demo shows —
+and a `run` that sometimes reaches for Earth Engine would have to be explained before it could be
+demonstrated. So `run` writes the four columns empty on every layer it produces, and this fills
+them in. A layer whose attribute table depends on which stages were switched on is a layer that
+cannot be stacked with the one beside it.
+
+### A value nobody could sample is missing, not zero
+
+This is the whole constraint of the level. Every one of the four variables has a plausible zero:
+no fishing effort recorded in a square is a real finding, zero metres from shore is a detection
+aground, a depth of zero is the waterline. A layer that could not answer and filled in a zero would
+be indistinguishable from any of them — and the question this level exists to ask, where does
+undeclared traffic concentrate and under what conditions, would be reading gaps in somebody's
+coverage as findings about the sea.
+
+So the numbers come back NaN, which the GeoPackage carries as NULL and QGIS shows as empty, and
+the EEZ column carries two different words. `high seas` means the position is outside every zone,
+which is an answer. `unavailable` means the layer did not give one. The tests hold that
+distinction on the way in and again after a round trip through the file, because the criterion is
+about the written output and a driver is where a NaN would be lost.
+
+The EEZ reads `unavailable` in the run above, and that is the honest state of the shipped config:
+Marine Regions publishes the world's EEZ boundaries under CC-BY, Earth Engine's public catalogue
+does not carry them, and they have to be ingested once as an asset and named in the config. The
+column says so rather than being absent.
+
+### What is not claimed
+
+**The four assets have not been sampled against Earth Engine.** Everything on this side of the
+connection is tested — the frame the points are asked in, the row each answer lands on, the length
+of the reply checked rather than trusted, what a missing value looks like in the file — and
+nothing on the far side is. The output above is the shape of the answer, not a measurement. The
+same line is drawn in [`docs/decisions.md`](docs/decisions.md) and in `test_export.py`, which
+declines in the same way to assert what Earth Engine's filters select.
+
+**Sampling is not analysis.** This attaches the variables; it does not say where dark vessels
+concentrate. One scene carries six detections of which one is dark, and no distribution is worth
+reading off that. What exists now is the column an eventual answer would be computed from.
 
 ## Licence
 

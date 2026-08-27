@@ -20,6 +20,8 @@ import pandas as pd
 from pyproj import CRS, Transformer
 
 from darkvessel.config import load_config
+from darkvessel.context.gee_layers import LayerSources, coverage, earth_engine_layers
+from darkvessel.context.gee_layers import attach as attach_context
 from darkvessel.data.ais import load_ais, slice_for, write_ais
 from darkvessel.data.area import Bounds
 from darkvessel.data.dma import danish_maritime_authority
@@ -36,7 +38,7 @@ from darkvessel.detect.curve import curve, svg
 from darkvessel.detect.curve import table as curve_table
 from darkvessel.detect.dataset import Layout, Subset, catalogue, split_by_scene
 from darkvessel.detect.detector import Detector
-from darkvessel.detect.geo import to_ground, write_detections
+from darkvessel.detect.geo import DETECTIONS_LAYER, to_ground, write_detections
 from darkvessel.detect.infer import detect_scene
 from darkvessel.detect.ladder import WINDOW, Rung, judge
 from darkvessel.detect.ladder import table as ladder_table
@@ -155,6 +157,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     retrieve_command.add_argument("--config", type=Path, required=True)
 
+    context_command = commands.add_parser(
+        "context",
+        help="sample the contextual layers at every detection of a run (needs credentials)",
+    )
+    context_command.add_argument("--config", type=Path, required=True)
+
     args = parser.parse_args(argv)
 
     if args.command == "synthesise":
@@ -183,6 +191,8 @@ def main(argv: list[str] | None = None) -> int:
         return _structures(args.config)
     if args.command == "retrieve":
         return _retrieve(args.config)
+    if args.command == "context":
+        return _context(args.config)
     return _run(args.config)
 
 
@@ -1542,3 +1552,80 @@ def _clustering_over(
             "crops_by_box": cost,
         },
     }
+
+
+def context_request_from(config: dict[str, Any], relative_to: Path) -> dict[str, Any]:
+    """Which published product answers each contextual question, read out of a config file.
+
+    Separate from the command that runs it for the reason `export_request_from` is: this is the
+    third stage that needs credentials, and a mistyped asset identifier that surfaced only after
+    someone had authenticated and waited is a fault the test suite should have caught. What can
+    be checked here is checked here — a scale, a search radius, and a window that runs forwards.
+
+    `relative_to` is unused today and is in the signature anyway, because every other
+    `*_request_from` in this file resolves a path against the config and this one will the day an
+    EEZ layer is ingested from a file in the repository rather than named as a remote asset.
+    """
+    context = config["context"]
+    shore, depth, eez, effort = (
+        context["shore"],
+        context["depth"],
+        context["eez"],
+        context["effort"],
+    )
+    return {
+        "sources": LayerSources(
+            shore=str(shore["asset"]),
+            search_radius_m=float(shore["search_radius_m"]),
+            depth=str(depth["asset"]),
+            depth_band=str(depth["band"]),
+            # Null is a configuration rather than an omission: it says this run has no such layer
+            # and every row will read `unavailable`. See `LayerSources`.
+            eez=None if eez["asset"] is None else str(eez["asset"]),
+            eez_property=str(eez["property"]),
+            effort=None if effort["asset"] is None else str(effort["asset"]),
+            effort_band=str(effort["band"]),
+            effort_start=str(effort["start"]),
+            effort_end=str(effort["end"]),
+            scale_m=float(context["scale_m"]),
+        ),
+    }
+
+
+def _context(config_path: Path) -> int:
+    """Sample the contextual layers at every detection this config's run wrote.
+
+    A command of its own rather than a stage of `run`, and that placement is the decision. The
+    chain is a thing that runs on a laptop with no network in it — that is what the injected
+    detector buys and what the synthetic demo demonstrates — and folding a credentialed call into
+    it would make the flagship command sometimes need Earth Engine. So `run` writes the four
+    columns empty, on every layer, and this fills them in.
+
+    It reads the layer the run wrote and writes it back, rather than producing a second file
+    beside it. A detection and its context are one row; two files joined on a row order nobody
+    stated is the sidecar `embed/embedder.py` refuses for the same reason.
+    """
+    config = load_config(config_path)
+    relative_to = config_path.parent
+    request = context_request_from(config, relative_to)
+    output = (relative_to / config["run"]["output"]).resolve()
+
+    if not output.exists():
+        raise FileNotFoundError(
+            f"{output} does not exist; `darkvessel context` samples the layers at the detections "
+            f"of a run, so run `darkvessel run --config {config_path}` first"
+        )
+
+    detections = gpd.read_file(output, layer=DETECTIONS_LAYER)
+    sampled = attach_context(
+        detections,
+        earth_engine_layers(
+            request["sources"], project=config.get("earthengine", {}).get("project")
+        ),
+    )
+    write_detections(sampled, output)
+
+    print(f"{len(sampled)} detections sampled against the catalogue -> {output}")
+    for line in coverage(sampled):
+        print(f"  {line}")
+    return 0

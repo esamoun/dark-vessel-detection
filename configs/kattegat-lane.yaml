@@ -105,6 +105,72 @@ earthengine:
 export:
   out: ../data/real/kattegat-lane.tif
 
+# What is sampled at each detection once the chain has written them, by
+# `darkvessel context --config configs/kattegat-lane.yaml`. Needs the same credentials the export
+# does; `darkvessel run` writes these four columns empty and never reaches for a network.
+#
+# The asset identifiers live here rather than in the code because the catalogue is somebody
+# else's and it moves — the same reason the checkpoint path is a config key. What the code
+# guarantees is that a layer it cannot sample comes back missing rather than zero.
+#
+# **None of these four has been sampled against Earth Engine yet.** The assets below are named
+# from the catalogue's own documentation rather than from a run that returned values, and until
+# `darkvessel context` has been executed against them that is all they are — which is why the
+# identifiers are here, where they can be corrected without touching code. What the test suite
+# covers is everything on this side of the connection. See docs/decisions.md, 2026-08-27.
+context:
+  # Distance to shore. Not a published raster but a distance to a published coastline: Earth
+  # Engine returns, for any feature collection, an image of the metres to its nearest feature,
+  # computed on its own side. LSIB is simplified land polygons at country scale, which is coarse
+  # for a fjord and adequate for the open Kattegat, where the nearest land is 10 km away and the
+  # question is which side of a shipping lane a detection sits on.
+  #
+  # Beyond the search radius the image is masked, so "further from land than this was not
+  # measured" arrives as a missing value rather than as the radius itself. 200 km is far past
+  # anything in Danish waters; it is here so that the same config over the North Atlantic would
+  # report unmeasured rather than wrong.
+  shore:
+    asset: USDOS/LSIB_SIMPLE/2017
+    search_radius_m: 200000
+  # Water depth, from ETOPO1's bedrock band: metres relative to sea level, so the sea is
+  # negative. About 1.85 km on a side, which is a real limitation for a strait — the Kattegat's
+  # depth changes over a shorter distance than one ETOPO1 cell — and it is the bathymetry the
+  # public catalogue has. A finer product (GEBCO, or the Danish national survey) would be
+  # ingested as an asset and named here instead, and nothing else would change.
+  depth:
+    asset: NOAA/NGDC/ETOPO1
+    band: bedrock
+  # EEZ membership. **Null on purpose, and the one variable of the four that cannot be sampled
+  # from the public catalogue at all.** Marine Regions publishes the world's EEZ boundaries under
+  # CC-BY; Earth Engine does not carry them, so they have to be ingested once as a table asset
+  # and named here. Until that is done every detection reads `unavailable` in the `eez` column —
+  # which is the point of that word existing, and is a different statement from `high seas`.
+  #
+  # `property` is the field of that table the name is taken from; Marine Regions calls it
+  # SOVEREIGN1. It is stated here because a table whose columns are not this project's is not a
+  # table this project should be guessing at.
+  eez:
+    asset: null
+    property: SOVEREIGN1
+  # Fishing effort. Global Fishing Watch's daily hours, summed over the window below — one day at
+  # one point is almost always zero and says nothing about the water.
+  #
+  # The window is not the year of the acquisition, and it cannot be: this collection ends years
+  # before these scenes were acquired. So what this samples is *where fishing effort has been
+  # recorded*, which is a statement about the water rather than about the day — a detection in a
+  # square that has never carried fishing hours is a different object from one in a square that
+  # always has. That is the question level 4 asks, and it is worth being explicit that it is not
+  # "was anyone fishing here that morning", which no public product can answer for 2026.
+  effort:
+    asset: GFW/GFF/V1/fishing_hours
+    band: WLD
+    start: 2016-01-01
+    end: 2017-01-01
+  # The grid the layers are reduced on. Coarser than the 10 m the scene is exported at, and
+  # deliberately: the finest of these four products is ETOPO1 at 1.85 km, and sampling a 1.85 km
+  # cell at 10 m would not make the answer sharper, it would make it look sharper.
+  scale_m: 1000
+
 run:
   scene: ../data/real/kattegat-lane.tif
   # Written by `darkvessel ais`, from the archive for the day of the acquisition above. Run that

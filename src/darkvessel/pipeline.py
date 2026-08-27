@@ -15,6 +15,7 @@ from datetime import timedelta
 
 import geopandas as gpd
 
+from darkvessel.context.gee_layers import without_context
 from darkvessel.data.scene import Scene
 from darkvessel.data.tiling import Tiling
 from darkvessel.detect.detector import Detector
@@ -73,6 +74,12 @@ def run(
     detections = (
         without_a_register(detections) if structures is None else structures.mark(detections)
     )
+    # Empty, always, and never filled in here. The contextual variables come from Earth Engine,
+    # and this function is the one place in the project guaranteed to run with no network behind
+    # it — `darkvessel context` samples them afterwards, into the layer this one writes. What the
+    # chain owes them is the columns: a layer whose schema depends on whether a credentialed
+    # stage was run is a layer that cannot be stacked with the one beside it.
+    detections = without_context(detections)
     if embedder is None:
         return detections
 

@@ -31,15 +31,21 @@ _PARTIAL = ".partial"
 
 
 @contextmanager
-def atomically(path: Path) -> Iterator[Path]:
+def atomically(path: Path, keep_suffix: bool = False) -> Iterator[Path]:
     """Yield somewhere to write `path`, and put it there once it is whole.
 
     The one rule this module exists for, in the one place that states it. Anything that goes
     wrong inside — an interrupt, a full disk, an out-of-memory on the way to `state_dict` —
     leaves nothing behind and leaves whatever was already at `path` untouched.
+
+    `keep_suffix` puts the extension back on the end of the fragment, for writers that read it.
+    A checkpoint does not care what it is called, and `.partial` is deliberately something
+    `_CHECKPOINT` cannot match; a GDAL driver does care, and warns that a `.gpkg.partial` is not
+    a GeoPackage while writing one anyway. The fragment is still `.partial` before the extension,
+    so it is still not a name anything in this project takes for a finished file.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    partial = path.with_name(path.name + _PARTIAL)
+    partial = path.with_name(path.name + _PARTIAL + (path.suffix if keep_suffix else ""))
 
     try:
         yield partial
