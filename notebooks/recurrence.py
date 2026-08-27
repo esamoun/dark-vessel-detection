@@ -28,40 +28,17 @@ Costs no GPU and no network. It reads the provenance of the archive, never the p
 from collections.abc import Sequence
 from pathlib import Path
 
-import numpy as np
-
 from darkvessel.embed.archive import Archive
+from darkvessel.embed.structures import SAME_POSITION_M, standing
 
 ARCHIVE = Path(__file__).resolve().parents[1] / "data" / "archive" / "crops.npz"
 
-# Anholt's turbines stand some 600 m apart and a detection wobbles by a pixel or two, so this
-# separates neighbouring masts while holding successive sightings of one mast together. It is
-# deliberately *not* the fusion's 200 m match tolerance: that number answers "could this declared
-# position explain this detection", and this one answers "is this the same standing object".
-TOLERANCE_M = 100.0
-
 # How many acquisitions a position has to be seen in before it is reported as standing. Reported
 # at several floors rather than one, because a single threshold invites the reader to take it as
-# a definition of "fixed" — which it is not, and which is #14's job to establish.
+# a definition of "fixed" — which it is not, and which was #14's job to establish. It since has:
+# `configs/embeddings.yaml` sets the floor at 20, and the argument for that number is that it is
+# the lowest one at which every registered structure stands on a published one.
 FLOORS = (2, 5, 10, 20)
-
-
-def standing_positions(x: np.ndarray, y: np.ndarray, scenes: np.ndarray) -> list[int]:
-    """How many distinct acquisitions each standing position was detected in, largest first.
-
-    Greedy: every crop not yet claimed starts a position, and every unclaimed crop within the
-    tolerance joins it. Good enough for a lattice whose spacing is six times the tolerance, and
-    stated as greedy rather than dressed up as clustering — the clustering is #14.
-    """
-    unclaimed = np.ones(len(x), dtype=bool)
-    seen = []
-    for seed in range(len(x)):
-        if not unclaimed[seed]:
-            continue
-        near = unclaimed & (np.hypot(x - x[seed], y - y[seed]) <= TOLERANCE_M)
-        unclaimed &= ~near
-        seen.append(len(set(scenes[near])))
-    return sorted(seen, reverse=True)
 
 
 def report(archive: Archive, boxes: Sequence[str]) -> None:
@@ -72,9 +49,12 @@ def report(archive: Archive, boxes: Sequence[str]) -> None:
             print(f"\n{box}: no crops in the archive")
             continue
 
-        seen = standing_positions(
-            rows["x"].to_numpy(), rows["y"].to_numpy(), rows["scene"].to_numpy()
-        )
+        # The package's own grouping, not a second copy of it living in a notebook. This file was
+        # written before `embed/structures.py` existed and held the only implementation; keeping
+        # its own would mean the pre-check and the method could drift, and the whole value of the
+        # pre-check is that it answers the same question the method does.
+        found = standing(rows, tolerance_m=SAME_POSITION_M)
+        seen = sorted(found.positions["acquisitions"], reverse=True)
         print(
             f"\n{box}: {len(rows)} crops over {rows['scene'].nunique()} acquisitions, "
             f"{len(seen)} standing positions"
@@ -84,7 +64,8 @@ def report(archive: Archive, boxes: Sequence[str]) -> None:
         print(f"    most persistent position: {seen[0]} acquisitions")
         print(
             f"    crops at a position seen {FLOORS[1]}+ times: "
-            f"{sum(c for c in seen if c >= FLOORS[1])} of {len(rows)}"
+            f"{found.positions.loc[found.positions['acquisitions'] >= FLOORS[1], 'crops'].sum()} "
+            f"of {len(rows)}"
         )
 
 

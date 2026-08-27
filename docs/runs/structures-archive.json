@@ -1,0 +1,97 @@
+{
+  "archive": {
+    "crops": 4676,
+    "scenes": 96
+  },
+  "register": {
+    "floor": 20,
+    "same_position_m": 100.0,
+    "tolerance_m": 100.0,
+    "positions": 65,
+    "path": "fixed-structures.csv"
+  },
+  "verification": {
+    "kattegat-lane": {
+      "published": 0,
+      "registered": 0
+    },
+    "anholt": {
+      "published": 66,
+      "registered": 65,
+      "found": 65,
+      "registered_but_unpublished": 0,
+      "median_m": 5.139897954646955,
+      "tolerance_m": 200.0,
+      "approximate": 66,
+      "source": "https://overpass-api.de/api/interpreter"
+    }
+  },
+  "exclusion": {
+    "archive": {
+      "detections": 4676,
+      "excluded": 4187,
+      "remaining": 489
+    },
+    "published at 0.9": {
+      "detections": 972,
+      "excluded": 782,
+      "remaining": 190
+    }
+  },
+  "clustering": {
+    "clusters": 8,
+    "seed": 20260827,
+    "encoder": "embedding-archive.pt",
+    "separation": 0.7676457903834197,
+    "by_cluster": [
+      {
+        "cluster": 0,
+        "crops": 557,
+        "persistent": 0.9461400359066428
+      },
+      {
+        "cluster": 1,
+        "crops": 568,
+        "persistent": 0.971830985915493
+      },
+      {
+        "cluster": 2,
+        "crops": 263,
+        "persistent": 0.9543726235741445
+      },
+      {
+        "cluster": 3,
+        "crops": 671,
+        "persistent": 0.9642324888226528
+      },
+      {
+        "cluster": 4,
+        "crops": 890,
+        "persistent": 0.9539325842696629
+      },
+      {
+        "cluster": 5,
+        "crops": 639,
+        "persistent": 0.9405320813771518
+      },
+      {
+        "cluster": 6,
+        "crops": 607,
+        "persistent": 0.5090609555189456
+      },
+      {
+        "cluster": 7,
+        "crops": 481,
+        "persistent": 0.9376299376299376
+      }
+    ],
+    "excluding_on_clusters_instead": {
+      "a_cluster_is_fixed_above": 0.8,
+      "clusters_called_fixed": 7,
+      "crops_by_box": {
+        "anholt": 4007,
+        "kattegat-lane": 62
+      }
+    }
+  }
+}

@@ -649,3 +649,42 @@ epoch is how many times a crop is looked at again. Step count is a statement abo
 shipped config now carries that reasoning next to the number, so the next person to resize an
 archive reads why the epochs are not a budget to be spent on however many crops there are.
 
+
+---
+
+## 2026-08-27 — A pre-check counted acquisitions and printed the word "crops"
+
+**What happened.** `notebooks/recurrence.py` — the check that established, before any method was
+written, that the archive contained fixed structures at all — printed a line reading
+`crops at a position seen 5+ times: 2612 of 4328`. It was not counting crops. Its last statement
+was `sum(c for c in seen if c >= FLOORS[1])`, and `seen` held one *acquisition count* per standing
+position, so the figure was the total number of acquisitions across the persistent positions,
+summed under a label that said crops. The true figure is **4232 of 4328** for Anholt and **23 of
+348** for the lane, against the 2612 and 18 that were published.
+
+**Where it went.** Into the README table and into `docs/decisions.md`, 2026-08-27, both of which
+quoted it as the share of the Anholt archive standing at a fixed position: 60% where the real
+answer is 98%. It understated the thing the entry was arguing for.
+
+**How it was found.** By deleting the code rather than by reading it. `embed/structures.py` needed
+the same grouping, so the notebook was pointed at the package's `standing()` and its own copy
+removed; every figure it printed matched except this one. A second implementation written for a
+different purpose disagreed with the first, which is the only reason anyone looked.
+
+**Why it survived.** It was in a notebook. Nothing in `tests/` had ever imported this file, because
+its whole purpose was to be run once by a person before a method existed — and a number nobody
+reruns is a number nobody checks. The four figures beside it were right, which is worse than all
+of them being wrong: the line read as plausible against its neighbours.
+
+**What was done.** The notebook now calls `structures.standing` and counts the `crops` column,
+which is a count of crops. The README and the decision entry carry the corrected numbers with the
+correction noted rather than quietly swapped. What is *not* done is a test over the notebook: the
+fix was to remove the duplicate definition, and the package's own `standing` is covered by
+`test_structures.py`, including a case that separates a position's crop count from its acquisition
+count — three crops at one position across two scenes, which is exactly the distinction this line
+lost.
+
+**What it did not change.** Nothing in the register, the verification or the exclusion: those are
+built on the acquisition counts, which were right. This was a reporting fault in a figure that
+appeared in two documents, and it is here rather than nowhere because a project that publishes its
+own numbers has to publish the ones it got wrong.
