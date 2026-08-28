@@ -32,7 +32,7 @@ from darkvessel.data.structures import fetch as fetch_known
 from darkvessel.data.survey import survey as survey_traffic
 from darkvessel.data.synthetic import write_synthetic_inputs
 from darkvessel.data.tiling import Tiling
-from darkvessel.detect.amplitude import DecibelStretch
+from darkvessel.detect.amplitude import DecibelStretch, sea_level
 from darkvessel.detect.checkpoints import Checkpoints, Journal
 from darkvessel.detect.curve import curve, svg
 from darkvessel.detect.curve import table as curve_table
@@ -100,6 +100,12 @@ def main(argv: list[str] | None = None) -> int:
         help="fetch the declared positions for every acquisition of the archive (needs a network)",
     )
     archive_ais.add_argument("--config", type=Path, required=True)
+
+    archive_run = commands.add_parser(
+        "archive-run",
+        help="run the chain over every acquisition of the archive, into one layer",
+    )
+    archive_run.add_argument("--config", type=Path, required=True)
 
     survey_command = commands.add_parser(
         "survey", help="measure where the traffic is, to choose a study area (needs a network)"
@@ -179,6 +185,8 @@ def main(argv: list[str] | None = None) -> int:
         return _ais(args.config)
     if args.command == "archive-ais":
         return _archive_ais(args.config)
+    if args.command == "archive-run":
+        return _archive_run(args.config)
     if args.command == "survey":
         return _survey(args.config)
     if args.command == "train":
@@ -301,6 +309,102 @@ def _verdict(
             "dark by default rather than by evidence: check the ingestion covered the area"
         )
     return verdict
+
+
+def _archive_run(config_path: Path) -> int:
+    """Run the chain over every acquisition of the archive, into one layer.
+
+    The analysis of #16 needs a distribution and one scene carries six detections, of which one
+    is dark. Nothing is worth reading off that. So the same chain, at the same operating point,
+    over every acquisition of the same box — and the detections accumulate rather than replacing
+    one another, the way `embed/archive.py` accumulates crops and for the same reason.
+
+    The detector is built once and handed to every scene. It is 330 MB of weights, and reloading
+    them fifty times would take longer than the inference does.
+
+    A scene whose declarations are missing stops the run rather than being scored unsearched.
+    `run` allows `ais: null` because a scene before the ingestion level genuinely has nothing to
+    search, and it marks what comes out `unsearched`; here a missing slice means the ingestion
+    was interrupted, and a scene quietly scored against no declarations contributes detections
+    that are dark by default rather than by evidence — into a layer built to count exactly that.
+    """
+    config = load_config(config_path)
+    run_config, relative_to = config["run"], config_path.parent
+    request = archive_ais_request_from(config, relative_to)
+    scenes, ais_directory = request["scenes"], request["out"]
+    output = (relative_to / config["archive"]["detections"]).resolve()
+
+    paths = sorted(scenes.glob("*.tif"))
+    if not paths:
+        raise FileNotFoundError(
+            f"no acquisitions in {scenes}; `darkvessel scenes` fetches the archive this runs over"
+        )
+    missing = [path for path in paths if not (ais_directory / f"{path.stem}.csv").exists()]
+    if missing:
+        raise FileNotFoundError(
+            f"{len(missing)} of {len(paths)} acquisitions have no declarations in {ais_directory}, "
+            f"the first being {missing[0].stem}; run `darkvessel archive-ais --config "
+            f"{config_path}` first, which resumes where it stopped. A scene scored against no "
+            "declarations publishes detections that are dark by default rather than by evidence"
+        )
+
+    tiling = _tiling_from(config["tiling"])
+    check_tile_size(run_config, tiling)
+    detector = _detector_from(run_config, relative_to)
+    embedder = _embedder_from(config, relative_to)
+    structures = _structures_from(run_config, relative_to)
+    fusion = fusion_settings_from(config)
+
+    print(f"{len(paths)} acquisition(s) from {scenes}")
+    found: list[gpd.GeoDataFrame] = []
+    # Counted as each scene is searched, not summed off the rows afterwards. The layer carries
+    # `declarations_searched` on every row, constant within a scene, so adding the column up
+    # would multiply each acquisition's declarations by the number of detections it happened to
+    # produce — and would count nothing at all for a scene that produced none.
+    declarations = 0
+    for number, path in enumerate(paths, start=1):
+        scene = Scene.from_geotiff(path)
+        _check_working_crs(scene.crs, config["area"]["crs"])
+        ais = load_ais(ais_directory / f"{path.stem}.csv", crs=scene.crs)
+        declarations += int(ais["mmsi"].nunique())
+
+        detections = run_pipeline(
+            scene=scene,
+            ais=ais,
+            detector=detector,
+            tiling=tiling,
+            geometry=geometry_from(config, scene.orbit_pass),
+            embedder=embedder,
+            structures=structures,
+            **fusion,
+        )
+        found.append(detections)
+        counts = detections["status"].value_counts()
+        print(
+            f"[{number}/{len(paths)}] {scene.acquired_at.isoformat()} {path.stem[:3]}: "
+            f"{len(detections)} detection(s), {counts.get(MATCHED, 0)} matched, "
+            f"{counts.get(DARK, 0)} dark, sea {sea_level(scene.image)[0]:.2f} dB",
+            flush=True,
+        )
+
+    # One frame rather than fifty files. The schema is identical across them by construction —
+    # every column the chain writes it writes on every run — and a reader of the analysis wants
+    # one table to ask questions of, with `scene` on the row saying where each answer came from.
+    accumulated = gpd.GeoDataFrame(
+        pd.concat(found, ignore_index=True), geometry="geometry", crs=found[0].crs
+    )
+    write_detections(accumulated, output)
+
+    print(f"{len(accumulated)} detections over {len(paths)} acquisitions -> {output}")
+    for line in _verdict(
+        accumulated,
+        searched=True,
+        tolerance_m=fusion["tolerance_m"],
+        declarations=declarations,
+    ):
+        print(f"  {line}")
+    print(f"  {reduction(accumulated, searched=True)}")
+    return 0
 
 
 def geometry_from(config: dict[str, Any], orbit_pass: str | None) -> Geometry | None:
