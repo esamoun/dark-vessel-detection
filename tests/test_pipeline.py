@@ -23,6 +23,7 @@ changes the verdict where it should.
 Detector quality is not tested here. A model is evaluated, not asserted.
 """
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -46,10 +47,12 @@ from darkvessel.cli import (
 )
 from darkvessel.config import load_config
 from darkvessel.context.gee_layers import CONTEXT, UNAVAILABLE
+from darkvessel.data.provenance import SCENE, SEA_LEVEL, SEA_SPREAD
 from darkvessel.data.scene import Scene
 from darkvessel.data.structures import Known
 from darkvessel.data.synthetic import BOUNDARY_TARGET, SIZE_PX, write_synthetic_inputs
 from darkvessel.data.tiling import Tiling
+from darkvessel.detect.amplitude import sea_level
 from darkvessel.detect.threshold import BrightPixelDetector
 from darkvessel.embed.embedder import columns, vectors_of
 from darkvessel.embed.structures import verify
@@ -873,6 +876,62 @@ def test_the_chain_writes_the_contextual_columns_on_a_run_that_can_never_sample_
     assert plain["depth_m"].isna().all()
     assert plain["fishing_hours"].isna().all()
     assert set(plain["eez"]) == {UNAVAILABLE}
+
+
+def test_the_chain_writes_the_acquisition_every_detection_came_out_of() -> None:
+    """Provenance, on the row, because an archive-wide layer is fifty scenes stacked.
+
+    One run over one scene never needed this — there was only one answer and its name was on the
+    command line. Merged, a detection nobody can point at an acquisition cannot be checked, cannot
+    be opened again, and cannot be dropped when its scene turns out to have a problem. It is the
+    same argument `embed/archive.py` makes about a crop with no provenance.
+    """
+    named = synthetic_scene(targets=[(20, 30), (40, 10)])
+    named = replace(named, name="S1A_IW_GRDH_1SDV_20260809T053124")
+
+    found = detect(named)
+
+    assert set(found[SCENE]) == {"S1A_IW_GRDH_1SDV_20260809T053124"}
+
+
+def test_a_scene_with_no_name_writes_an_empty_one_rather_than_being_refused() -> None:
+    # A scene built in memory is what the tests and the synthetic fixture use. A column only a
+    # run from disk could fill would make the schema depend on where the pixels came from, which
+    # is the promise `without_context` makes in the other direction.
+    found = detect(synthetic_scene(targets=[(20, 30)]))
+
+    assert list(found[SCENE]) == [""]
+
+
+def test_the_chain_records_the_sea_the_scene_was_actually_scored_against() -> None:
+    """The confound, recorded rather than corrected for.
+
+    The window between decibels and amplitude is fixed and calibrated on one scene's sea, and
+    `amplitude.fit_window` says why it must not be refitted per scene. What that costs is that a
+    scene whose sea sits away from the calibrated one is scored at an operating point nobody
+    chose, so the count of dark detections per scene could be partly an artefact of wind. This is
+    the measurement that lets the spatial analysis test that rather than assume it away.
+
+    Held against `sea_level` itself: the value has to be this scene's measured sea, not the one
+    the config declared, or it would be constant across an archive and answer nothing.
+    """
+    scene = synthetic_scene(targets=[(20, 30), (40, 10)])
+    level, spread = sea_level(scene.image)
+
+    found = detect(scene)
+
+    assert set(found[SEA_LEVEL]) == {level}
+    assert set(found[SEA_SPREAD]) == {spread}
+
+
+def test_two_scenes_with_different_seas_do_not_report_the_same_sea() -> None:
+    # The reason the column is measured per scene and written per row. If it came off the config
+    # it would be one number for the whole archive, and the confound it exists to expose would be
+    # invisible in exactly the layer built to look for it.
+    calm = synthetic_scene(targets=[(20, 30)])
+    rough = replace(calm, image=calm.image + np.float32(3.0))
+
+    assert detect(calm)[SEA_LEVEL].iloc[0] != detect(rough)[SEA_LEVEL].iloc[0]
 
 
 def test_a_run_with_no_register_writes_the_column_and_calls_nothing_a_structure() -> None:

@@ -30,6 +30,12 @@ class Scene:
     # scene that has no orbit behind it, which is the synthetic one: the correction then has
     # nothing to compute from and is not applied, rather than being applied from a default.
     orbit_pass: str | None = None
+    # What this acquisition is called, so a detection can be traced back to the product it came
+    # out of. One run over one scene never needed it — there was only ever one answer. An archive
+    # -wide run accumulates fifty scenes into one layer, and a detection nobody can point at an
+    # acquisition is the same non-evidence a crop with no provenance is in `embed/archive.py`.
+    # None for a scene built in memory, which is what the tests and the synthetic fixture do.
+    name: str | None = None
 
     def __post_init__(self) -> None:
         if self.image.ndim != 2:
@@ -61,6 +67,12 @@ class Scene:
                 # declines to touch, which is right: guessing it wrong reverses the direction
                 # every vessel is moved in, and a reversed correction is worse than none.
                 orbit_pass=dataset.tags().get(ORBIT_PASS_TAG),
+                # The file's own stem. A Sentinel-1 product names itself after the moment it was
+                # acquired, so this and `acquired_at` agree — but they are read from different
+                # places on purpose: the tag is the product's statement about itself and the name
+                # is what this archive happens to call it, and it is the second one a reader needs
+                # to open the scene again.
+                name=path.stem,
             )
 
 
