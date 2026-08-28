@@ -174,6 +174,11 @@ def main(argv: list[str] | None = None) -> int:
         help="sample the contextual layers at every detection of a run (needs credentials)",
     )
     context_command.add_argument("--config", type=Path, required=True)
+    context_command.add_argument(
+        "--archive",
+        action="store_true",
+        help="sample the accumulated archive layer rather than the single run's output",
+    )
 
     args = parser.parse_args(argv)
 
@@ -208,7 +213,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "retrieve":
         return _retrieve(args.config)
     if args.command == "context":
-        return _context(args.config)
+        return _context(args.config, over_archive=args.archive)
     return _run(args.config)
 
 
@@ -1785,8 +1790,8 @@ def context_request_from(config: dict[str, Any], relative_to: Path) -> dict[str,
     }
 
 
-def _context(config_path: Path) -> int:
-    """Sample the contextual layers at every detection this config's run wrote.
+def _context(config_path: Path, over_archive: bool = False) -> int:
+    """Sample the contextual layers at every detection of a run, or of the whole archive.
 
     A command of its own rather than a stage of `run`, and that placement is the decision. The
     chain is a thing that runs on a laptop with no network in it — that is what the injected
@@ -1797,16 +1802,25 @@ def _context(config_path: Path) -> int:
     It reads the layer the run wrote and writes it back, rather than producing a second file
     beside it. A detection and its context are one row; two files joined on a row order nobody
     stated is the sidecar `embed/embedder.py` refuses for the same reason.
+
+    `over_archive` names the accumulated layer instead of the single run's. One flag rather than
+    a second command, because this is one operation on one kind of file — the sampling does not
+    know or care how many acquisitions the detections came from, and a copy of it that did would
+    be a second place for the missing-value rules to drift. It matters most here: the sampling is
+    one round trip for the whole layer, and the fishing-effort product alone reduces 15 004
+    images per call, so sampling fifty scenes one at a time would be fifty of those.
     """
     config = load_config(config_path)
     relative_to = config_path.parent
     request = context_request_from(config, relative_to)
-    output = (relative_to / config["run"]["output"]).resolve()
+    named = config["archive"]["detections"] if over_archive else config["run"]["output"]
+    output = (relative_to / named).resolve()
 
     if not output.exists():
+        wrote = "archive-run" if over_archive else "run"
         raise FileNotFoundError(
             f"{output} does not exist; `darkvessel context` samples the layers at the detections "
-            f"of a run, so run `darkvessel run --config {config_path}` first"
+            f"of a run, so run `darkvessel {wrote} --config {config_path}` first"
         )
 
     detections = gpd.read_file(output, layer=DETECTIONS_LAYER)

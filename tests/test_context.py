@@ -298,6 +298,39 @@ def test_the_command_refuses_a_run_whose_detections_were_never_written(tmp_path:
         main(["context", "--config", str(config_path)])
 
 
+def test_the_archive_flag_samples_the_accumulated_layer_and_not_the_runs(tmp_path: Path) -> None:
+    """One flag rather than a second command, and it has to name the other file.
+
+    The whole point of sampling the archive in one call is that it is one round trip: the
+    fishing-effort product reduces 15 004 images per call, so fifty scenes sampled one at a time
+    would be fifty of those. A flag that silently sampled the single run's output instead would
+    leave the accumulated layer empty and cost nothing visible.
+    """
+    config = context_config() | {
+        "run": {"output": "detections.gpkg"},
+        "archive": {"detections": "archive.gpkg"},
+    }
+    config_path = tmp_path / "run.yaml"
+    config_path.write_text(yaml.safe_dump(config))
+
+    with pytest.raises(FileNotFoundError, match="archive.gpkg"):
+        main(["context", "--config", str(config_path), "--archive"])
+
+
+def test_the_archive_flag_names_the_command_that_writes_the_archive_layer(tmp_path: Path) -> None:
+    # The refusal has to send a reader to `archive-run`, not to `run`: the file it is missing is
+    # the one only the archive-wide command writes.
+    config = context_config() | {
+        "run": {"output": "detections.gpkg"},
+        "archive": {"detections": "archive.gpkg"},
+    }
+    config_path = tmp_path / "run.yaml"
+    config_path.write_text(yaml.safe_dump(config))
+
+    with pytest.raises(FileNotFoundError, match="darkvessel archive-run"):
+        main(["context", "--config", str(config_path), "--archive"])
+
+
 def test_the_shipped_config_states_every_source_the_sampling_needs() -> None:
     """The config a reader runs, parsed by the code that runs it."""
     config = yaml.safe_load(SHIPPED_CONFIG.read_text())
