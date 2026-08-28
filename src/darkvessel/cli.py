@@ -22,7 +22,7 @@ from pyproj import CRS, Transformer
 from darkvessel.config import load_config
 from darkvessel.context.gee_layers import LayerSources, coverage, earth_engine_layers
 from darkvessel.context.gee_layers import attach as attach_context
-from darkvessel.data.ais import load_ais, slice_for, write_ais
+from darkvessel.data.ais import independent_groups, load_ais, slice_for, slices_for, write_ais
 from darkvessel.data.area import Bounds
 from darkvessel.data.dma import danish_maritime_authority
 from darkvessel.data.gee_export import DateWindow, earth_engine, export_archive, export_scene
@@ -94,6 +94,12 @@ def main(argv: list[str] | None = None) -> int:
         "ais", help="fetch the declared positions for a scene's acquisition (needs a network)"
     )
     ais.add_argument("--config", type=Path, required=True)
+
+    archive_ais = commands.add_parser(
+        "archive-ais",
+        help="fetch the declared positions for every acquisition of the archive (needs a network)",
+    )
+    archive_ais.add_argument("--config", type=Path, required=True)
 
     survey_command = commands.add_parser(
         "survey", help="measure where the traffic is, to choose a study area (needs a network)"
@@ -171,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
         return _export(args.config)
     if args.command == "ais":
         return _ais(args.config)
+    if args.command == "archive-ais":
+        return _archive_ais(args.config)
     if args.command == "survey":
         return _survey(args.config)
     if args.command == "train":
@@ -379,6 +387,87 @@ def _ais(config_path: Path) -> int:
     for line in cleaning.lines():
         print(f"  {line}")
     print(f"wrote {path}")
+    return 0
+
+
+def archive_ais_request_from(config: dict[str, Any], relative_to: Path) -> dict[str, Any]:
+    """What the archive-wide ingestion takes from a config file.
+
+    Separate from the command for the reason `ais_request_from` is, with more at stake: a
+    mistyped key here surfaces to someone who has waited not for one day of Danish AIS but for
+    thirty-two.
+
+    The slicing parameters are the single-scene ones, read from the same `ais` block. That is the
+    point rather than a convenience: an archive sliced at a different window or a different
+    margin from the scene the chain was tuned on would produce dark vessels that cannot be
+    compared with the ones already published.
+    """
+    ais = config["ais"]
+    archive = config["archive"]
+    return {
+        "area": Bounds(**config["area"]["bounds"]),
+        "window": timedelta(seconds=float(ais["window_s"])),
+        "margin_m": float(ais["margin_m"]),
+        "max_speed_kn": float(ais["max_speed_kn"]),
+        "scenes": (relative_to / archive["scenes"]).resolve(),
+        "out": (relative_to / archive["ais"]).resolve(),
+    }
+
+
+def _archive_ais(config_path: Path) -> int:
+    """Fetch the declarations for every acquisition of the archive, one archive day at a time.
+
+    The whole cost of an archive-wide run is here. A day of Danish AIS is 662 MB across the wire,
+    the Kattegat archive is 50 scenes on 32 dates, and asking scene by scene would download 18 of
+    those days a second or third time — 12 GB for nothing. `slices_for` opens each day once and
+    fills every window that reaches into it.
+
+    Written a group at a time and skipping what is already on disk, because hours of downloading
+    over a connection that may drop is not something to start again from the beginning. What a
+    resumed run costs is the groups it has not yet written, and nothing else.
+    """
+    config = load_config(config_path)
+    request = archive_ais_request_from(config, config_path.parent)
+    scenes, out = request.pop("scenes"), request.pop("out")
+    out.mkdir(parents=True, exist_ok=True)
+
+    # The acquisition is read off each scene rather than from its filename. A Sentinel-1 product
+    # names itself after the moment it was acquired, so the two agree here — but a filename is a
+    # convention someone else keeps and a tag is the product's own statement, and this is the one
+    # number a whole slice is positioned by.
+    paths = sorted(scenes.glob("*.tif"))
+    if not paths:
+        raise FileNotFoundError(
+            f"no acquisitions in {scenes}; `darkvessel scenes` fetches the archive this slices"
+        )
+    acquired = {Scene.from_geotiff(path).acquired_at: path for path in paths}
+    if len(acquired) != len(paths):
+        raise ValueError(
+            f"{len(paths)} scenes carry {len(acquired)} distinct acquisition instants; two clips "
+            "of one acquisition would be sliced against one window and written over each other"
+        )
+
+    groups = independent_groups(list(acquired), request["window"])
+    print(f"{len(paths)} acquisition(s) over {len(groups)} archive day group(s), from {scenes}")
+
+    written, skipped = 0, 0
+    for number, group in enumerate(groups, start=1):
+        wanted = [one for one in group if not (out / f"{acquired[one].stem}.csv").exists()]
+        if not wanted:
+            skipped += len(group)
+            continue
+
+        day = group[0].date().isoformat()
+        print(f"[{number}/{len(groups)}] {day}: {len(wanted)} acquisition(s)", flush=True)
+        for acquired_at, (reports, cleaning) in slices_for(
+            archive=danish_maritime_authority(), acquisitions=wanted, **request
+        ).items():
+            path = out / f"{acquired[acquired_at].stem}.csv"
+            write_ais(reports, path)
+            written += 1
+            print(f"  {acquired_at.isoformat()}: {cleaning.kept} kept -> {path.name}", flush=True)
+
+    print(f"{written} slice(s) written, {skipped} already on disk, in {out}")
     return 0
 
 

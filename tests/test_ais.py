@@ -29,7 +29,7 @@ import pytest
 import yaml
 
 from darkvessel.cli import ais_request_from, export_request_from
-from darkvessel.data.ais import Cleaning, load_ais, slice_for, write_ais
+from darkvessel.data.ais import Cleaning, load_ais, slice_for, slices_for, write_ais
 from darkvessel.data.area import Bounds
 from darkvessel.data.dma import Archive, archive_url, zip_member
 
@@ -216,6 +216,84 @@ def test_a_window_inside_one_day_opens_one_archive() -> None:
     ingest(archive)
 
     assert archive.opened == [ACQUIRED_AT.date()]
+
+
+# Two more acquisitions on the day of ACQUIRED_AT, six and twelve hours earlier. The Kattegat
+# archive holds 50 scenes on 32 dates, so a day serving several acquisitions is the ordinary case
+# for an archive-wide run rather than a corner of one.
+MORNING = ACQUIRED_AT - timedelta(hours=6)
+DAWN = ACQUIRED_AT - timedelta(hours=12)
+
+
+def ingest_many(
+    archive: Archive,
+    acquisitions: list[datetime],
+    window: timedelta = WINDOW,
+) -> dict[datetime, tuple[gpd.GeoDataFrame, Cleaning]]:
+    return slices_for(
+        archive=archive,
+        acquisitions=acquisitions,
+        area=AREA,
+        window=window,
+        margin_m=MARGIN_M,
+        max_speed_kn=MAX_SPEED_KN,
+    )
+
+
+def test_three_acquisitions_on_one_day_open_that_days_archive_once() -> None:
+    """The reason this function exists, and the only thing it shares between acquisitions.
+
+    A day is 662 MB across the wire. The Kattegat archive is 50 scenes on 32 dates, so asking for
+    them one at a time downloads 18 days a second or third time — 12 GB, which is most of the cost
+    of an archive-wide run.
+    """
+    archive = one_day([report(), report(mmsi="219000002", age=timedelta(hours=-6))])
+
+    ingest_many(archive, [ACQUIRED_AT, MORNING, DAWN])
+
+    assert archive.opened == [ACQUIRED_AT.date()]
+
+
+def test_each_acquisition_takes_only_the_reports_inside_its_own_window() -> None:
+    # One pass over the day fills several windows, and a report belongs to the window it falls
+    # in. Pooling them would hand every scene the whole day's declarations and match a detection
+    # against a vessel that was six hours away from it.
+    archive = one_day([report(), report(mmsi="219000002", age=timedelta(hours=-6))])
+
+    sliced = ingest_many(archive, [ACQUIRED_AT, MORNING])
+
+    assert mmsis(sliced[ACQUIRED_AT][0]) == {"219000001"}
+    assert mmsis(sliced[MORNING][0]) == {"219000002"}
+
+
+def test_a_scenes_slice_is_the_same_asked_for_alone_or_beside_another() -> None:
+    """Grouping is a download decision and must not be a filtering one.
+
+    What a scene is matched against cannot depend on which other scenes happened to be in the
+    same command, or an archive-wide run would produce different dark vessels than the same
+    scenes run one at a time.
+    """
+    reports = [report(), report(mmsi="219000002", age=timedelta(hours=-6))]
+    alone, alone_cleaning = ingest(one_day(reports))
+
+    beside_another, beside_another_cleaning = ingest_many(one_day(reports), [ACQUIRED_AT, MORNING])[
+        ACQUIRED_AT
+    ]
+
+    assert mmsis(beside_another) == mmsis(alone)
+    assert beside_another_cleaning == alone_cleaning
+
+
+def test_an_acquisition_asked_for_twice_is_refused() -> None:
+    # The result is keyed by instant, so a repeat would come back as one slice where two were
+    # asked for — and an archive-wide run would write one scene's detections and lose another's.
+    with pytest.raises(ValueError, match="more than once"):
+        ingest_many(one_day([report()]), [ACQUIRED_AT, MORNING, ACQUIRED_AT])
+
+
+def test_slicing_around_no_acquisition_at_all_is_refused() -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        ingest_many(one_day([report()]), [])
 
 
 def test_a_base_station_is_not_a_vessel_and_cannot_explain_a_detection() -> None:

@@ -96,6 +96,23 @@ ais:
   max_speed_kn: 60
   out: ../data/real/kattegat-lane-ais.csv
 
+# The whole archive of acquisitions over this box, rather than the single scene above. The
+# analysis of #16 needs a distribution and one scene carries six detections, so the chain is run
+# across every acquisition here and the detections accumulate into one layer.
+#
+# The scenes are the ones `darkvessel scenes --config configs/embeddings.yaml` fetched: same box,
+# same polarisation, same resolution, and — checked rather than assumed — the same 1727 x 1845
+# raster the tiling above is sized for.
+archive:
+  scenes: ../data/archive/kattegat-lane
+  # One slice of declarations per acquisition, named by the scene it belongs to.
+  # `darkvessel archive-ais` writes them, one archive day at a time, and skips the days it has
+  # already written: 32 days of Danish AIS is 21 GB across the wire and several hours, and a
+  # run that had to start again from nothing after a dropped connection would not finish.
+  ais: ../data/real/archive-ais
+  # Every acquisition's detections in one layer, which is what the spatial analysis reads.
+  detections: ../outputs/kattegat-lane-archive.gpkg
+
 earthengine:
   # The Cloud project `ee.Initialize` authenticates against. Left empty, Earth Engine falls back
   # to whatever the local credentials default to, which is fine on one machine and unreproducible
