@@ -115,7 +115,7 @@ class LayerSources:
     eez: str | None
     eez_property: str
     effort: str | None
-    effort_band: str
+    effort_bands: tuple[str, ...]
     effort_start: str
     effort_end: str
     scale_m: float
@@ -135,6 +135,11 @@ class LayerSources:
             raise ValueError(
                 f"the fishing-effort window ends before it starts: {self.effort_start} to "
                 f"{self.effort_end}"
+            )
+        if self.effort is not None and not self.effort_bands:
+            raise ValueError(
+                f"{self.effort} is named as the fishing-effort source with no bands to read; "
+                "the collection carries one band per gear type and none of them is the total"
             )
 
 
@@ -312,11 +317,29 @@ class _EarthEngineLayers:
             # point is mostly zero and says nothing. The window is a property of the run: no
             # effort product covers the year these scenes were acquired, so what this samples is
             # where effort concentrated over the years that are published. See docs/decisions.md.
+            #
+            # Two sums, because the collection is two-dimensional: one image per flag state per
+            # day — 15 004 of them in 2016 — and one band per gear type. `.sum()` adds the
+            # images, `Reducer.sum()` adds the gear. The band list is in the config because there
+            # is no total band; Earth Engine said so when this was written against a guessed one:
+            # "Band pattern 'WLD' did not match any bands. Available bands: [drifting_longlines,
+            # fixed_gear, other_fishing, purse_seines, squid_jigger, trawlers]".
+            #
+            # `unmask(0)` on this band and on no other, which looks like the thing this module
+            # exists to refuse and is the opposite of it. A mask means something different in
+            # each of these products: an unmeasured depth is a place nobody surveyed, and an
+            # unmeasured distance is beyond the search radius, so both stay missing. GFW's grid
+            # covers the ocean, and a masked cell there is a cell where no fishing hours were
+            # recorded — an answer, and the answer this variable is most often going to have.
+            # Left masked it would arrive as NaN and be indistinguishable from the run that has
+            # no effort source at all, which is exactly the confusion being avoided elsewhere.
             stack = stack.addBands(
                 ee.ImageCollection(sources.effort)
                 .filterDate(sources.effort_start, sources.effort_end)
-                .select(sources.effort_band)
+                .select(list(sources.effort_bands))
                 .sum()
+                .reduce(ee.Reducer.sum())
+                .unmask(0)
                 .rename(FISHING_HOURS)
             )
 

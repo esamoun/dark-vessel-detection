@@ -113,11 +113,10 @@ export:
 # else's and it moves — the same reason the checkpoint path is a config key. What the code
 # guarantees is that a layer it cannot sample comes back missing rather than zero.
 #
-# **None of these four has been sampled against Earth Engine yet.** The assets below are named
-# from the catalogue's own documentation rather than from a run that returned values, and until
-# `darkvessel context` has been executed against them that is all they are — which is why the
-# identifiers are here, where they can be corrected without touching code. What the test suite
-# covers is everything on this side of the connection. See docs/decisions.md, 2026-08-27.
+# Run against Earth Engine on 2026-08-27, and the run corrected one of them: the fishing-effort
+# band named below was a guess and Earth Engine refused it. That is what the identifiers being
+# config keys is for. The EEZ is the one of the four that still cannot be sampled, and it is null
+# on purpose. See docs/decisions.md, 2026-08-27, for what came back.
 context:
   # Distance to shore. Not a published raster but a distance to a published coastline: Earth
   # Engine returns, for any feature collection, an image of the metres to its nearest feature,
@@ -163,7 +162,16 @@ context:
   # "was anyone fishing here that morning", which no public product can answer for 2026.
   effort:
     asset: GFW/GFF/V1/fishing_hours
-    band: WLD
+    # One band per gear type, and there is no total band. Quoted from Earth Engine's own refusal
+    # of a guessed one rather than read off a page: "Band pattern 'WLD' did not match any bands.
+    # Available bands: [drifting_longlines, fixed_gear, other_fishing, purse_seines, squid_jigger,
+    # trawlers]". All six are summed, so the variable is total recorded fishing hours; drop one to
+    # ask about a fleet instead.
+    bands: [drifting_longlines, fixed_gear, other_fishing, purse_seines, squid_jigger, trawlers]
+    # The last full year the collection holds: its images run 2012-01-01 to 2016-12-31, measured
+    # rather than taken from the documentation. 15 004 of them fall in this window — one per flag
+    # state per day — which is why sampling this layer takes about a hundred seconds where the
+    # other two take one.
     start: 2016-01-01
     end: 2017-01-01
   # The grid the layers are reduced on. Coarser than the 10 m the scene is exported at, and

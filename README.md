@@ -53,7 +53,7 @@ The pipeline is built in four levels, each one shippable on its own.
 | **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.73 recall over a held-out split of 3000 sub-images, and the three changes that did not clear the noise are written up rather than removed |
 | **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene with the trained detector in it, since 2026-08-16 |
 | **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | **complete.** Runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching; detections are described by a representation learned without labels, and retrieval across ten weeks of acquisitions returns the same object 71% of the time against 0.02% at chance. Offshore structures are separated from vessels and excluded from the dark count without a single label: 65 fixed positions found by recurrence across 47 acquisitions, every one of them verified against published coordinates to 5.1 m, taking 80.5% of the detections a run over the wind farm would have had to explain |
-| **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | the four variables are sampled server-side and travel on the detections, with a value nobody could sample kept missing rather than zeroed; the sampling has not yet been run against Earth Engine, and the analysis it feeds is not started |
+| **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | three of the four variables are sampled server-side and travel on the detections, run against the live catalogue on the Kattegat scene; EEZ boundaries are not in Earth Engine's public catalogue and read `unavailable` until one is ingested, and the analysis these columns feed is not started |
 
 The chain that carries these was built first, deliberately, with a deterministic stand-in where
 the detector would go; the stand-in is still there, behind the same parameter, and is what the
@@ -971,9 +971,6 @@ the rows:
 darkvessel context --config configs/kattegat-lane.yaml
 ```
 
-What it reports — the shape of the answer rather than a run that has been made, for the reason in
-[What is not claimed](#what-is-not-claimed-3) below:
-
 ```
 6 detections sampled against the catalogue -> outputs/kattegat-lane-trained.gpkg
   distance to shore: 6 of 6 detection(s) carry a value
@@ -981,6 +978,27 @@ What it reports — the shape of the answer rather than a run that has been made
   fishing effort: 6 of 6 detection(s) carry a value
   EEZ: 0 in a named EEZ, 0 on the high seas, 6 unavailable
 ```
+
+| status | MMSI | length | distance to shore | depth | fishing hours 2016 |
+| --- | --- | --- | --- | --- | --- |
+| matched | 636026410 | 274 m | 21.3 km | −35 m | 22.7 |
+| **dark** | — | — | 27.0 km | −35 m | 57.9 |
+| matched | 255805577 | 140 m | 29.3 km | −42 m | 40.8 |
+| matched | 219025245 | 24 m | 31.2 km | −42 m | 58.3 |
+| matched | 538002621 | 228 m | 27.4 km | −33 m | 39.2 |
+| matched | 667002360 | 244 m | 28.2 km | −49 m | 41.9 |
+
+The numbers are the right shape for this water, which is the only claim made about them: the
+northern Kattegat is 30 to 50 m deep and these are 33 to 49, Skagen is about half a degree west of
+the box and these are 21 to 31 km from land. Two of the depths repeat, and that is the resolution
+showing through — ETOPO1's cell is 1.85 km and the six detections span about 10 km, so a
+bathymetry returning six distinct values here would be telling us something it does not know.
+
+The fishing-effort layer cost one guess. The config named a `WLD` total band and Earth Engine
+refused it: the collection has one image per flag state per day and one band per *gear* type, no
+total. So the variable is two sums — over the 15 004 images of 2016, then over the six gears — and
+the corrected band list is in the config where it can be read. That is what the asset identifiers
+being config keys rather than constants is for.
 
 The sampling happens on Google's side of the connection: every detection of the scene goes across
 as one feature collection and comes back as one table of values, never a raster. Fetching four
@@ -1016,16 +1034,22 @@ column says so rather than being absent.
 
 ### What is not claimed
 
-**The four assets have not been sampled against Earth Engine.** Everything on this side of the
-connection is tested — the frame the points are asked in, the row each answer lands on, the length
-of the reply checked rather than trusted, what a missing value looks like in the file — and
-nothing on the far side is. The output above is the shape of the answer, not a measurement. The
-same line is drawn in [`docs/decisions.md`](docs/decisions.md) and in `test_export.py`, which
-declines in the same way to assert what Earth Engine's filters select.
+**The EEZ has not been sampled**, and the column says `unavailable` rather than being absent.
+Earth Engine's public catalogue carries no EEZ layer; Marine Regions publishes one under CC-BY and
+it has to be ingested once as an asset. The code path is exercised against a fake sampler. That
+criterion is met in code and not in data.
 
 **Sampling is not analysis.** This attaches the variables; it does not say where dark vessels
-concentrate. One scene carries six detections of which one is dark, and no distribution is worth
-reading off that. What exists now is the column an eventual answer would be computed from.
+concentrate. The dark detection above sits in the second-highest fishing-effort cell of the six,
+and that means nothing at n = 1 — six detections on one scene support no distribution, and the gap
+between 57.9 and 39.2 hours a year in adjacent 0.01° cells is noise until it is asked of a few
+hundred detections. It is a hypothesis these columns now make testable, not a result.
+
+**What is tested and what is only run.** Everything on this side of the connection is held by
+tests — the frame the points are asked in, the row each answer lands on, the length of the reply
+checked rather than trusted, what a missing value looks like in the file. Nothing on the far side
+is, and it cannot be; the table above is one execution, reported as one execution, the same line
+`test_export.py` draws when it declines to assert what Earth Engine's filters select.
 
 ## Licence
 
