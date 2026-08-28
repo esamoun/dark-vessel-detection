@@ -53,7 +53,7 @@ The pipeline is built in four levels, each one shippable on its own.
 | **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.73 recall over a held-out split of 3000 sub-images, and the three changes that did not clear the noise are written up rather than removed |
 | **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene with the trained detector in it, since 2026-08-16 |
 | **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | **complete.** Runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching; detections are described by a representation learned without labels, and retrieval across ten weeks of acquisitions returns the same object 71% of the time against 0.02% at chance. Offshore structures are separated from vessels and excluded from the dark count without a single label: 65 fixed positions found by recurrence across 47 acquisitions, every one of them verified against published coordinates to 5.1 m, taking 80.5% of the detections a run over the wind farm would have had to explain |
-| **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | three of the four variables are sampled server-side and travel on the detections, run against the live catalogue on the Kattegat scene; EEZ boundaries are not in Earth Engine's public catalogue and read `unavailable` until one is ingested, and the analysis these columns feed is not started |
+| **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | three of the four variables are sampled server-side and travel on the detections, run against the live catalogue on the Kattegat scene; EEZ boundaries are not in Earth Engine's public catalogue and read `unavailable` until one is ingested. The chain now runs across the whole archive rather than one acquisition, so the distribution this level needs has somewhere to come from — that run is in progress and has produced no numbers yet, and the analysis is not started |
 
 The chain that carries these was built first, deliberately, with a deterministic stand-in where
 the detector would go; the stand-in is still there, behind the same parameter, and is what the
@@ -226,6 +226,16 @@ darkvessel embed      --config configs/embeddings.yaml  # fitted, without labels
 darkvessel retrieve   --config configs/embeddings.yaml  # what resembles what
 darkvessel known      --config configs/embeddings.yaml  # published structure coordinates
 darkvessel structures --config configs/embeddings.yaml  # the register, verified
+```
+
+Level 4 runs the same chain across every acquisition of the archive rather than one, because a
+distribution cannot be read off six detections. `archive-ais` is the long one — 21 GB, a few
+hours — and it resumes where it stopped:
+
+```bash
+darkvessel archive-ais --config configs/kattegat-lane.yaml  # declarations, one day per download
+darkvessel archive-run --config configs/kattegat-lane.yaml  # the chain over all 50 acquisitions
+darkvessel context --config configs/kattegat-lane.yaml --archive  # the layers, in one round trip
 ```
 
 ```
@@ -1043,13 +1053,108 @@ criterion is met in code and not in data.
 concentrate. The dark detection above sits in the second-highest fishing-effort cell of the six,
 and that means nothing at n = 1 — six detections on one scene support no distribution, and the gap
 between 57.9 and 39.2 hours a year in adjacent 0.01° cells is noise until it is asked of a few
-hundred detections. It is a hypothesis these columns now make testable, not a result.
+hundred detections. It is a hypothesis these columns now make testable, not a result — and
+[the section below](#every-acquisition-not-one--2026-08-28) is the machinery that goes and asks
+it of every acquisition of the archive rather than of this one.
 
 **What is tested and what is only run.** Everything on this side of the connection is held by
 tests — the frame the points are asked in, the row each answer lands on, the length of the reply
 checked rather than trusted, what a missing value looks like in the file. Nothing on the far side
 is, and it cannot be; the table above is one execution, reported as one execution, the same line
 `test_export.py` draws when it declines to assert what Earth Engine's filters select.
+
+## Every acquisition, not one — 2026-08-28
+
+The section above ends by saying that six detections on one scene support no distribution, and
+that the columns are a hypothesis rather than a result. This is the machinery that turns the one
+into the other: the same chain, at the same operating point, over all 50 acquisitions the archive
+holds for this box, accumulating into one layer.
+
+```bash
+darkvessel archive-ais --config configs/kattegat-lane.yaml
+darkvessel archive-run --config configs/kattegat-lane.yaml
+darkvessel context --config configs/kattegat-lane.yaml --archive
+```
+
+### The declarations are the whole cost
+
+Not the detection. The chain takes about ten seconds a scene on a laptop CPU, so all 50 are eight
+minutes; a day of Danish AIS is 662 MB across the wire, and the archive spans 32 dates.
+
+The 50 acquisitions fall on those 32 dates unevenly — 19 dates carry one scene, 8 carry two, 5
+carry three — because a Sentinel-1 box in Danish waters is covered from both an ascending and a
+descending pass and sometimes by two satellites. Asking for declarations scene by scene would
+download 18 of those days a second or third time, which is 12 GB for nothing.
+
+So `slices_for` takes many acquisition instants at once, opens each day once and fills every
+window that reaches into it. The single-acquisition `slice_for` is now that function called with
+one instant rather than a second copy of the logic, which is what keeps the archive-wide path from
+being one only fifty-scene runs ever execute. Each acquisition is still filtered, cleaned and
+counted against its own window, and a test holds that a scene's slice is the same whether it was
+asked for alone or beside another — a grouping that changed what a scene is matched against would
+be worse than the download it saves.
+
+The ingestion resumes. It writes a day group at a time and skips what is already on disk, because
+several hours over a connection that may drop is not something to start again from the beginning.
+
+### Two columns an accumulated layer cannot be read without
+
+**`scene`** — which acquisition the detection came out of. One run over one scene never needed it:
+there was one answer and its name was on the command line. Merged, a row is a coordinate and a
+verdict and nothing else, and a dark detection nobody can trace back to a product cannot be
+checked against the image, cannot be opened again, and cannot be dropped when its acquisition
+turns out to have a problem. It is the argument [`embed/archive.py`](src/darkvessel/embed/archive.py)
+already makes about crops.
+
+**`sea_level_db` and `sea_spread_db`** — where that scene's sea stood, and how much it varied.
+This one is a confound, recorded rather than corrected for.
+
+The window between decibels and the amplitude the model was fitted on is fixed, and calibrated on
+the sea of a single scene. [`amplitude.fit_window`](src/darkvessel/detect/amplitude.py) states why
+it must not be refitted per acquisition: refitted, the same hull takes a different value under a
+different sea state and a score threshold stops meaning the same thing from one scene to the next.
+What that buys is comparability across the archive. What it costs is that a scene whose sea sits
+away from the calibrated one is scored at an operating point nobody chose.
+
+Measured across the 50 acquisitions with the same estimator the window was fitted with:
+
+```
+sea level   -37.38 to -9.03 dB   (the window is anchored at -21.84)
+departure   5.02 dB median, 15.54 dB maximum
+            2 of 50 scenes sit below the configured floor of -29.84 dB entirely
+sea spread  1.91 to 9.18 dB
+```
+
+So the number of dark detections in a scene could be partly a fact about the wind that morning
+rather than about undeclared traffic. Correcting for it silently would be the wrong answer and so
+would ignoring it. On the row it is a variable the analysis can regress its distributions against
+and report on; absent, it is a confound nobody can see. Both moments are recorded because the
+window matches both.
+
+### An interrupted ingestion stops the run
+
+`darkvessel run` accepts `ais: null` and marks what comes out `unsearched`, because a scene from
+before the ingestion level genuinely has nothing to search. `archive-run` refuses instead: here a
+missing slice means the download was interrupted, and a scene quietly scored against no
+declarations contributes detections that are dark by *default* rather than by evidence — into the
+one layer built to count exactly those. It is the failure that would read as a finding, so it is
+an error naming the command that resumes.
+
+### What is not claimed
+
+**The archive-wide run has not completed, and there are no numbers from it here.** What is on this
+page is the machinery and the one measurement that did not need it — the sea state, which is read
+off the scenes themselves. When the run has been made, what it found goes here and in
+[`docs/decisions.md`](docs/decisions.md), including whether the dark rate tracks the sea.
+
+**The EEZ is still `unavailable`.** Nothing above changes that; it needs the Marine Regions
+boundaries ingested as an Earth Engine asset, and until then the column says so rather than
+guessing.
+
+**Fifty acquisitions of one box is not a sample of Danish waters.** They are ten weeks over one
+17 km rectangle chosen for its traffic. Whatever the distribution turns out to be, it is a
+statement about this water in this window, and no claim about transfer to another will be made
+from it.
 
 ## Licence
 
