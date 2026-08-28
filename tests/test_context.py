@@ -76,7 +76,7 @@ def context_config() -> dict:
             "eez": {"asset": None, "property": "SOVEREIGN1"},
             "effort": {
                 "asset": "GFW/GFF/V1/fishing_hours",
-                "band": "WLD",
+                "bands": ["trawlers", "purse_seines"],
                 "start": "2016-01-01",
                 "end": "2017-01-01",
             },
@@ -260,6 +260,19 @@ def test_a_fishing_effort_window_that_ends_before_it_starts_is_refused() -> None
     config["context"]["effort"]["end"] = "2015-01-01"
 
     with pytest.raises(ValueError, match="window"):
+        context_request_from(config, Path("."))
+
+
+def test_a_fishing_effort_source_with_no_bands_to_read_is_refused() -> None:
+    """The collection carries one band per gear type and no total, so the list is the variable.
+
+    An empty list would sample nothing and report it as nothing recorded, which is the one
+    reading this column must never carry by accident.
+    """
+    config = context_config()
+    config["context"]["effort"]["bands"] = []
+
+    with pytest.raises(ValueError, match="no bands"):
         context_request_from(config, Path("."))
 
 

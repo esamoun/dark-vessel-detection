@@ -2089,15 +2089,74 @@ Earth Engine `saveFirst` join drops every primary feature that matched nothing �
 the answer is indistinguishable downstream from a point the layer could not answer for. The one
 case the variable exists to identify would have read as `unavailable`.
 
+### What the catalogue said when it was finally asked — 2026-08-27
+
+The section above was written before `darkvessel context` had been run against Earth Engine, and
+said so. It has now been run over `configs/kattegat-lane.yaml`. Two of the three sources were
+right and one was wrong, which is roughly the hit rate that justifies having put them in a config
+file rather than in the code.
+
+**`NOAA/NGDC/ETOPO1` carries `bedrock` and `ice_surface`, as named.** **`USDOS/LSIB_SIMPLE/2017`
+holds 312 features** and `FeatureCollection.distance` over it returns metres, as assumed.
+
+**`GFW/GFF/V1/fishing_hours` has no total band, and the config named one.** Earth Engine's refusal
+is the correction, quoted rather than paraphrased: `Band pattern 'WLD' did not match any bands.
+Available bands: [drifting_longlines, fixed_gear, other_fishing, purse_seines, squid_jigger,
+trawlers]`. The collection is two-dimensional — one image per flag state per day, one band per
+gear type — so the variable is two sums: `.sum()` over the images the window selects, then
+`Reducer.sum()` over the six gears. The window itself was a guess that survived: the collection's
+images run **2012-01-01 to 2016-12-31**, so 2016 is the last full year in it, and **15 004 images**
+fall inside that window. That is why this one layer takes about a hundred seconds to sample where
+the other two take one.
+
+**One band is unmasked and the other two are not**, which looks like the thing this level exists
+to refuse and is the opposite of it. A mask means something different in each product. An
+unmeasured depth is water nobody surveyed and an unmeasured distance is beyond the search radius,
+so both stay missing. GFW's grid covers the ocean, and a masked cell in it is a cell where no
+fishing hours were recorded — an answer, and the answer this variable will most often have. Left
+masked it would arrive as NaN and be indistinguishable from a run with no effort source at all,
+which is the confusion the rest of this section is about. So `unmask(0)` on that band and no
+other, and a source left null is still the only way `fishing_hours` comes back empty.
+
+### What it returned
+
+Six detections on the Kattegat lane scene, all six answered by all three available layers:
+
+| status | MMSI | length | distance to shore | depth | fishing hours 2016 |
+| --- | --- | --- | --- | --- | --- |
+| matched | 636026410 | 274 m | 21.3 km | −35 m | 22.7 |
+| **dark** | — | — | 27.0 km | −35 m | 57.9 |
+| matched | 255805577 | 140 m | 29.3 km | −42 m | 40.8 |
+| matched | 219025245 | 24 m | 31.2 km | −42 m | 58.3 |
+| matched | 538002621 | 228 m | 27.4 km | −33 m | 39.2 |
+| matched | 667002360 | 244 m | 28.2 km | −49 m | 41.9 |
+
+The numbers are the right shape for this water, which is the only claim being made about them. The
+northern Kattegat is 30 to 50 m deep and these are 33 to 49. Skagen is the nearest land, roughly
+half a degree west of the box, and these are 21 to 31 km. The EEZ column reads `unavailable` six
+times, as the config says it must until the boundaries are ingested.
+
+Two of the depths repeat, and the repetition is the resolution showing through: ETOPO1's cell is
+about 1.85 km, the six detections span roughly 10 km, and a bathymetry that gave six distinct
+values here would be telling us something it does not know. That is the limitation the config
+comment claims, visible in the output rather than only asserted.
+
+**The dark detection sits in the second-highest fishing-effort cell of the six.** That is written
+down because it is the kind of number this level exists to produce and the kind that is
+meaningless at n = 1. Six detections on one scene support no distribution, and the difference
+between 57.9 and 39.2 hours over a year in adjacent 0.01° cells is noise until it is asked of a
+few hundred detections. It is a hypothesis the columns now make it possible to test, not a result.
+
 ### What is not claimed
 
-**These four assets have not been sampled against Earth Engine.** Everything on this side of the
-connection is tested — the frame the points are asked in, the row each answer lands on, the length
-of the reply being checked rather than trusted, and what a missing value looks like by the time it
-reaches the file — and nothing on the far side is. Whether `NOAA/NGDC/ETOPO1` is the depth we
-think it is, and whether the fishing-effort collection covers this water, are claims that can only
-be made by running the command, in the same way `test_export.py` declines to assert what Earth
-Engine's filters select. When it has been run, the numbers belong here.
+**Sampling is not analysis.** The ticket asks for the variables at each detection; it does not ask
+where dark vessels concentrate, and this does not answer that. What this level produces is the
+column an eventual answer would be computed from, and the table above is one scene's worth of it.
+
+**The EEZ has still not been sampled.** The code path is exercised against a fake and the shipped
+config names no asset, so every row reads `unavailable`. Earth Engine's public catalogue carries
+no EEZ layer; Marine Regions publishes one under CC-BY and it has to be ingested once. Until then
+this criterion is met in code and not in data, and the column says so rather than being absent.
 
 **Sampling is not analysis.** The ticket asks for the variables at each detection; it does not ask
 where dark vessels concentrate, and this does not answer that. One scene carries six detections,
