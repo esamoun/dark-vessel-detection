@@ -18,7 +18,7 @@ The archive itself is a parameter — see `dma.py` for why, and for how 3.3 GB o
 a machine that cannot hold it.
 """
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -146,20 +146,124 @@ def slice_for(
         geometry — what `interpolate.py` places and `match.py` compares against — and the count
         of what every rule removed on the way.
     """
-    searched = area.grown_by(margin_m)
-    surviving = [
-        _within(chunk, searched, acquired_at, window)
-        for day in _days_the_window_touches(acquired_at, window)
-        for chunk in read_day(archive, day, COLUMNS)
-    ]
-
-    return _cleaned(
-        reports=_joined([chunk.reports for chunk in surviving]),
-        read=sum(chunk.read for chunk in surviving),
-        no_position=sum(chunk.no_position for chunk in surviving),
-        no_timestamp=sum(chunk.no_timestamp for chunk in surviving),
+    return slices_for(
+        archive=archive,
+        acquisitions=[acquired_at],
+        area=area,
+        window=window,
+        margin_m=margin_m,
         max_speed_kn=max_speed_kn,
-    )
+    )[acquired_at]
+
+
+def slices_for(
+    *,
+    archive: Archive,
+    acquisitions: Sequence[datetime],
+    area: Bounds,
+    window: timedelta,
+    margin_m: float,
+    max_speed_kn: float,
+) -> dict[datetime, tuple[gpd.GeoDataFrame, Cleaning]]:
+    """The same slice as `slice_for`, for several acquisitions, opening each day once.
+
+    The archive is one file per day and an archive-wide run is many acquisitions over few days:
+    the Kattegat archive is 50 scenes on 32 dates, and asking for them one at a time downloads
+    18 days twice or three times. A day is 662 MB across the wire, so that is not an efficiency
+    detail — it is 12 GB, and it is the whole cost of an archive-wide run.
+
+    Grouping is the only thing this shares between acquisitions. Each one is filtered, cleaned
+    and counted against its own window exactly as `slice_for` does, and a scene's slice does not
+    depend on which other scenes were asked for in the same call. That is what makes this a
+    grouping of the existing ingestion rather than a second one: the single-acquisition case
+    above now runs through here, so there is no version of this logic that only many-scene runs
+    exercise.
+
+    Args:
+        acquisitions: The moments to slice around, in any order. Every one gets its own entry in
+            the result, keyed by the instant asked for.
+
+    Returns:
+        One `(reports, cleaning)` pair per acquisition, keyed by acquisition instant.
+
+    Raises:
+        ValueError: If no acquisition is given, or if one is given twice — the result is keyed by
+            instant, so a repeat would silently return one slice where two were asked for.
+    """
+    if not acquisitions:
+        raise ValueError("no acquisitions to slice around; an archive-wide run needs at least one")
+    repeated = sorted({one for one in acquisitions if list(acquisitions).count(one) > 1})
+    if repeated:
+        raise ValueError(
+            f"{len(repeated)} acquisition instant(s) asked for more than once, the first being "
+            f"{repeated[0].isoformat()}; the result is keyed by instant, so a repeat would come "
+            "back as one slice where two were asked for"
+        )
+
+    searched = area.grown_by(margin_m)
+    # Which acquisitions each day serves, worked out before anything is downloaded: a day is
+    # opened once and every window that reaches into it is filled from the same pass.
+    touching: dict[date, list[datetime]] = {}
+    for acquired_at in acquisitions:
+        for day in _days_the_window_touches(acquired_at, window):
+            touching.setdefault(day, []).append(acquired_at)
+
+    surviving: dict[datetime, list[_Surviving]] = {one: [] for one in acquisitions}
+    for day in sorted(touching):
+        for chunk in read_day(archive, day, COLUMNS):
+            # Once per chunk rather than once per acquisition. The position filter runs over
+            # every row of the archive and the timestamp parse is the expensive one; the window
+            # is a comparison over what survives both, which is a thousandth as many rows.
+            placed = _placed(chunk, searched)
+            for acquired_at in touching[day]:
+                surviving[acquired_at].append(_within_window(placed, acquired_at, window))
+
+    return {
+        acquired_at: _cleaned(
+            reports=_joined([chunk.reports for chunk in chunks]),
+            read=sum(chunk.read for chunk in chunks),
+            no_position=sum(chunk.no_position for chunk in chunks),
+            no_timestamp=sum(chunk.no_timestamp for chunk in chunks),
+            max_speed_kn=max_speed_kn,
+        )
+        for acquired_at, chunks in surviving.items()
+    }
+
+
+def independent_groups(acquisitions: Sequence[datetime], window: timedelta) -> list[list[datetime]]:
+    """The acquisitions split into sets that share no archive day with any other set.
+
+    An archive-wide ingestion is 21 GB across the wire and takes hours, so it has to be resumable,
+    and the unit it can resume at is a set of acquisitions that can be sliced without opening a
+    day twice. Splitting anywhere else would either re-download a day or slice a scene from half
+    its archive.
+
+    Almost always a group is one day: a Sentinel-1 pass over a Danish box happens near 05:30 or
+    17:00 and a fifteen-minute window sits well inside the date. The acquisition just after
+    midnight is the exception this exists for — it pulls the day before it into its own group,
+    rather than being quietly sliced from one of the two files it needs.
+    """
+    root: dict[date, date] = {}
+
+    def find(day: date) -> date:
+        root.setdefault(day, day)
+        while root[day] != day:
+            root[day] = root[root[day]]
+            day = root[day]
+        return day
+
+    for acquired_at in acquisitions:
+        days = _days_the_window_touches(acquired_at, window)
+        for other in days[1:]:
+            first, second = find(days[0]), find(other)
+            if first != second:
+                root[first] = second
+
+    grouped: dict[date, list[datetime]] = {}
+    for acquired_at in acquisitions:
+        anchor = find(_days_the_window_touches(acquired_at, window)[0])
+        grouped.setdefault(anchor, []).append(acquired_at)
+    return [sorted(grouped[anchor]) for anchor in sorted(grouped)]
 
 
 def _joined(slices: list[pd.DataFrame]) -> pd.DataFrame:
@@ -218,13 +322,13 @@ def read_day(archive: Archive, day: date, columns: dict[str, str]) -> Iterator[p
             yield chunk.rename(columns=columns)
 
 
-def _within(
-    chunk: pd.DataFrame,
-    area: Bounds,
-    acquired_at: datetime,
-    window: timedelta,
-) -> _Surviving:
-    """The reports in this chunk that stand inside the area and inside the window.
+def _placed(chunk: pd.DataFrame, area: Bounds) -> _Surviving:
+    """The reports in this chunk that stand inside the area, with their timestamps parsed.
+
+    Everything that depends on the day's file and not on which acquisition is being asked about,
+    done once: a day serving three scenes parses its timestamps once rather than three times.
+    What comes back still holds rows whose timestamp could not be read — `_within_window` drops
+    them, and they are counted here where the parse happened.
 
     Position first, because it is a numeric comparison over every row of the archive and the
     timestamps are the expensive parse. What survives is a thousandth of what arrives.
@@ -248,17 +352,34 @@ def _within(
 
     here = reports[inside].assign(lat=lat[inside], lon=lon[inside], length_m=length[inside])
     when = pd.to_datetime(here["timestamp"], format=TIMESTAMP_FORMAT, errors="coerce", utc=True)
-    # A report whose timestamp cannot be read falls outside the window in both directions and
-    # would leave without a word. Counted here rather than allowed to: a declaration that
-    # disappears on its way to the matching is a detection published as a dark vessel, and one
-    # that disappears without being counted cannot be found afterwards either.
+
+    return _Surviving(
+        reports=here.assign(timestamp=when),
+        read=len(chunk),
+        no_position=int((~placeable).sum()),
+        # A report whose timestamp cannot be read falls outside every window in both directions
+        # and would leave without a word. Counted here rather than allowed to: a declaration that
+        # disappears on its way to the matching is a detection published as a dark vessel, and one
+        # that disappears without being counted cannot be found afterwards either.
+        no_timestamp=int(when.isna().sum()),
+    )
+
+
+def _within_window(placed: _Surviving, acquired_at: datetime, window: timedelta) -> _Surviving:
+    """The reports of an already-placed chunk that fall inside one acquisition's window.
+
+    The counts pass through unchanged. They are properties of the chunk the day gave — how many
+    rows it held, how many carried no position, how many no readable timestamp — and every
+    acquisition this day serves has to answer for the same file.
+    """
+    when = placed.reports["timestamp"]
     in_window = when.between(acquired_at - window, acquired_at + window)
 
     return _Surviving(
-        reports=here[in_window].assign(timestamp=when[in_window]),
-        read=len(chunk),
-        no_position=int((~placeable).sum()),
-        no_timestamp=int(when.isna().sum()),
+        reports=placed.reports[in_window],
+        read=placed.read,
+        no_position=placed.no_position,
+        no_timestamp=placed.no_timestamp,
     )
 
 
