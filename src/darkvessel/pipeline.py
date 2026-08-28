@@ -16,6 +16,7 @@ from datetime import timedelta
 import geopandas as gpd
 
 from darkvessel.context.gee_layers import without_context
+from darkvessel.data.provenance import attach_provenance
 from darkvessel.data.scene import Scene
 from darkvessel.data.tiling import Tiling
 from darkvessel.detect.detector import Detector
@@ -80,6 +81,12 @@ def run(
     # chain owes them is the columns: a layer whose schema depends on whether a credentialed
     # stage was run is a layer that cannot be stacked with the one beside it.
     detections = without_context(detections)
+    # Which acquisition this came out of, and what its sea was doing. Written on every run
+    # including the synthetic one, for the reason the empty contextual columns just above are:
+    # an archive-wide layer is fifty of these stacked, and a schema that depended on how the
+    # chain was invoked could not be stacked at all. See `data/provenance.py` for why the sea
+    # state travels on the row rather than being corrected for.
+    detections = attach_provenance(detections, scene)
     if embedder is None:
         return detections
 
