@@ -688,3 +688,53 @@ lost.
 built on the acquisition counts, which were right. This was a reporting fault in a figure that
 appeared in two documents, and it is here rather than nowhere because a project that publishes its
 own numbers has to publish the ones it got wrong.
+
+---
+
+## 2026-08-30 — A rescue count read in float64 disagreed with the matcher that made it, by one ship
+
+**What happened.** The threshold sweep added on 2026-08-29 rewrote the census's rescue-only count.
+Where the old line compared torch's own float32 overlaps against the threshold, the new one read
+them out with `.tolist()` and counted in Python:
+
+```python
+rescued=sum(1 for best in best_iou if best < fg_iou_thresh)
+```
+
+Run over the real data on 2026-08-30, it reported **3525** rescue-only boxes under rung 2's small
+anchors where the census of 2026-08-19 published **3524**. Everything else — the stock set's 3257,
+the per-level counts, both realised fractions — reproduced exactly.
+
+**Why.** `box_iou` returns float32, and when `Matcher` compares it against a Python threshold torch
+demotes that threshold to float32 too. The line the matcher actually draws at "0.7" is therefore
+`float32(0.7)` = `0.69999998807907104`. Reading the same overlaps out as Python floats compares
+them against the float64 literal `0.69999999999999996` instead — a larger number — so a ship whose
+best overlap lands *exactly* on the float32 boundary is below the threshold on one side of the
+seam and not below it on the other. Exactly one ship in 3637 sits there.
+
+**Why it matters more than one ship.** The rescue-only count exists to say what
+`allow_low_quality_matches` did, and `allow_low_quality_matches` is the matcher's. A count computed
+in a different arithmetic from the matcher is a count of something adjacent to what the matcher
+did. `tests/test_anchor_census.py` already carried a test named for exactly this hazard —
+`test_high_iou_threshold_is_shared`, written after an earlier version of that file was found to be
+testing the rescue arithmetic while wearing the name of a drift test — and it did not catch this,
+because it pins where the threshold is and not which arithmetic reads it.
+
+**The fix.** Count back in the space the matcher decides in:
+
+```python
+rescued=int((torch.tensor(best_iou, dtype=torch.float32) < fg_iou_thresh).sum())
+```
+
+`best_iou` is still kept as Python floats, because the percentiles beside it are read from the
+sorted list and a distribution does not need torch. Only the comparison moves.
+
+**What it did not change.** No published number. The defect was found by the sweep disagreeing with
+an entry of this log by one ship, which is what publishing counts is for, and it was found before
+any rung was set from the new table. The value rung 5 runs at is read off the *stock* anchors,
+where the two arithmetics agree exactly.
+
+Held by `test_a_ship_sitting_exactly_on_the_threshold_is_counted_the_way_the_matcher_counts_it`,
+which builds one box overlapping one anchor at precisely `float32(0.7)` and asserts the matcher
+calls it positive and the count calls it un-rescued. Reverting the fix reproduces the disagreement
+on that single box.

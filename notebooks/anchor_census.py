@@ -90,8 +90,11 @@ LOW_IOU_THRESHOLD = 0.3
 # rather than a candidate. 0.3 is the floor a one-key change can reach, `Matcher` refusing a
 # background threshold above the foreground one. 0.25 is the value the census's own worked example
 # names — a 16 px ship inside a 32 px anchor overlaps it at `256/1024`, identically for every
-# anchor containing it — and everything below is there because the median ship's *area* is smaller
-# than 16 x 16 and nobody has counted how much smaller.
+# anchor containing it — and everything below was there because the median ship's *area* is
+# smaller than 16 x 16 and nobody had counted how much smaller. The sweep of 2026-08-30 did: the
+# median ship's best overlap with any anchor is 0.207, so 0.25 leaves 56% of ships rescued and is
+# not the point at which they stop being. The grid is kept as it is, because a grid retuned around
+# the answer it produced would not be able to produce a different one.
 SWEEP_THRESHOLDS = (0.7, 0.5, 0.4, 0.3, 0.25, 0.2, 0.15, 0.1, 0.05)
 
 # Where the best-IoU distribution is read at. Chosen to answer "what threshold would give most
@@ -254,7 +257,16 @@ def _result_at(
         # Boxes whose best anchor never reached the threshold and were matched only by the
         # low-quality rule. Counted off `best_iou` rather than measured a second way, so the
         # number in this field and the distribution beside it cannot describe different things.
-        rescued=sum(1 for best in best_iou if best < fg_iou_thresh),
+        #
+        # Back through float32 first, and that is not a formality. `box_iou` returns float32 and
+        # `Matcher` compares it against a Python threshold that torch demotes to float32 too, so
+        # `float32(0.7)` — 0.69999998807907104 — is the line the matcher actually draws. Reading
+        # the same values out as Python floats compares them against 0.69999999999999996 instead,
+        # and a ship sitting exactly on the boundary lands on the other side of it: this counted
+        # 3525 rescued boxes under rung 2's anchors where the census of 2026-08-19 published 3524.
+        # One ship, and it is the whole difference between a count that describes what the matcher
+        # did and a count that describes something near it.
+        rescued=int((torch.tensor(best_iou, dtype=torch.float32) < fg_iou_thresh).sum()),
         by_level=dict(sorted(by_level.items())),
         realised_fraction=capped_mean / RPN_BATCH_SIZE_PER_IMAGE,
         fg_iou_thresh=fg_iou_thresh,

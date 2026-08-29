@@ -265,6 +265,39 @@ def test_the_rescue_count_is_the_distribution_read_at_the_threshold():
         assert result.best_iou == results[0].best_iou
 
 
+def test_a_ship_sitting_exactly_on_the_threshold_is_counted_the_way_the_matcher_counts_it():
+    """The rescue count decides in float32, because that is the space `Matcher` decides in.
+
+    `box_iou` returns float32, and torch demotes the Python threshold it is compared against to
+    float32 too — so the line the matcher actually draws at "0.7" is `float32(0.7)`, which is
+    0.69999998807907104. Reading the same overlaps out as Python floats and comparing them against
+    the literal 0.7 draws the line at 0.69999999999999996 instead, and a ship whose best overlap
+    lands exactly on the boundary falls on the other side of it.
+
+    This is not hypothetical and it is not a rounding nicety. The sweep of 2026-08-30 reported
+    3525 rescued boxes under rung 2's anchors where the census of 2026-08-19 published 3524 — one
+    ship, off by exactly this, in a number two entries of `docs/decisions.md` quote. A count that
+    disagrees with the matcher by one ship is a count that describes something near what the
+    matcher did rather than what it did.
+
+    Built as one box against one anchor overlapping it at exactly `float32(0.7)`: the box is the
+    anchor's own top slice, so the IoU is the height ratio, and the anchor's height is chosen so
+    that ratio is the float32 neighbour of 0.7 rather than 0.7 itself.
+    """
+    on_the_line = torch.tensor([0.7], dtype=torch.float32).item()
+    # Anchor and box share a corner and a width, so IoU is the box's height over the anchor's.
+    anchors = torch.tensor([[0.0, 0.0, 10.0, 10.0]])
+    box = Box(min_row=0, min_col=0, max_row=10 * on_the_line, max_col=10)
+
+    result = anchor_census._measure(anchors, [1], [a_tile("on_the_line", box)])
+
+    assert result.best_iou == [pytest.approx(on_the_line)]
+    # Positive by the matcher's own reckoning, since float32(0.7) is not below float32(0.7) --
+    # so nothing here was rescued, and the count has to say the same.
+    assert result.positives_per_tile == [1]
+    assert result.rescued == 0
+
+
 def test_one_pass_over_the_boxes_says_what_one_pass_per_threshold_says():
     """`_measure_at` computes `box_iou` once and applies every matcher to the matrix, because the
     matrix is two hundred thousand anchors wide and does not depend on the threshold. That is an

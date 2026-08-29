@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from darkvessel.cli import ladder_request_from
+from darkvessel.cli import _read_ladder
 from darkvessel.config import load_config
 from darkvessel.detect.checkpoints import Journal
 from darkvessel.detect.ladder import WINDOW, Rung, Verdict, judge
@@ -35,6 +35,7 @@ RUNG_OWN_CHANGE = {
     "r2-anchors.yaml": "model.anchor_sizes",
     "r3-stem.yaml": "model.stem",
     "r4-sampler.yaml": "model.rpn_batch_size_per_image",
+    "r5-fg-iou.yaml": "model.rpn_fg_iou_thresh",
 }
 
 
@@ -205,19 +206,20 @@ def _the_ladder() -> tuple[dict[str, Rung], list[Verdict]]:
 
     Read rather than hard-coded: these two tests are about the chain agreeing with the ladder, and
     a copy of the ladder's answer written into a test would agree with itself.
+
+    Through `cli._read_ladder` rather than through a loop of this file's own, which is the second
+    half of that argument and was not honoured until R5 was added to the ladder unrun. This helper
+    used to build a `Rung` for every rung the config names, including one whose metrics file does
+    not exist yet — `judge` then raised "R5 does not name the run that produced it" and two tests
+    about the *chain* failed for a reason that had nothing to do with the chain. `compare` stops at
+    the first rung that has not been run, because a ladder read across a gap measures a change
+    against the wrong configuration; a helper claiming to read it the same way has to do the same
+    thing, and the only way to be sure of that is to call it.
     """
     path = CONFIGS / "ladder.yaml"
     config = load_config(path)
 
-    rungs = {}
-    for requested in ladder_request_from(config, path.parent):
-        journal = Journal(requested["metrics"])
-        rungs[requested["label"]] = Rung(
-            label=requested["label"],
-            changed=requested["changed"],
-            run=journal.run(),
-            epochs=journal.entries(),
-        )
+    rungs = {rung.label: rung for rung in _read_ladder(config, path.parent)}
 
     window = int(config["ladder"].get("window", WINDOW))
     return rungs, judge(list(rungs.values()), window=window)

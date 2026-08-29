@@ -31,3 +31,13 @@ ladder:
     - label: R4
       changed: the RPN sampler, at the value the census dictates
       metrics: ../docs/runs/r4-sampler.json
+
+    # Added 2026-08-30, after the five above had all run, and that is a departure this file has to
+    # be honest about: the five were fixed on 2026-08-17 and a sixth chosen afterwards is chosen
+    # knowing their results. What makes it admissible is that its hypothesis was written down
+    # before any of them ran -- docs/decisions.md, 2026-08-19, the reservation at the foot of the
+    # census entry -- and its value comes from a measurement rather than from the five outcomes.
+    # See issue #24.
+    - label: R5
+      changed: the RPN foreground IoU threshold, 0.7 to 0.3
+      metrics: ../docs/runs/r5-fg-iou.json
