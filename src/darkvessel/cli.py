@@ -19,6 +19,8 @@ import numpy as np
 import pandas as pd
 from pyproj import CRS, Transformer
 
+from darkvessel.analysis.concentration import analysis_request_from, concentrate
+from darkvessel.analysis.concentration import write as write_analysis
 from darkvessel.config import load_config
 from darkvessel.context.gee_layers import LayerSources, coverage, earth_engine_layers
 from darkvessel.context.gee_layers import attach as attach_context
@@ -180,6 +182,12 @@ def main(argv: list[str] | None = None) -> int:
         help="sample the accumulated archive layer rather than the single run's output",
     )
 
+    analyse_command = commands.add_parser(
+        "analyse",
+        help="where the dark candidates concentrate, across the whole archive, with intervals",
+    )
+    analyse_command.add_argument("--config", type=Path, required=True)
+
     args = parser.parse_args(argv)
 
     if args.command == "synthesise":
@@ -214,6 +222,8 @@ def main(argv: list[str] | None = None) -> int:
         return _retrieve(args.config)
     if args.command == "context":
         return _context(args.config, over_archive=args.archive)
+    if args.command == "analyse":
+        return _analyse(args.config)
     return _run(args.config)
 
 
@@ -1835,4 +1845,45 @@ def _context(config_path: Path, over_archive: bool = False) -> int:
     print(f"{len(sampled)} detections sampled against the catalogue -> {output}")
     for line in coverage(sampled):
         print(f"  {line}")
+    return 0
+
+
+def _analyse(config_path: Path) -> int:
+    """Where the dark candidates concentrate, over the whole archive rather than one scene.
+
+    The last stage of the chain and the only one whose output is prose. It reads the accumulated
+    layer `archive-run` wrote and `context` sampled, and writes three things: a JSON of every
+    number the README quotes, one SVG per variable, and the same numbers to the terminal so that
+    the run and the report cannot disagree.
+
+    No network, no torch, no credentials. Everything it needs is already on the row by the time
+    it runs, which is what makes the figures in the README re-derivable by anyone who has the
+    GeoPackage rather than by anyone who has an Earth Engine account.
+    """
+    config = load_config(config_path)
+    relative_to = config_path.parent
+    request = analysis_request_from(config, relative_to)
+    layer_path = (relative_to / config["archive"]["detections"]).resolve()
+
+    if not layer_path.exists():
+        raise FileNotFoundError(
+            f"{layer_path} does not exist; `darkvessel analyse` describes the detections of the "
+            f"whole archive, so run `darkvessel archive-run --config {config_path}` and then "
+            f"`darkvessel context --config {config_path} --archive` first"
+        )
+
+    detections = gpd.read_file(layer_path, layer=DETECTIONS_LAYER)
+    result = concentrate(
+        detections,
+        bands=request["bands"],
+        draws=request["draws"],
+        seed=request["seed"],
+    )
+
+    for line in result.lines():
+        print(line)
+    for written in write_analysis(
+        result, report_path=request["report"], figures=request["figures"]
+    ):
+        print(f"wrote {written}")
     return 0
