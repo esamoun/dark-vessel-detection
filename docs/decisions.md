@@ -2397,3 +2397,100 @@ Held by `tests/test_rpn_thresholds.py` — the threshold reaching the matcher to
 labels anchors with, the inversion refused by name, the checkpoint refused by a run naming another
 regime, and silence read as torchvision's own — and by the sweep's arithmetic in
 `tests/test_anchor_census.py`. Each was proved by making the revert and watching the test fail.
+
+---
+
+## 2026-08-30 — The threshold sweep, and rung 5 set at 0.3 because the rule says one line
+
+**Decision.** `configs/ladder/r5-fg-iou.yaml` runs `rpn_fg_iou_thresh: 0.3`, moving one key and
+leaving `rpn_bg_iou_thresh` at torchvision's 0.3. Fixed here, from the sweep below, **before the
+rung trains** — the order rung 4's `32` was fixed in on 2026-08-19.
+
+**The sweep, run on a Kaggle CPU session on 2026-08-30.** Same 1123 ship-bearing training tiles,
+same 3637 ships, no GPU quota. Its first two blocks reproduce the census of 2026-08-19 exactly —
+stock anchors: mean 97.6 positives per tile, max 3098, 3257 rescue-only, `{0: 109506, 1: 121}`,
+realised fraction 0.168 — which is the point of re-running it rather than trusting the entry.
+
+Best IoU any anchor offers a ship, over the 3637:
+
+| p5 | p25 | **p50** | p75 | p95 |
+| --- | --- | --- | --- | --- |
+| 0.028 | 0.079 | **0.207** | 0.458 | 0.772 |
+
+| fg IoU | positives per tile | rescue-only | share | realised fraction |
+| --- | --- | --- | --- | --- |
+| **0.70** (shipped) | mean 97.6, max 3098 | 3257 / 3637 | 0.896 | 0.168 |
+| 0.50 | mean 111.1, max 3098 | 2807 / 3637 | 0.772 | 0.210 |
+| 0.40 | mean 141.0, max 3098 | 2589 / 3637 | 0.712 | 0.282 |
+| **0.30** (rung 5) | mean 210.0, max 3114 | 2238 / 3637 | 0.615 | 0.375 |
+| 0.25 | mean 270.3, max 3147 | 2037 / 3637 | 0.560 | 0.415 |
+| 0.20 | mean 361.4, max 3898 | 1772 / 3637 | 0.487 | 0.449 |
+| 0.15 | mean 506.5, max 5978 | 1457 / 3637 | 0.401 | 0.477 |
+| 0.10 | mean 743.4, max 9455 | 1120 / 3637 | 0.308 | 0.493 |
+| 0.05 | mean 1216.3, max 15525 | 616 / 3637 | 0.169 | 0.499 |
+
+**The prediction of 2026-08-29 was half right, and the half that was wrong is the number.** It
+said the median ship's best overlap would come in "well below 0.25 — nearer 0.10 than 0.25", on
+the ground that `256/1024 = 0.25` squares a length where the overlap is an *area* over an anchor's
+1024 px².
+
+The mechanism holds. At 0.25 the rescue-only share is still **0.560**, so the median ship does not
+reach 0.25 and the figure two earlier entries quote is not the point at which ships stop being
+rescued. Below 0.25, as predicted.
+
+The magnitude is wrong by about a factor of two: **0.207**, which is nearer 0.25 than 0.10. The
+reason is stated rather than shrugged at. The prediction reasoned from a hull's aspect ratio, about
+2.5 to 1, and a hull's aspect ratio is not its *label's*. LS-SSDD's boxes are axis-aligned and a
+ship lies in any direction — which is the argument `model.py` already makes for keeping the stock
+`ASPECT_RATIOS` — so a vessel at forty-five degrees has a nearly square bounding box. A median
+best IoU of 0.207 implies a median box of about `0.207 x 1024 = 212` px², roughly 16 by 13 against
+a longest side of 16.0. The boxes are almost square, and the prediction applied the geometry of the
+ship to the geometry of the rectangle drawn around it.
+
+**Why 0.3 and not 0.2, which is where the median ship actually crosses.** Because
+`rpn_bg_iou_thresh` is 0.3 and `Matcher` refuses a background threshold above the foreground one,
+so 0.3 is the last value reachable by moving one key — and one line different from R1 is the rule
+issue #24 restates and the five rungs before it kept. A sixth rung that quietly moved two keys
+would be the first on this ladder to measure two things and report one.
+
+It is not a weak change for being the permitted one. Against the shipped 0.7, dropping to 0.3:
+
+* **1019 more ships gain a genuine match** — rescue-only falls from 3257 to 2238 of 3637, from 90%
+  to 62%.
+* **the positives the sampler actually draws roughly double**, from `0.168 x 256 = 43` per image to
+  `0.375 x 256 = 96`.
+
+Both are larger moves in the RPN's positive set than either rung the ladder already spent a session
+on. R2 took the realised fraction *down* to 0.014 and lost 0.048; R4 raised the fraction by
+shrinking the batch, which reduced the absolute positives from about 43 to at most 16, and lost
+0.0087. Rung 5 is the first that raises the count and improves the quality at once, and the two
+had never moved together before.
+
+**The rung's own prediction, written before it trains.** It will **not be a draw**: the statistic
+moves by more than R1's band of 0.0099 in absolute value, unlike R3 (0.00001) and R4 (0.0087).
+Direction predicted positive. The mechanism is the paragraph above — the RPN currently learns
+confidence from anchors forced positive by a tie at the maximum, where a 32 px anchor sits around
+a 16 px ship, and at 0.3 it learns from anchors that genuinely overlap.
+
+The risk that would make it wrong, stated now rather than after: an anchor at 0.3 IoU is a poor
+localisation target, and the box regression is trained to move it onto the ship from that overlap.
+The statistic is decided at a score threshold of 0.75, where precision is what R1 is carrying
+(0.848), so a rung that finds more ships and localises them worse can lose on the number it wins
+on the mechanism.
+
+**What is deferred, and why it is a rung of its own.** Everything below 0.3 — and 0.2 in
+particular, where the rescue-only share crosses half at 0.487 and the median ship finally has a
+genuine match. It needs `rpn_bg_iou_thresh` to move with it, which is a second line, and this
+ladder's rule has one. Recorded as reasoned and deferred, the same state the pyramid-level trim of
+2026-08-25 is in, rather than folded into this rung as a second variable.
+
+**Cost.** The ladder's sixth rung was chosen *after* the first five had run, which is the thing the
+rule exists to make suspect. Two things make it admissible and neither is that it seemed like a
+good idea: its hypothesis is in this log at 2026-08-19, at the foot of the census entry, three days
+before the first rung trained; and its value comes from a measurement rather than from the five
+outcomes. `configs/ladder.yaml` says so at the rung itself.
+
+Held by `tests/test_config.py`, which asserts this rung differs from R1 by exactly
+`model.rpn_fg_iou_thresh` and resolves to the cosine schedule R1 was kept for, and by
+`tests/test_anchor_census.py`, which pins the sweep's arithmetic including the float32 boundary
+`docs/failures.md` records for 2026-08-30.

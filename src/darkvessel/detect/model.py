@@ -124,11 +124,10 @@ def detector_model(
             between the two are ignored rather than trained on. Torchvision's default is 0.3, and
             it is exposed only because it constrains the one above: `Matcher` refuses a background
             threshold above the foreground one, so a foreground threshold below 0.3 cannot be
-            reached without moving this too — and below 0.3 is where the census's own worked
-            example puts the median ship. What that example does not say is the ship's *area*,
-            which is what its overlap with a 1024 px² anchor actually is; the sweep in
-            `notebooks/anchor_census.py` counts it. Not a lever anyone here has an argument for on
-            its own. See docs/decisions.md, 2026-08-29.
+            reached without moving this too — and below 0.3 is where the sweep of 2026-08-30
+            puts the median ship, whose best overlap with any anchor is 0.207. Not a lever anyone
+            here has an argument for on its own; rung 5 leaves it alone and stops at 0.3 for that
+            reason. See docs/decisions.md, 2026-08-30.
         box_batch_size_per_image: The same, for the second-stage head.
         box_positive_fraction: The same, for the second-stage head.
     """

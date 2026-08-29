@@ -161,7 +161,7 @@ issue #11 can be ticked, or the ones that were not met explained where they were
 is one of those: `docs/failures.md` already records the dual-polarisation stem asked for as
 blocked on data, with the single-channel stem shipped as rung 3 in its place.
 
-## Session 6 — the threshold sweep, on CPU. Issue #24.
+## Session 6 — the threshold sweep, on CPU. Done on 2026-08-30.
 
 The ladder closed with five rungs and one of them kept. Issue #24 adds a sixth, and it is the one
 the census's own reservation of 2026-08-19 named: the RPN's foreground IoU threshold, which both
@@ -185,15 +185,25 @@ session below is started. `docs/decisions.md`, 2026-08-29, holds a prediction ab
 will say; if the sweep contradicts it, the contradiction is what gets written, not a narrowed
 version of the prediction.
 
+**It ran on 2026-08-30 and the threshold is set at 0.3.** The table is in `docs/decisions.md`,
+2026-08-30, with the prediction judged there: half right — the median ship's best overlap is
+**0.207**, below the 0.25 two entries of that log quote, but twice the 0.10 the prediction named.
+The sweep reproduced the census of 2026-08-19 on every figure but one, and that one was a defect in
+the sweep rather than in the census: see `docs/failures.md`, 2026-08-30.
+
 ## Session 7 — the sixth rung
 
-`configs/ladder/r5-fg-iou.yaml` does not exist until session 6 has run, and it should not: a rung
-config carrying a placeholder is a rung whose value was chosen twice. When it is written it
-extends `r1-cosine.yaml`, the last rung kept, and moves `model.rpn_fg_iou_thresh` — and
-`model.rpn_bg_iou_thresh` with it, if the value is below torchvision's 0.3, because `Matcher`
-refuses a background threshold above the foreground one. That is two keys where the five rungs
-before it moved one, and issue #24's closing comment says so rather than letting the ladder's
-table imply otherwise.
+`configs/ladder/r5-fg-iou.yaml` now exists, extends `r1-cosine.yaml` — the last rung kept — and
+moves **one** key: `model.rpn_fg_iou_thresh` from 0.7 to 0.3. One and not two, because 0.3 is the
+last value reachable without also moving `model.rpn_bg_iou_thresh`, `Matcher` refusing a background
+threshold above the foreground one. Everything below 0.3 is a rung of its own and is deferred in
+`docs/decisions.md`, 2026-08-30.
+
+What the change buys, from the sweep: 1019 more ships gain a genuine match instead of a rescued one
+(rescue-only 3257 → 2238 of 3637), and the positives the sampler draws roughly double, 43 per image
+→ 96. The rung's own prediction is in that entry, written before this session: **not a draw** —
+the statistic moves by more than R1's band of 0.0099, direction positive — with the risk that would
+make it wrong named beside it.
 
 | Session | Config | Kaggle writes checkpoints to | Kaggle writes metrics to | Commit the metrics file as |
 | --- | --- | --- | --- | --- |

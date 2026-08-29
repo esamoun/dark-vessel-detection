@@ -584,16 +584,23 @@ detections. F1 0.836 against 0.807.
 anchor set — which points at the RPN's foreground IoU threshold rather than at anchor geometry or
 sampler batch size. Two rungs have now failed in the region that hypothesis describes and neither
 tested it, because the five rungs were fixed before the census that produced it. It is the first
-thing a sixth rung should change, and this ladder deliberately does not have one; it is
+thing a sixth rung should change, and the five rungs above deliberately did not — a change
+introduced after a ladder's results are known is measured against nothing. It is
 [issue #24](https://github.com/esamoun/dark-vessel-detection/issues/24).
 
-That rung's parameter now exists — `rpn_fg_iou_thresh` is a build parameter recorded in every
-checkpoint — and the value it will run at deliberately does not. It comes out of a threshold
-sweep, added to `notebooks/anchor_census.py` and costing no GPU time, which reports every ship's
-best overlap with any anchor and the rescue-only share at nine candidate thresholds. Setting the
-value from the run it justifies is the one thing this ladder's rule exists to forbid, so it is set
-from the sweep first, in writing. The table above gains a sixth row when the rung has been
-measured against R1 on this same split, and not before. See `docs/decisions.md`, 2026-08-29.
+That rung now exists as `configs/ladder/r5-fg-iou.yaml`, and its value was set from a measurement
+rather than from the five results above it — a threshold sweep added to
+`notebooks/anchor_census.py`, run on 2026-08-30, costing no GPU time. Over the same 3637 ships the
+median one's best overlap with any anchor is **0.207**, and dropping the foreground threshold from
+0.7 to **0.3** gives 1019 of them a genuine match instead of a rescued one while roughly doubling
+the positives the sampler draws, 43 per image to 96. 0.3 rather than lower because `Matcher`
+refuses a background threshold above the foreground one, so 0.3 is the last value one line can
+reach — and one line is this ladder's rule.
+
+The table above gains a sixth row when that rung has been measured against R1 on this same split,
+and not before. Its prediction is already committed: not a draw, direction positive, with the
+mechanism that would make it wrong named beside it. See `docs/decisions.md`, 2026-08-29 and
+2026-08-30.
 
 ```bash
 darkvessel compare --config configs/ladder.yaml
