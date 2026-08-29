@@ -2168,3 +2168,126 @@ feature collection and come back as one table, and the order they come back in i
 index travels with each point and the answers are put back in the order they were asked. A sampler
 that returned one row fewer would otherwise put every value on the wrong vessel and still write a
 layer that opens.
+
+## 2026-08-29 — The analysis reports a rate, and every interval is resampled over acquisitions
+
+Level 4's last stage, and the first one whose output is prose rather than a column. Four decisions
+were made in it, each of which would have produced a plausible README paragraph if made the other
+way. Every one is held by a test in `tests/test_concentration.py`, on the standing bar that a
+decision nothing would catch being reverted is a defect rather than a finished piece of work.
+
+### The reported quantity is a share, not a count
+
+A histogram of where the 40 dark detections were found is mostly a picture of where detections are
+found at all. The shipping lane carries a quarter of everything the archive saw inside a stripe
+770 m across, and it would carry a large share of the dark candidates under any hypothesis
+including the null one. Dividing by the detections standing in the same water turns "there are
+more of them here" into "a larger share of what is here is undeclared", which is the question #16
+asks and the only one a detection archive can answer.
+
+It changes the sign of the headline. By count, the lane is the third-busiest band for dark
+detections and unremarkable. By share it is 2.1% against an archive-wide 21.2% and it is the only
+band on the page that separates from anything.
+
+### The interval is a bootstrap over scenes, not a Wilson interval over rows
+
+**The decision the whole analysis turns on.** 189 detections came from 49 acquisitions, and two
+detections of one acquisition share a sea state, a pass direction, a morning, and frequently a
+hull that stood in the box again a week later. Treating them as 189 independent Bernoulli trials
+is the default every textbook interval assumes and it is wrong here in the direction that
+manufactures findings: the archive-wide interval is [15.9%, 27.5%] under independence and
+[13.6%, 29.4%] once whole acquisitions are resampled, about a third wider, and a third is enough
+to decide most of the band-to-band comparisons.
+
+So `interval_over` draws scenes with replacement and each drawn scene brings all of its
+detections. Both numbers are printed, the row-wise one beside the scene-wise one, so that the cost
+of the easier assumption is visible rather than argued about.
+
+`test_the_interval_widens_when_the_scenes_disagree` is the guard, and it is constructed to fail on
+the revert rather than to pass on the current code: twelve acquisitions, six entirely dark and six
+entirely declared, eight detections each. Resampled by row the interval is about ±0.10; resampled
+by scene it is half the unit interval. The test asserts more than a factor of two between them.
+`test_the_scenes_are_resampled_whole` holds the other half of it — with every scene internally
+unanimous, only rates on the twelfths are reachable, so bounds landing on that grid is the
+evidence that acquisitions and not rows were drawn.
+
+Wilson rather than the normal approximation for the row-wise figure, because the bands here run to
+one dark detection in 47 and a symmetric interval prints a negative probability there.
+
+### Bands are quartiles of the population, and the population is every detection
+
+Cut on the dark subset, the bands follow wherever the dark detections happen to sit and the rate
+per band tends to flat by construction — the analysis would then have been incapable of finding
+anything, and would have reported that as a null result. Cut on all 189, each band asks a fixed
+question of one slice of water.
+
+Quantiles rather than equal widths, so no interval is wide merely because its band was empty. It
+also turned out to be where the finding lives: the bands hold equal counts, so their *widths* are
+the measurement, and the lane is visible as a quartile 770 m across beside one 5.44 km across.
+
+Duplicate edges collapse. ETOPO1's cell is 1.85 km and a box this size can return a single depth;
+four bands of one value would be three empty bands implying a gradient nobody measured.
+
+### A variable nobody could sample is unavailable, never a null result
+
+Carried straight through from the sampling stage. The EEZ column reads `unavailable` on all 189
+rows because Earth Engine's public catalogue has no such layer, and an analysis that binned it
+would report that dark candidates are spread evenly across EEZs — a sentence that is not false so
+much as about nothing. `Category.available` is false when every value is `unavailable`, the
+report says so, and #16's EEZ criterion is recorded as unmet rather than satisfied in form.
+
+The same rule applies per-row: a detection the catalogue could not answer for is excluded from a
+band and counted as unsampled, never folded in as a zero. Zero metres from shore is a detection
+aground and zero fishing hours is a real fact about water, so a filled-in zero would be
+indistinguishable from a finding.
+
+### No model is fitted, and the comparison is interval overlap
+
+There is no regression of dark rate on depth and no p-value on this page. 189 detections over ten
+weeks of one rectangle support four bands, a rate in each, and the question of whether two
+intervals overlap. That bar is stricter than a two-sample test at 5%, which is the direction to
+err in for a page that will be read as a result — and it is why the visible slope in the depth
+estimates, 27.3% deepest against 9.3% shallowest, is reported as nothing found.
+
+### What the run produced, and the confound it cleared
+
+189 detections over 49 of the 50 acquisitions, 40 dark, 21.2% [13.6%, 29.4%]. One band separates
+from all three others and it is the declared lane. Depth and recorded fishing effort separate
+nothing.
+
+The sea-state columns the archive-wide run put on every row were there against the possibility
+that a dark rate is a fact about the wind. Over 49 acquisitions the detection count is flat in the
+sea level (Spearman −0.02) and the dark rate weakly negative (−0.20), which 49 points produce by
+chance. Recorded rather than corrected for, and it does not appear to be operating.
+
+Two limits of the study area are visible in the answer and are stated in the README rather than
+worked around, because neither is fixable by a different analysis of the same box: distance to
+shore correlates with longitude at 0.51 and depth at −0.84, so both variables are close to spatial
+coordinates of a 17 km rectangle, and a finding about distance from land cannot be separated from
+a finding about where the lane runs.
+
+### Three ways the report nearly said "nothing found" about something it never measured
+
+Found reviewing the first cut of this module, and worth recording because all three were correct
+arithmetic wrapped in a wrong sentence — the only kind of defect a stage whose output is prose
+can have, and invisible to every test that checks a number.
+
+**A band whose detections all came from one acquisition has no interval,** because there is one
+morning to resample. The summary line printed `nan%` bounds and then concluded "every interval
+overlaps every other; no concentration established", which is the module's own cardinal error
+stated by its own summary. It now says no interval could be estimated, and `Band.estimated` and
+`Profile.comparable` are what the sentence is chosen on.
+
+**A variable whose column is not on the layer was filtered out of the report entirely.** A layer
+that never went through `darkvessel context` carries none of the four, and the answer to "where
+do they concentrate against fishing effort" was to not mention fishing effort — which reads as
+though the question had been asked. Every measure is now profiled, and an absent column is
+unavailable for the same reason a column of nulls is.
+
+**A missing sea-state correlation was always blamed on the acquisition count.** Spearman returns
+nothing for two different reasons — fewer than three scenes to rank, or scenes whose sea never
+moved, which includes a layer never sampled for it — and the message named only the first. A
+reader told there were too few acquisitions would go and fetch more.
+
+Each is held by a test in `TestWhatCouldNotBeMeasured`, and each guard was watched failing on the
+revert before it was kept.
