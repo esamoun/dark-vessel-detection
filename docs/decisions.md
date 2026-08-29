@@ -2291,3 +2291,40 @@ reader told there were too few acquisitions would go and fetch more.
 
 Each is held by a test in `TestWhatCouldNotBeMeasured`, and each guard was watched failing on the
 revert before it was kept.
+
+## 2026-08-29 — The interval has an interval, and the page states what resolution to read it at
+
+Found by re-reading the previous entry against a measurement, which is the order it should have
+happened in. The config's comment beside `draws` claimed the bootstrap percentiles were "stable to
+well under the digit the README prints". Measured over twelve seeds on the archive layer, the
+bounds move **0.47 and 0.52 points** at the shipped 4000 draws, and the README prints one decimal.
+The claim was false in the digit it was about.
+
+**The first fix considered was the wrong one.** Raising the draw count looks like the answer and
+is not: the Monte Carlo error of a percentile falls as one over the square root of the draws and
+never reaches zero. Measured on the same layer — 0.47 points at 4000, 0.22 at 20 000, 0.12 at
+50 000 — and even 50 000 moves nine of the thirteen printed intervals between seeds. Buying the
+printed decimal would take a draw count nobody would run, to make real a precision the method does
+not have.
+
+**Reproducibility was never what the draw count bought.** The seed is in the config, so
+`darkvessel analyse --config configs/kattegat-lane.yaml` returns those figures exactly, and it did
+before this entry. What was missing was a statement of how much of the printed precision means
+anything.
+
+So the spread is measured rather than asserted. `monte_carlo_spread` re-runs the archive-wide
+interval over twelve consecutive seeds and reports the range of each bound; it lands in
+`docs/runs/analysis-archive.json` and on the terminal beside the interval, and the README quotes
+it from there and tells the reader to read every bound on the page at whole-percent resolution.
+The same rule the ladder follows, that a number on the page comes out of a committed run rather
+than out of somebody's terminal.
+
+The published figures are unchanged. Rewriting thirteen intervals across a merged pull request and
+a closed issue to gain four tenths of a point of Monte Carlo precision, on bounds eight points
+wide, would have been churn dressed as rigour — and it would have left the same defect in place,
+because the new numbers would have carried an unstated error too.
+
+Guarded by `TestTheMonteCarloErrorOfTheBounds`, including a test that reads the shipped config and
+fails if the old claim comes back. Its fixture makes the dark flag a property of the acquisition
+rather than of the row, because a fixture without that clumping understates the spread by half and
+would pass on a bootstrap that had stopped clustering at all.

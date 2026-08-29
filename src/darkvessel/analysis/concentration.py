@@ -53,6 +53,11 @@ from darkvessel.fusion.match import DARK
 Z = 1.959963984540054
 CONFIDENCE = 0.95
 
+# Seeds the Monte Carlo error of the bounds is measured over. Twelve is enough to see the range
+# without turning a hundredth-of-a-second command into a slow one, and it is a range rather than a
+# standard deviation because what a reader needs is "the printed digit moved by this much".
+SPREAD_SEEDS = 12
+
 SCENE = "scene"
 STATUS = "status"
 EEZ = "eez"
@@ -311,6 +316,9 @@ class Concentration:
     scenes: int
     wilson: tuple[float, float]
     interval: tuple[float, float]
+    # How far the two bounds above move when only the seed changes. Reported so that the digits
+    # printed everywhere else on the page can be read at the resolution they actually carry.
+    monte_carlo: tuple[float, float]
     profiles: tuple[Profile, ...]
     categories: tuple[Category, ...]
     sea: Sea
@@ -329,6 +337,8 @@ class Concentration:
             f"  dark rate {self.rate:.1%}  "
             f"[{self.interval[0]:.1%}, {self.interval[1]:.1%}] over acquisitions, "
             f"[{self.wilson[0]:.1%}, {self.wilson[1]:.1%}] if the rows were independent",
+            f"  the bounds move {self.monte_carlo[0]:.2%} and {self.monte_carlo[1]:.2%} over "
+            f"{SPREAD_SEEDS} seeds at {self.draws} draws; read them at whole-percent resolution",
         ]
         for profile in self.profiles:
             out.extend(profile.lines())
@@ -346,6 +356,8 @@ class Concentration:
             "confidence": CONFIDENCE,
             "wilson": list(self.wilson),
             "interval": list(self.interval),
+            "monte_carlo": list(self.monte_carlo),
+            "monte_carlo_seeds": SPREAD_SEEDS,
             "bands": self.bands,
             "draws": self.draws,
             "seed": self.seed,
@@ -425,6 +437,29 @@ def interval_over(
     return (float(low), float(high))
 
 
+def monte_carlo_spread(
+    dark: np.ndarray, clusters: np.ndarray, *, draws: int, seeds: int
+) -> tuple[float, float]:
+    """How far each bound of the interval moves when only the seed changes.
+
+    A bootstrap percentile is an estimate with an error of its own, and that error does not go
+    away with draws — it shrinks like one over their square root and keeps moving the digit a
+    README prints long after the arithmetic has stopped being cheap. Measuring it is the
+    alternative to claiming it is small: the figure the page quotes comes out of this function
+    and lands in the committed report, so a reader can see how much of the printed precision is
+    real.
+
+    Returns the range of the low bound and of the high bound over `seeds` consecutive seeds,
+    which is what tells a reader at what resolution to read the bounds elsewhere on the page.
+    """
+    bounds = [interval_over(dark, clusters, draws=draws, seed=seed) for seed in range(seeds)]
+    lows = [low for low, _ in bounds if not math.isnan(low)]
+    highs = [high for _, high in bounds if not math.isnan(high)]
+    if not lows or not highs:
+        return (float("nan"), float("nan"))
+    return (max(lows) - min(lows), max(highs) - min(highs))
+
+
 def cut(values: np.ndarray, *, bands: int) -> np.ndarray:
     """Band edges at the quantiles of every detection's value, dark and declared alike.
 
@@ -497,6 +532,7 @@ def concentrate(
         scenes=int(pd.unique(scenes).size),
         wilson=wilson(int(dark.sum()), len(detections)),
         interval=interval_over(dark, scenes, draws=draws, seed=seed),
+        monte_carlo=monte_carlo_spread(dark, scenes, draws=draws, seeds=SPREAD_SEEDS),
         # Every measure, including one whose column is not on the layer at all. Filtering those
         # out would report a variable that was never sampled by saying nothing about it, which is
         # the same silence this module refuses for a column of nulls.

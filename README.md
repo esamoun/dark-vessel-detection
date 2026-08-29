@@ -1185,6 +1185,20 @@ interval on this page is a bootstrap that resamples **whole acquisitions** with 
 the row-wise one is shown beside it to make the cost of the easier assumption visible. It is
 about a third narrower, and a third is wide enough to decide most of the comparisons below.
 
+**Read the bounds at whole-percent resolution.** They are bootstrap percentiles and carry a
+Monte Carlo error of their own, which the command measures rather than assumes away:
+
+```
+  the bounds move 0.47% and 0.52% over 12 seeds at 4000 draws; read them at whole-percent resolution
+```
+
+The decimals in the tables below are therefore reproducible without being meaningful — the config
+fixes the seed, so this command returns these figures exactly — and nothing on this page turns on
+a tenth of a point. More draws do not fix it: a percentile keeps this error however many it is
+given, it falls only as the square root, and at 50 000 draws it still moves the digit printed
+here. Measuring it and saying at what resolution to read the page is the honest alternative to
+chasing a precision the method does not have.
+
 ### One band separates. It is the lane.
 
 | Distance to shore | Width | Detections | Per km | Dark | Share | 95% interval |
