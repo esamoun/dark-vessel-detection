@@ -53,7 +53,7 @@ The pipeline is built in four levels, each one shippable on its own.
 | **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.73 recall over a held-out split of 3000 sub-images, and the three changes that did not clear the noise are written up rather than removed |
 | **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene with the trained detector in it, since 2026-08-16 |
 | **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | **complete.** Runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching; detections are described by a representation learned without labels, and retrieval across ten weeks of acquisitions returns the same object 71% of the time against 0.02% at chance. Offshore structures are separated from vessels and excluded from the dark count without a single label: 65 fixed positions found by recurrence across 47 acquisitions, every one of them verified against published coordinates to 5.1 m, taking 80.5% of the detections a run over the wind farm would have had to explain |
-| **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | three of the four variables are sampled server-side and travel on the detections, run against the live catalogue on the Kattegat scene; EEZ boundaries are not in Earth Engine's public catalogue and read `unavailable` until one is ingested. The chain now runs across the whole archive rather than one acquisition, so the distribution this level needs has somewhere to come from — that run is in progress and has produced no numbers yet, and the analysis is not started |
+| **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | **complete.** The chain ran across all 50 acquisitions of the study area and 189 detections accumulated into one layer, 40 of them undeclared — 21.2%, and [13.6%, 29.4%] once the interval is resampled over acquisitions rather than over detections. Against depth and against recorded fishing effort every band's interval overlaps every other and nothing is claimed. Against distance to shore one band separates from all three others: the 770 m stripe carrying the declared lane, 61 detections per kilometre against 8.8 in the widest band, is 2.1% dark [0.0%, 6.5%] where the archive is 21.2%. EEZ boundaries are not in Earth Engine's public catalogue and read `unavailable` on all 189 rows until one is ingested |
 
 The chain that carries these was built first, deliberately, with a deterministic stand-in where
 the detector would go; the stand-in is still there, behind the same parameter, and is what the
@@ -139,6 +139,8 @@ src/darkvessel/
               register of fixed structures a run will not call dark vessels
   context/    contextual variables sampled at each detection: distance to shore, water
               depth, EEZ membership, fishing effort
+  analysis/   the distribution of dark candidates against each of those variables, with
+              intervals resampled over acquisitions rather than over detections
   viz/        GeoJSON export for the web map
 configs/      pipeline configuration
 data/reference/  published structure coordinates, and the register built from the archive
@@ -236,7 +238,13 @@ hours — and it resumes where it stopped:
 darkvessel archive-ais --config configs/kattegat-lane.yaml  # declarations, one day per download
 darkvessel archive-run --config configs/kattegat-lane.yaml  # the chain over all 50 acquisitions
 darkvessel context --config configs/kattegat-lane.yaml --archive  # the layers, in one round trip
+darkvessel analyse --config configs/kattegat-lane.yaml      # the distribution, and its intervals
 ```
+
+`analyse` is the only one of the four that needs neither credentials nor a network: everything it
+reads is already on the row. It writes [`docs/runs/analysis-archive.json`](docs/runs/analysis-archive.json)
+and one figure per variable, so every number in the section below is re-derivable by anyone
+holding the GeoPackage.
 
 ```
 4676 crops from 96 scene(s): 318 distinct positions, 65 of them standing in 20+ acquisitions
@@ -1142,10 +1150,9 @@ an error naming the command that resumes.
 
 ### What is not claimed
 
-**The archive-wide run has not completed, and there are no numbers from it here.** What is on this
-page is the machinery and the one measurement that did not need it — the sea state, which is read
-off the scenes themselves. When the run has been made, what it found goes here and in
-[`docs/decisions.md`](docs/decisions.md), including whether the dark rate tracks the sea.
+**No distribution is read off this section.** What is on this page is the machinery and the one
+measurement that did not need it — the sea state, read off the scenes themselves. The run has
+since been made and what it found is [below](#where-they-concentrate--2026-08-29).
 
 **The EEZ is still `unavailable`.** Nothing above changes that; it needs the Marine Regions
 boundaries ingested as an Earth Engine asset, and until then the column says so rather than
@@ -1155,6 +1162,149 @@ guessing.
 17 km rectangle chosen for its traffic. Whatever the distribution turns out to be, it is a
 statement about this water in this window, and no claim about transfer to another will be made
 from it.
+
+## Where they concentrate — 2026-08-29
+
+The run was made. All 50 acquisitions of the box, the same detector at the same operating point,
+49 of them carrying at least one detection and one carrying none: **189 detections, of which 40
+were undeclared.**
+
+```bash
+darkvessel analyse --config configs/kattegat-lane.yaml
+```
+
+```
+189 detections over 49 acquisitions, 40 of them dark
+  dark rate 21.2%  [13.6%, 29.4%] over acquisitions, [15.9%, 27.5%] if the rows were independent
+```
+
+Both intervals are printed because the difference between them is a decision. 189 detections are
+not 189 independent trials: they came from 49 mornings, and two detections of one acquisition
+share a sea state, a pass direction and often a hull that was there again a week later. So every
+interval on this page is a bootstrap that resamples **whole acquisitions** with replacement, and
+the row-wise one is shown beside it to make the cost of the easier assumption visible. It is
+about a third narrower, and a third is wide enough to decide most of the comparisons below.
+
+### One band separates. It is the lane.
+
+| Distance to shore | Width | Detections | Per km | Dark | Share | 95% interval |
+| --- | --- | --- | --- | --- | --- | --- |
+| 21.3 – 26.8 km | 5.44 km | 48 | 8.8 | 16 | 33.3% | [20.0%, 47.7%] |
+| **26.8 – 27.6 km** | **0.77 km** | **47** | **61.4** | **1** | **2.1%** | **[0.0%, 6.5%]** |
+| 27.6 – 29.3 km | 1.75 km | 47 | 26.8 | 10 | 21.3% | [9.8%, 33.3%] |
+| 29.3 – 32.1 km | 2.76 km | 47 | 17.1 | 13 | 27.7% | [12.5%, 45.2%] |
+
+![Share undeclared against distance to shore](docs/figures/concentration-distance_to_shore_m.svg)
+
+The bands are quartiles of the population, so each holds about the same number of detections and
+their *widths* are the finding. A quarter of everything the archive saw stands inside a stripe
+770 m across — 61 detections per kilometre against 8.8 in the widest band — and that stripe is
+2.1% undeclared where the archive as a whole is 21.2%. Its interval is the only one here that
+fails to overlap any other, and it fails to overlap all three.
+
+The stripe is the shipping lane, and the rest of the table follows from that rather than from
+anything about the sea floor. Its declared vessels have a median length of 228 m, the largest of
+the four bands, and 46 of its 47 detections carry an MMSI. This is not a claim that undeclared
+traffic avoids the lane. It is the arithmetic of a corridor that is almost entirely large
+declared ships: what the analysis can say is that **the dark candidates are not the lane — they
+are the water on either side of it**, which is where anyone checking them by hand should look.
+
+**Distance to shore in this box is close to a spatial coordinate.** The whole rectangle is 21 to
+32 km from the LSIB coastline and the variable correlates with longitude at 0.51, so "27 km from
+shore" and "this diagonal stripe of the study area" are the same sentence, and nothing here can
+separate a fact about distance from land from a fact about where the lane happens to run. A study
+area spanning a real range of distances would be needed to tell those apart, and that is a
+different box, not a different analysis.
+
+### Depth and fishing effort say nothing, and the figures show it
+
+![Share undeclared against water depth](docs/figures/concentration-depth_m.svg)
+
+| Water depth | Detections | Dark | Share | 95% interval |
+| --- | --- | --- | --- | --- |
+| −49 to −42 m | 55 | 15 | 27.3% | [13.7%, 40.3%] |
+| −42 to −36 m | 40 | 9 | 22.5% | [8.9%, 39.5%] |
+| −36 to −34 m | 51 | 12 | 23.5% | [10.4%, 37.0%] |
+| −34 to −31 m | 43 | 4 | 9.3% | [2.3%, 19.0%] |
+
+There is a slope in the point estimates — 27.3% in the deepest quartile against 9.3% in the
+shallowest — and it is not a finding. Every interval overlaps every other, the two extremes by
+1.3 points of share, and a slope that survives only in the estimates is what a 95% interval
+exists to stop being published. Two further reasons not to reach for it: ETOPO1's cell is about
+1.85 km, so 189 detections carry 19 distinct depths and a "quartile of depth" is a handful of
+cells; and depth correlates with longitude at −0.84 across this box, which makes "deeper" and
+"further west" one variable wearing two names.
+
+![Share undeclared against recorded fishing effort](docs/figures/concentration-fishing_hours.svg)
+
+| Recorded fishing effort | Detections | Dark | Share | 95% interval |
+| --- | --- | --- | --- | --- |
+| 22.7 – 43.4 h | 48 | 12 | 25.0% | [10.4%, 42.2%] |
+| 43.4 – 52.4 h | 47 | 8 | 17.0% | [6.7%, 26.8%] |
+| 52.4 – 61.9 h | 47 | 8 | 17.0% | [5.0%, 29.4%] |
+| 61.9 – 93.1 h | 47 | 12 | 25.5% | [13.9%, 38.1%] |
+
+Flat, and shaped like a smile, which is the shape a variable makes when it is carrying nothing.
+Recall what this column is: hours summed over 2016, because Global Fishing Watch's daily product
+ends years before these acquisitions. It says where fishing effort has *been recorded*, not who
+was fishing that morning, and the hypothesis it can test is the weak one — whether undeclared
+traffic sits in water that has historically carried fishing. On this evidence it does not
+preferentially, and that is a null result on a proxy rather than on the question.
+
+### The sea state is not driving it
+
+The archive-wide run put two columns on every row against exactly this possibility: a scene whose
+sea sits far from the calibrated window is scored at an operating point nobody chose, so a dark
+rate could be a fact about the wind that morning.
+
+```
+Sea state, over 49 acquisitions (Spearman)
+  dark rate vs sea level   -0.20
+  detections vs sea level  -0.02
+  dark rate vs sea spread  +0.08
+```
+
+Over acquisitions rather than over detections — one scene has one sea however many detections
+came out of it, and correlating rows would weight each morning by its own detection count, which
+is the quantity on the other side of the question. The number of detections a scene yields is
+flat in the sea level (−0.02) and the dark rate is weakly negative (−0.20) over 49 points, which
+is inside what 49 points produce by chance. The confound was worth recording and does not appear
+to be operating.
+
+One more sanity check that came free: the detector's confidence on the dark candidates has a
+median of 0.970 against 0.967 on the matched ones. Whatever the 40 are, they are not the weak
+detections.
+
+### What is not claimed
+
+**Fifty acquisitions of one 17 km box are not a sample of Danish waters.** Ten weeks over one
+rectangle chosen for its traffic. Everything above is a statement about this water in this
+window, and no claim about transfer to another is made from it — the Anholt box, four sections
+up, is the standing evidence that an adjacent rectangle of the same sea behaves nothing like it.
+
+**"Dark" is a matching outcome, not a verdict on a vessel.** It means no declaration within 200 m
+after the azimuth shift was compensated, on a day whose declarations were ingested in full. The
+four vessels that measurement was built on are in [`docs/failures.md`](docs/failures.md), and a
+residual of unmatched declared ships is expected to be inside the 40 rather than absent from it.
+Nothing here identifies a vessel or asserts intent.
+
+**The lane result is a description, not a mechanism.** A 770 m stripe of large declared ships has
+few unmatched detections in it. Whether that is because undeclared traffic keeps clear of a
+traffic separation scheme, or because the matching works best where the declarations are dense,
+or because the lane is where the biggest and most detectable hulls are, is not something 189
+detections can separate. The useful form of it is the one stated above: the dark candidates are
+off the lane.
+
+**The EEZ column is still `unavailable` on all 189 rows,** so the criterion asking where the
+candidates sit relative to the EEZ is met in code and not in data. Marine Regions publishes the
+boundaries under CC-BY and Earth Engine does not carry them; the config names no asset and every
+row says so rather than guessing. This is unchanged since level 4's sampling stage and is the one
+acceptance criterion of #16 this run does not answer.
+
+**No model was fitted and no p-value is reported.** Four bands, a rate in each, an interval around
+each rate, and a comparison that asks only whether two intervals overlap. Non-overlapping 95%
+intervals is a stricter bar than a two-sample test at 5%, which is the direction to err in on a
+page that will be read as a result.
 
 ## Licence
 

@@ -196,6 +196,26 @@ context:
   # cell at 10 m would not make the answer sharper, it would make it look sharper.
   scale_m: 1000
 
+# What `darkvessel analyse` reads the accumulated layer with, and where it writes the answer.
+# The last stage of the chain and the only one whose output is prose, which is why its settings
+# are in the file rather than in the code: the intervals below are quoted in the README, and a
+# number nobody can re-derive from a committed file is not a measurement.
+analysis:
+  # Quartiles of the population. Four is what 189 detections afford — at eight the bands carry
+  # about 23 apiece and every interval is wide enough to overlap every other, which would report
+  # "nothing found" about a resolution rather than about the water.
+  bands: 4
+  # Bootstrap draws for the interval around each rate. The resample is over acquisitions rather
+  # than over detections, so a draw is 49 picks and 4000 of them is a second of arithmetic; the
+  # percentiles are stable to well under the digit the README prints.
+  draws: 4000
+  # Fixed, because a figure that moves between two runs of the same command is not evidence. The
+  # bands of one variable are seeded from this in order, so adding a variable cannot move the
+  # numbers already published for the others.
+  seed: 0
+  report: ../docs/runs/analysis-archive.json
+  figures: ../docs/figures
+
 run:
   scene: ../data/real/kattegat-lane.tif
   # Written by `darkvessel ais`, from the archive for the day of the acquisition above. Run that
