@@ -1,0 +1,28 @@
+# Rung 5: the IoU at which an anchor becomes a ship.
+#
+# 0.3 rather than torchvision's 0.7, and the sweep of 2026-08-30 is why. Over the same 1123
+# ship-bearing tiles and their 3637 ships, under the stock anchors this rung inherits:
+#
+#   fg 0.70 -> 3257 of 3637 ships matched only by allow_low_quality_matches, realised fraction 0.168
+#   fg 0.30 -> 2238 of 3637,                                                realised fraction 0.375
+#
+# So 1019 ships gain a genuine match rather than a rescued one, and the positives the sampler
+# actually draws roughly double, from 43 out of 256 to 96. That is a larger move in the RPN's
+# positive set than either rung the ladder already spent a session on.
+#
+# 0.3 and not lower, though the sweep goes to 0.05 and the median ship's best overlap is 0.207.
+# `Matcher` refuses a background threshold above the foreground one, so anything under 0.3 moves
+# `rpn_bg_iou_thresh` as well — two lines, where this ladder's rule is one. The rungs below 0.3
+# are a rung of their own and are deferred in docs/decisions.md rather than folded into this one.
+#
+# Extends rung 1: R2, R3 and R4 were all rejected, so R1 is still the last rung kept and the bar
+# is still 0.8454 -- 0.83557 plus the 0.0099 band R1 was showing.
+
+extends: r1-cosine.yaml
+
+model:
+  rpn_fg_iou_thresh: 0.3
+
+out:
+  checkpoints: /kaggle/working/checkpoints-r5
+  metrics: /kaggle/working/metrics-r5-fg-iou.json

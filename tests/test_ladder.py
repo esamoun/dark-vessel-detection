@@ -220,12 +220,16 @@ def test_the_table_names_every_rung_and_says_which_were_kept() -> None:
 
 
 def test_the_shipped_ladder_config_is_the_one_the_command_parses() -> None:
-    """The same gap `training_request_from` exists to close. This file names five paths that will
-    not all exist until five Kaggle sessions have run, and a mistyped key in it would surface only
-    to whoever came back with the last of them."""
+    """The same gap `training_request_from` exists to close. This file names six paths that will
+    not all exist until six Kaggle sessions have run, and a mistyped key in it would surface only
+    to whoever came back with the last of them.
+
+    R5 was added on 2026-08-30 for issue #24, after the five above had run. That is a departure
+    from a ladder fixed before any of it ran, and `configs/ladder.yaml` says so at the rung rather
+    than letting this list imply the six were chosen together."""
     rungs = ladder_request_from(load_config(CONFIGS / "ladder.yaml"), CONFIGS)
 
-    assert [rung["label"] for rung in rungs] == ["R0", "R1", "R2", "R3", "R4"]
+    assert [rung["label"] for rung in rungs] == ["R0", "R1", "R2", "R3", "R4", "R5"]
     assert all(rung["changed"] for rung in rungs)
     assert all(rung["metrics"].is_absolute() for rung in rungs)
 

@@ -438,15 +438,21 @@ def test_the_run_block_carries_what_a_resume_and_the_ladder_both_read_out_of_it(
     assert "held_out_tiles" in block
 
 
-def test_the_ladder_has_the_four_rungs_the_plan_names() -> None:
+def test_the_ladder_has_the_rungs_the_plan_names() -> None:
     """First, because the three tests below are parametrised over this directory and would all
     pass vacuously on an empty one — which is exactly the state the repository is in before this
-    task, and exactly the way a missing rung would go unnoticed after it."""
+    task, and exactly the way a missing rung would go unnoticed after it.
+
+    Five files rather than four since 2026-08-30: `r5-fg-iou.yaml` is issue #24's sixth rung of
+    the ladder, added after the others had run and set from the threshold sweep rather than from
+    their results. R0 has no file here — it is `configs/train.yaml` itself, which is what "nothing
+    changed" means."""
     assert sorted(path.name for path in LADDER.glob("*.yaml")) == [
         "r1-cosine.yaml",
         "r2-anchors.yaml",
         "r3-stem.yaml",
         "r4-sampler.yaml",
+        "r5-fg-iou.yaml",
     ]
 
 
