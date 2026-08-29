@@ -43,6 +43,8 @@ class TrainedDetector:
         tile_px: int,
         anchor_sizes: tuple[tuple[int, ...], ...],
         stem: str = "repeat",
+        rpn_fg_iou_thresh: float = 0.7,
+        rpn_bg_iou_thresh: float = 0.3,
         device: torch.device | None = None,
     ) -> None:
         """Load the weights and put the model into the state it answers from.
@@ -62,17 +64,35 @@ class TrainedDetector:
             stem: The input stage the checkpoint was trained with. Checked against its record
                 too, and defaulting to the repeat because every checkpoint written before stems
                 existed was trained on three repeated channels.
+            rpn_fg_iou_thresh: The IoU at which an anchor counted as a positive example of a ship
+                while these weights were being fitted, and `rpn_bg_iou_thresh` the one below
+                which it counted as a negative. Both default to torchvision's, because every
+                checkpoint written before 2026-08-29 was trained under them.
+            rpn_bg_iou_thresh: See above.
             device: Where to run. The GPU if there is one.
         """
         state = torch.load(checkpoint, map_location="cpu", weights_only=True)
-        _check_built(state.get("built"), tile_px=tile_px, anchor_sizes=anchor_sizes, stem=stem)
+        _check_built(
+            state.get("built"),
+            tile_px=tile_px,
+            anchor_sizes=anchor_sizes,
+            stem=stem,
+            rpn_fg_iou_thresh=rpn_fg_iou_thresh,
+            rpn_bg_iou_thresh=rpn_bg_iou_thresh,
+        )
 
         # `pretrained=False` because every weight is about to be overwritten by the load below,
         # and because fetching COCO weights would put a network on the path of a command that
         # must not need one. The seed is irrelevant for the same reason: the head it initialises
         # does not survive.
         model = detector_model(
-            tile_px=tile_px, seed=0, anchor_sizes=anchor_sizes, stem=stem, pretrained=False
+            tile_px=tile_px,
+            seed=0,
+            anchor_sizes=anchor_sizes,
+            stem=stem,
+            pretrained=False,
+            rpn_fg_iou_thresh=rpn_fg_iou_thresh,
+            rpn_bg_iou_thresh=rpn_bg_iou_thresh,
         )
         model.load_state_dict(state["model"])
 
@@ -107,14 +127,28 @@ def _check_built(
     tile_px: int,
     anchor_sizes: tuple[tuple[int, ...], ...],
     stem: str = "repeat",
+    rpn_fg_iou_thresh: float = 0.7,
+    rpn_bg_iou_thresh: float = 0.3,
 ) -> None:
     """Refuse a checkpoint built for a detector other than the one being constructed.
 
-    Silence is allowed for exactly one reason: the first trained checkpoint predates `train.py`
-    writing this block, and its build parameters are restated in the run config with the training
-    config named beside them. Every checkpoint written since carries its own, and a disagreement
-    is an error rather than a warning — a model looking for the wrong size of ship does not fail,
-    it returns detections, in plausible places, with scores.
+    A whole missing block is allowed for exactly one reason: the first trained checkpoint predates
+    `train.py` writing this block, and its build parameters are restated in the run config with
+    the training config named beside them. Every checkpoint written since carries its own, and a
+    disagreement is an error rather than a warning — a model looking for the wrong size of ship
+    does not fail, it returns detections, in plausible places, with scores. Individual keys added
+    after a checkpoint was written read as the value that checkpoint was trained under, which is
+    torchvision's default in each case; that is stated at each of them rather than in general.
+
+    The RPN's two IoU thresholds are checked on a different footing from the three above them, and
+    it is worth saying which. `tile_px`, `anchor_sizes` and `stem` change what the loaded model
+    *does* — the first resizes every tile, the second looks for ships of another size, the third
+    takes another number of channels. The thresholds change none of that: `RegionProposalNetwork`
+    consults its matcher only while training, so a checkpoint fitted at 0.7 and one fitted at 0.25
+    are, at inference, the same model run the same way. What they are not is the same weights. The
+    refusal here is therefore about provenance rather than behaviour: it is what stops a run config
+    from naming one training regime while loading the checkpoint of another, which no number
+    downstream of it would ever contradict.
     """
     if built is None:
         return
@@ -141,6 +175,22 @@ def _check_built(
             f"the checkpoint was built with the {recorded_stem!r} stem and this run asks for "
             f"{stem!r}; the two take a different number of channels"
         )
+
+    # Absent from every checkpoint written before 2026-08-29, all of which were trained under
+    # torchvision's own thresholds — so silence means 0.7 and 0.3 rather than "unknown". Read
+    # through `.get` and compared as floats, because a threshold reaches this from a YAML file on
+    # one side and from a JSON round-trip on the other.
+    for key, asked, default in (
+        ("rpn_fg_iou_thresh", rpn_fg_iou_thresh, 0.7),
+        ("rpn_bg_iou_thresh", rpn_bg_iou_thresh, 0.3),
+    ):
+        recorded_threshold = float(built.get(key, default))
+        if recorded_threshold != float(asked):
+            raise ValueError(
+                f"the checkpoint was built with {key} {recorded_threshold} and this run asks for "
+                f"{float(asked)}; the threshold is inert at inference, so these are the same "
+                "model fitted under two different regimes and nothing downstream would say so"
+            )
 
 
 def _as_sizes(sizes: Sequence[Sequence[int]]) -> tuple[tuple[int, ...], ...]:

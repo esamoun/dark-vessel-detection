@@ -81,6 +81,8 @@ def detector_model(
     trainable_backbone_layers: int = 3,
     rpn_batch_size_per_image: int = 256,
     rpn_positive_fraction: float = 0.5,
+    rpn_fg_iou_thresh: float = 0.7,
+    rpn_bg_iou_thresh: float = 0.3,
     box_batch_size_per_image: int = 512,
     box_positive_fraction: float = 0.25,
 ) -> FasterRCNN:
@@ -111,11 +113,39 @@ def detector_model(
         rpn_positive_fraction: A **ceiling** on how much of that batch may be positive, not a
             target — the sampler takes `min(available, requested)`. Stated here because the
             distinction is what rung 4 of the ladder turns on.
+        rpn_fg_iou_thresh: The IoU at which an anchor becomes a positive example of a ship.
+            Torchvision's default is 0.7, and the census of 2026-08-19 found that ninety percent
+            of the 3637 training ships never reach it against any anchor in either set tried —
+            they are positive only because `allow_low_quality_matches` guarantees every box its
+            best anchor. This is therefore the number the region the census describes is *defined*
+            by, and the two RPN rungs the ladder ran changed everything except it. Exposed here so
+            the sixth rung can. See docs/decisions.md, 2026-08-19.
+        rpn_bg_iou_thresh: The IoU below which an anchor becomes a negative example; anchors
+            between the two are ignored rather than trained on. Torchvision's default is 0.3, and
+            it is exposed only because it constrains the one above: `Matcher` refuses a background
+            threshold above the foreground one, so a foreground threshold below 0.3 cannot be
+            reached without moving this too — and below 0.3 is where the census's own worked
+            example puts the median ship. What that example does not say is the ship's *area*,
+            which is what its overlap with a 1024 px² anchor actually is; the sweep in
+            `notebooks/anchor_census.py` counts it. Not a lever anyone here has an argument for on
+            its own. See docs/decisions.md, 2026-08-29.
         box_batch_size_per_image: The same, for the second-stage head.
         box_positive_fraction: The same, for the second-stage head.
     """
     if stem not in STEMS:
         raise ValueError(f"unknown stem {stem!r}; this project has {sorted(STEMS)} and no dual")
+
+    # Torchvision refuses this itself, deep inside `Matcher`, as a `torch._assert` naming neither
+    # config key nor the file they came from. Refused here instead, where the names are the ones
+    # a rung config writes, because the config that trips it is the one a sixth rung edits and
+    # the machine that would report it is rented by the hour.
+    if rpn_bg_iou_thresh > rpn_fg_iou_thresh:
+        raise ValueError(
+            f"rpn_bg_iou_thresh {rpn_bg_iou_thresh} is above rpn_fg_iou_thresh "
+            f"{rpn_fg_iou_thresh}; an anchor cannot be background above the IoU at which it "
+            "becomes foreground. Lowering the foreground threshold below torchvision's 0.3 "
+            "background default means lowering both"
+        )
 
     # Applied here, before anything is constructed, because the head below is initialised from
     # scratch — two classes where COCO had 91 — and it draws from torch's global generator. Left
@@ -143,6 +173,8 @@ def detector_model(
         max_size=tile_px,
         rpn_batch_size_per_image=rpn_batch_size_per_image,
         rpn_positive_fraction=rpn_positive_fraction,
+        rpn_fg_iou_thresh=rpn_fg_iou_thresh,
+        rpn_bg_iou_thresh=rpn_bg_iou_thresh,
         box_batch_size_per_image=box_batch_size_per_image,
         box_positive_fraction=box_positive_fraction,
     )

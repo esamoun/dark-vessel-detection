@@ -5,8 +5,13 @@ decision log rather than behaviour anything depended on. A review then found an 
 in the one line the whole census exists to produce — the realised positive fraction capped the
 *mean across tiles* rather than each tile's own count, biasing the number toward the 50% ceiling
 it was written to show the sampler was nowhere near. Nothing caught that, because nothing was
-looking. This file is what looks now: four properties, each pinned against real torchvision
+looking. This file is what looks now: each property pinned against real torchvision
 matching on hand-built boxes, no dataset required.
+
+The threshold sweep of 2026-08-29 is under the same rule and for a sharper reason: issue #24's
+sixth rung is *set* from the number it prints, before a GPU evening is spent on it, exactly the
+way rung 4's `rpn_batch_size_per_image: 32` was set from the census of 2026-08-19. A sweep that
+counted wrong would not fail, it would name a threshold.
 
 `notebooks/` is not an importable package — it has no `__init__.py` and is not on the install
 path — so the module is loaded by file location rather than `import`ed by name. This is the same
@@ -183,3 +188,130 @@ def test_high_iou_threshold_is_shared():
     # Matcher-independent: the box's best anchor already clears HIGH_IOU_THRESHOLD on its own, so
     # nothing here was rescued.
     assert result.rescued == 0
+
+
+# One box against two anchors, chosen so every count below can be read off two IoUs by hand.
+# The first anchor is twice the box's area and shares its corner, so the overlap is `100/200`; the
+# second is four times it, so `100/400`. Both are far too small a fixture to need a dataset and
+# far too explicit to be checked by a number this file also computes.
+_ANCHORS = [[0.0, 0.0, 10.0, 20.0], [0.0, 0.0, 10.0, 40.0]]
+
+
+def _two_tiles() -> list:
+    """A tile whose ship has a genuine match down to 0.5, and one whose ship never beats 0.25.
+
+    Between them they hold the whole question the sweep exists to answer: at 0.7 both are rescued,
+    at 0.4 one of them is not, and at 0.2 neither is.
+    """
+    return [
+        a_tile("best_half", Box(min_row=0, min_col=0, max_row=10, max_col=10)),
+        a_tile("best_quarter", Box(min_row=0, min_col=0, max_row=5, max_col=10)),
+    ]
+
+
+def test_lowering_the_threshold_turns_rescued_ships_into_matched_ones():
+    """The sixth rung's whole mechanism, on two ships whose overlaps are known exactly.
+
+    `allow_low_quality_matches` guarantees every box its best anchor whatever the threshold, so
+    "how many ships are positive" does not move at all here — it is 1 and 1 at every row. What
+    moves is *why*: at 0.7 both ships are positive only because of the guarantee, and by 0.2
+    neither is. That distinction is the one the census of 2026-08-19 said the ladder had never
+    tested, and it is the only thing the rung changes.
+    """
+    anchors = torch.tensor(_ANCHORS)
+
+    rescued_at = {
+        result.fg_iou_thresh: result.rescued
+        for result in anchor_census._measure_at(anchors, [2], _two_tiles(), (0.7, 0.4, 0.2))
+    }
+
+    assert rescued_at == {0.7: 2, 0.4: 1, 0.2: 0}
+
+
+def test_a_lower_threshold_admits_more_anchors_per_ship_not_more_ships():
+    """The other half of the same measurement, and the one that reaches the sampler.
+
+    A ship rescued at 0.7 contributes only the anchors tied at its own maximum — one, here. Drop
+    the threshold under an anchor that was previously merely close and that anchor becomes a
+    positive example in its own right, so the RPN's batch has two to draw on instead of one. That
+    is the quantity `realised_fraction` reports, and it is why the rung is not simply relabelling
+    the same anchors.
+    """
+    anchors = torch.tensor(_ANCHORS)
+
+    positives_at = {
+        result.fg_iou_thresh: result.positives_per_tile
+        for result in anchor_census._measure_at(anchors, [2], _two_tiles(), (0.7, 0.4, 0.2))
+    }
+
+    assert positives_at == {0.7: [1, 1], 0.4: [1, 1], 0.2: [2, 1]}
+
+
+def test_the_rescue_count_is_the_distribution_read_at_the_threshold():
+    """`rescued` and `best_iou` are two statements about the same thing, and the sweep's value
+    depends on their agreeing: the table names a threshold, and the reader picks a different one
+    off the percentiles beside it. Counted from the one list rather than measured twice, so they
+    cannot drift; asserted here so that a future rewrite measuring them separately fails.
+    """
+    anchors = torch.tensor(_ANCHORS)
+
+    results = anchor_census._measure_at(anchors, [2], _two_tiles(), (0.7, 0.4, 0.2))
+
+    assert results[0].best_iou == [0.5, 0.25]
+    for result in results:
+        assert result.rescued == sum(1 for best in result.best_iou if best < result.fg_iou_thresh)
+        # The distribution is a property of the anchors and the ships, not of the threshold, so
+        # every row of one sweep carries the same one.
+        assert result.best_iou == results[0].best_iou
+
+
+def test_one_pass_over_the_boxes_says_what_one_pass_per_threshold_says():
+    """`_measure_at` computes `box_iou` once and applies every matcher to the matrix, because the
+    matrix is two hundred thousand anchors wide and does not depend on the threshold. That is an
+    optimisation, and an optimisation on the line the census exists to produce is exactly the kind
+    of thing that shipped a wrong realised fraction the first time.
+    """
+    anchors = torch.tensor(_ANCHORS)
+    thresholds = (0.7, 0.4, 0.2)
+
+    swept = anchor_census._measure_at(anchors, [2], _two_tiles(), thresholds)
+    one_at_a_time = [
+        anchor_census._measure(anchors, [2], _two_tiles(), fg_iou_thresh=threshold)
+        for threshold in thresholds
+    ]
+
+    assert swept == one_at_a_time
+
+
+def test_the_sweep_reaches_thresholds_below_torchvisions_background_default():
+    """`Matcher` refuses a background threshold above the foreground one, and the sweep's whole
+    point is the region below 0.3 — where the census puts the median ship, at `256/1024`. A sweep
+    that raised there would report nothing at all about the only rows anyone is reading it for.
+    """
+    anchors = torch.tensor(_ANCHORS)
+
+    results = anchor_census._measure_at(anchors, [2], _two_tiles(), anchor_census.SWEEP_THRESHOLDS)
+
+    assert [result.fg_iou_thresh for result in results] == list(anchor_census.SWEEP_THRESHOLDS)
+    assert min(result.fg_iou_thresh for result in results) < anchor_census.LOW_IOU_THRESHOLD
+
+
+def test_a_percentile_is_a_value_some_ship_actually_has():
+    """Nearest rank, not an interpolating quantile. The number this prints is read as "a threshold
+    at which this many ships have a genuine match", so a value interpolated between two ships is a
+    threshold no ship sits at and the count beside it would be off by however many ships share the
+    boundary.
+    """
+    values = [0.1, 0.2, 0.3, 0.4]
+
+    read_at = anchor_census.percentiles(values, at=(25, 50, 75, 100))
+
+    assert read_at == {25: 0.1, 50: 0.2, 75: 0.3, 100: 0.4}
+    assert anchor_census.percentiles([]) == {}
+
+    # Ten values put the 25th percentile at rank 2.5, which is where `round` and `ceil` part
+    # company — Python rounds halves to even, so `round` gives rank 2 and the printed number is
+    # one ship low. Nearest rank is the ceiling, and this fixture is the only place the two
+    # differ, so it is the only place a revert would show.
+    ten = [round(0.1 * n, 1) for n in range(1, 11)]
+    assert anchor_census.percentiles(ten, at=(25,)) == {25: 0.3}

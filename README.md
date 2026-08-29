@@ -584,8 +584,16 @@ detections. F1 0.836 against 0.807.
 anchor set — which points at the RPN's foreground IoU threshold rather than at anchor geometry or
 sampler batch size. Two rungs have now failed in the region that hypothesis describes and neither
 tested it, because the five rungs were fixed before the census that produced it. It is the first
-thing a sixth rung should change, and this ladder deliberately does not have one; it is now
+thing a sixth rung should change, and this ladder deliberately does not have one; it is
 [issue #24](https://github.com/esamoun/dark-vessel-detection/issues/24).
+
+That rung's parameter now exists — `rpn_fg_iou_thresh` is a build parameter recorded in every
+checkpoint — and the value it will run at deliberately does not. It comes out of a threshold
+sweep, added to `notebooks/anchor_census.py` and costing no GPU time, which reports every ship's
+best overlap with any anchor and the rescue-only share at nine candidate thresholds. Setting the
+value from the run it justifies is the one thing this ladder's rule exists to forbid, so it is set
+from the sweep first, in writing. The table above gains a sixth row when the rung has been
+measured against R1 on this same split, and not before. See `docs/decisions.md`, 2026-08-29.
 
 ```bash
 darkvessel compare --config configs/ladder.yaml
