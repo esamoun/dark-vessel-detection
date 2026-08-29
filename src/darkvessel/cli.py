@@ -676,6 +676,8 @@ def training_request_from(config: dict[str, Any], relative_to: Path) -> dict[str
             "stem": str(config["model"]["stem"]),
             "rpn_batch_size_per_image": int(config["model"]["rpn_batch_size_per_image"]),
             "rpn_positive_fraction": float(config["model"]["rpn_positive_fraction"]),
+            "rpn_fg_iou_thresh": float(config["model"]["rpn_fg_iou_thresh"]),
+            "rpn_bg_iou_thresh": float(config["model"]["rpn_bg_iou_thresh"]),
             "box_batch_size_per_image": int(config["model"]["box_batch_size_per_image"]),
             "box_positive_fraction": float(config["model"]["box_positive_fraction"]),
         },
@@ -975,6 +977,13 @@ def trained_request_from(run_config: dict[str, Any], relative_to: Path) -> dict[
         # before the single-channel stem existed names a checkpoint trained on three repeated
         # channels, and reading silence as anything else would break all of them.
         "stem": str(trained.get("stem", "repeat")),
+        # Optional for the same reason and with a sharper edge: these two are inert at inference,
+        # so a run config that had to state them would be stating something that changes nothing
+        # it does. What they are here for is the checkpoint's own record — `TrainedDetector`
+        # refuses weights fitted under a regime this config does not name. Silence is torchvision's
+        # 0.7 and 0.3, which is what every checkpoint before 2026-08-29 was trained under.
+        "rpn_fg_iou_thresh": float(trained.get("rpn_fg_iou_thresh", 0.7)),
+        "rpn_bg_iou_thresh": float(trained.get("rpn_bg_iou_thresh", 0.3)),
         "score_threshold": float(trained["score_threshold"]),
         "stretch": DecibelStretch(
             floor_db=float(stretch["floor_db"]),

@@ -160,3 +160,50 @@ the pyramid levels that criterion 2 of issue #11 asks for. Then the five accepta
 issue #11 can be ticked, or the ones that were not met explained where they were not — criterion 1
 is one of those: `docs/failures.md` already records the dual-polarisation stem asked for as
 blocked on data, with the single-channel stem shipped as rung 3 in its place.
+
+## Session 6 — the threshold sweep, on CPU. Issue #24.
+
+The ladder closed with five rungs and one of them kept. Issue #24 adds a sixth, and it is the one
+the census's own reservation of 2026-08-19 named: the RPN's foreground IoU threshold, which both
+rejected RPN rungs were defined by and neither tested.
+
+Its value is not in any config yet, deliberately. It comes out of this session, the way rung 4's
+`rpn_batch_size_per_image: 32` came out of session 0 — and this one costs no GPU quota either.
+Same setup as session 0 above, same dataset, same three lines:
+
+    !git clone -q https://github.com/esamoun/dark-vessel-detection.git /kaggle/working/repo
+    !cd /kaggle/working/repo && pip install -e '.[detector]'
+    !cd /kaggle/working/repo && python3 notebooks/anchor_census.py
+
+The script now prints a fourth block after the two anchor-set censuses: every ship's best overlap
+with any anchor, read at five percentiles, and a table of nine candidate foreground thresholds
+from 0.7 down to 0.05 with the rescue-only share and the realised positive fraction at each. Only
+the stock anchors are swept — the small set was rejected on 2026-08-23 and nothing will run on it.
+
+Bring that table back, and the threshold is set from it in `docs/decisions.md` **before** the
+session below is started. `docs/decisions.md`, 2026-08-29, holds a prediction about what the sweep
+will say; if the sweep contradicts it, the contradiction is what gets written, not a narrowed
+version of the prediction.
+
+## Session 7 — the sixth rung
+
+`configs/ladder/r5-fg-iou.yaml` does not exist until session 6 has run, and it should not: a rung
+config carrying a placeholder is a rung whose value was chosen twice. When it is written it
+extends `r1-cosine.yaml`, the last rung kept, and moves `model.rpn_fg_iou_thresh` — and
+`model.rpn_bg_iou_thresh` with it, if the value is below torchvision's 0.3, because `Matcher`
+refuses a background threshold above the foreground one. That is two keys where the five rungs
+before it moved one, and issue #24's closing comment says so rather than letting the ladder's
+table imply otherwise.
+
+| Session | Config | Kaggle writes checkpoints to | Kaggle writes metrics to | Commit the metrics file as |
+| --- | --- | --- | --- | --- |
+| 7 | `configs/ladder/r5-fg-iou.yaml` | `/kaggle/working/checkpoints-r5` | `/kaggle/working/metrics-r5-fg-iou.json` | `docs/runs/r5-fg-iou.json` |
+
+**The bar is R1's, unchanged at 0.8454** — 0.83557 plus the 0.0099 band R1 was already showing.
+R2, R3 and R4 were all rejected, so none of them moved either the standing statistic or the band,
+and the rule is the same one fixed on 2026-08-17: kept only on a strict `>`.
+
+Twelve epochs, about 2.6 hours on a T4. Then `darkvessel compare --config configs/ladder.yaml`,
+and the entry the verdict calls for — `docs/decisions.md` if kept, `docs/failures.md` if not —
+with the sweep's counts under the threshold actually run set against the census of 2026-08-19,
+which is what criterion 4 of the ticket asks for.
