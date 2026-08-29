@@ -36,10 +36,12 @@ from shapely import Point
 
 from darkvessel.analysis.concentration import (
     EEZ,
+    SPREAD_SEEDS,
     Band,
     concentrate,
     cut,
     interval_over,
+    monte_carlo_spread,
     spearman,
     svg,
     wilson,
@@ -536,3 +538,98 @@ class TestWhatCouldNotBeMeasured:
         printed = concentrate(layer, draws=200, seed=0).sea.lines()
 
         assert any("too few" in line for line in printed)
+
+
+class TestTheMonteCarloErrorOfTheBounds:
+    """The interval has an interval, and the page says so rather than printing past it.
+
+    Added after review measured what the config had asserted: the first cut claimed the
+    percentiles were "stable to well under the digit the README prints", and they are not — they
+    move about half a point at the shipped draw count, which is the digit. The claim was the
+    defect, not the draw count, and raising the draws is not the fix: the error falls only as the
+    square root and still moves the printed digit at fifty thousand. So it is measured, reported
+    in the committed run, and the page states the resolution to read its own bounds at.
+    """
+
+    @staticmethod
+    def clustered(*, scenes: int = 40, seed: int = 7) -> tuple[np.ndarray, np.ndarray]:
+        """Detections whose dark flag is a property of the acquisition, as the archive's are.
+
+        Drawing each row's flag independently understates the spread badly — the real layer has
+        29 of 49 acquisitions carrying no dark detection at all, and it is that clumping the
+        resample has to move around. A fixture without it would make this test pass on a bootstrap
+        that was not clustering at all.
+        """
+        rng = np.random.default_rng(seed)
+        sizes = rng.integers(1, 9, size=scenes)
+        per_scene = rng.random(scenes) < 0.35
+        clusters = np.concatenate([[f"s{n:02d}"] * size for n, size in enumerate(sizes)])
+        dark = np.concatenate(
+            [np.full(size, flag) for size, flag in zip(sizes, per_scene, strict=True)]
+        )
+        return dark, clusters
+
+    def test_the_bounds_move_when_only_the_seed_changes(self):
+        """The measurement the README quotes. Zero here would mean it was never taken."""
+        dark, clusters = self.clustered()
+
+        low_spread, high_spread = monte_carlo_spread(dark, clusters, draws=4000, seeds=12)
+
+        assert low_spread > 0.0 and high_spread > 0.0
+
+    def test_more_draws_shrink_the_error_without_removing_it(self):
+        """Holds the paragraph's claim that raising the draw count is not the fix.
+
+        Twelve times the draws buys a visibly tighter figure and does not reach zero, which is
+        why the page states a reading resolution instead of chasing one.
+        """
+        dark, clusters = self.clustered()
+
+        cheap = max(monte_carlo_spread(dark, clusters, draws=2000, seeds=12))
+        dear = max(monte_carlo_spread(dark, clusters, draws=24000, seeds=12))
+
+        assert dear < cheap
+        assert dear > 0.0
+
+    def test_the_command_reports_the_error_beside_the_interval(self):
+        """In the committed run and on the terminal, so the README quotes an artefact.
+
+        `docs/runs/analysis-archive.json` is where the figure on the page comes from, the same
+        way the ladder's verdict is read out of `docs/runs/` rather than retyped.
+        """
+        rng = np.random.default_rng(4)
+        count = 120
+        layer = detections(
+            status=[DARK if rng.random() < 0.25 else MATCHED for _ in range(count)],
+            scene=[f"s{n // 3:02d}" for n in range(count)],
+        )
+
+        result = concentrate(layer, draws=2000, seed=0)
+
+        assert all(spread > 0.0 for spread in result.monte_carlo)
+        written = result.as_dict()
+        assert written["monte_carlo"] == list(result.monte_carlo)
+        assert written["monte_carlo_seeds"] == SPREAD_SEEDS
+        assert any("whole-percent resolution" in line for line in result.lines())
+
+    def test_the_error_is_a_range_over_consecutive_seeds_and_does_not_wander(self):
+        """A figure quoted on the page cannot itself move between two runs of the command."""
+        dark, clusters = self.clustered()
+
+        assert monte_carlo_spread(dark, clusters, draws=2000, seeds=8) == monte_carlo_spread(
+            dark, clusters, draws=2000, seeds=8
+        )
+
+    def test_the_shipped_config_does_not_claim_a_stability_it_has_not_got(self):
+        """The defect itself, held in the file it was written in.
+
+        The comment beside `draws` asserted the percentiles were stable to well under the printed
+        digit. They are not, and prose claiming a property the tests do not hold is the same
+        defect as code that does not hold it.
+        """
+        shipped = (
+            Path(__file__).resolve().parents[1] / "configs" / "kattegat-lane.yaml"
+        ).read_text()
+
+        assert "stable to well under the digit" not in shipped
+        assert "Monte Carlo error" in shipped

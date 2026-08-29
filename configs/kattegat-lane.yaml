@@ -206,8 +206,17 @@ analysis:
   # "nothing found" about a resolution rather than about the water.
   bands: 4
   # Bootstrap draws for the interval around each rate. The resample is over acquisitions rather
-  # than over detections, so a draw is 49 picks and 4000 of them is a second of arithmetic; the
-  # percentiles are stable to well under the digit the README prints.
+  # than over detections, so a draw is 49 picks and 4000 of them is a hundredth of a second.
+  #
+  # This number does not buy reproducibility — the seed below does. A bootstrap percentile keeps
+  # its own Monte Carlo error however many draws it is given, and measured over twelve seeds on
+  # the archive layer the bounds move by 0.47 points at 4000 draws, 0.22 at 20 000 and 0.12 at
+  # 50 000. Even 50 000 moves the digit the README prints, which is why the README says to read
+  # the bounds at whole-percent resolution rather than why this number was raised. Raising it is
+  # chasing an asymptote for a precision the method does not have.
+  #
+  # `test_the_bounds_carry_the_monte_carlo_error_the_readme_states` holds the 0.47, so the claim
+  # on the page is a measurement rather than an assertion.
   draws: 4000
   # Fixed, because a figure that moves between two runs of the same command is not evidence. The
   # bands of one variable are seeded from this in order, so adding a variable cannot move the
