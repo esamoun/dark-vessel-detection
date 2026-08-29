@@ -81,6 +81,15 @@ model:
   # measures against; notebooks/anchor_census.py is what says where to move them.
   rpn_batch_size_per_image: 256
   rpn_positive_fraction: 0.5
+  # The IoU at which an anchor becomes a positive example of a ship, and the one below which it
+  # becomes a negative; between the two it is ignored. Torchvision's own 0.7 and 0.3, kept as the
+  # baseline. The census of 2026-08-19 found that ninety percent of the 3637 training ships never
+  # reach 0.7 against any anchor — they are positive only because `allow_low_quality_matches`
+  # guarantees every box its best one — so this is the number the ladder's two failed RPN rungs
+  # were both defined by and neither tested. The background one moves only because `Matcher`
+  # refuses it above the foreground one. See docs/decisions.md, 2026-08-19.
+  rpn_fg_iou_thresh: 0.7
+  rpn_bg_iou_thresh: 0.3
   box_batch_size_per_image: 512
   box_positive_fraction: 0.25
 

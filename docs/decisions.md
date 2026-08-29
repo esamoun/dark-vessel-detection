@@ -2328,3 +2328,72 @@ Guarded by `TestTheMonteCarloErrorOfTheBounds`, including a test that reads the 
 fails if the old claim comes back. Its fixture makes the dark flag a property of the acquisition
 rather than of the row, because a fixture without that clumping understates the spread by half and
 would pass on a bootstrap that had stopped clustering at all.
+
+---
+
+## 2026-08-29 — The RPN's foreground IoU threshold is a build parameter, and the sixth rung is set from a sweep rather than from a worked example
+
+**Decision.** `rpn_fg_iou_thresh` and `rpn_bg_iou_thresh` are build parameters of
+`detector_model`, recorded in the block every checkpoint carries and checked when one is loaded.
+The value the sixth rung of issue #24 runs at is **not fixed in this entry**. It is fixed from a
+threshold sweep, on a CPU session costing no GPU quota, in an entry of its own written before the
+rung trains — the order rung 4 was set in on 2026-08-19, and for the same reason: a number chosen
+after the run it justifies is a narration of that run.
+
+**Why this parameter and not another.** The census of 2026-08-19 found that ninety percent of the
+3637 training ships never reach torchvision's 0.7 foreground threshold against any anchor, in
+either set tried. They are positive only because `allow_low_quality_matches` guarantees every box
+its best anchor. Two RPN rungs then ran inside the region that describes — R2 moved the anchor
+geometry and lost 0.048, R4 moved the sampler batch and lost 0.0087 inside a band of 0.0099 — and
+neither moved the threshold the region is *defined* by, because the five rungs were fixed on
+2026-08-17, before the census existed. Issue #11 closed saying so. This is that rung's parameter.
+
+**Two keys, and why the second one is not a second decision.** `Matcher` refuses a background
+threshold above the foreground one. Torchvision's background default is 0.3, so a foreground
+threshold below 0.3 cannot be reached by moving one key, whatever the ladder's one-line rule
+prefers. `rpn_bg_iou_thresh` is exposed for that constraint alone and for no argument of its own:
+it separates an ignored anchor from a negative one, and nothing measured here counts either.
+`detector_model` refuses the inversion itself, naming both config keys, rather than letting
+torchvision's `torch._assert` — which names neither key nor the file they came from — surface on
+a machine rented by the hour.
+
+**What the check on a checkpoint is and is not.** Unlike `tile_px`, `anchor_sizes` and `stem`,
+this threshold changes nothing about a loaded model's behaviour: `RegionProposalNetwork` consults
+its matcher only while training, so a checkpoint fitted at 0.7 and one fitted at 0.1 detect
+identically. The refusal in `_check_built` is therefore about **provenance, not behaviour** — it
+is what stops a run config naming one training regime while loading the checkpoint of another,
+which no precision or recall downstream of it could ever contradict. Silence in a build block
+means torchvision's 0.7 and 0.3, because every checkpoint written before this date was fitted
+under them; the same allowance `stem` has, for the same reason.
+
+**The sweep, and a prediction about it written before it runs.**
+`notebooks/anchor_census.py` now reports, over the same ship-bearing training tiles, every ship's
+best overlap with any anchor and — at nine candidate thresholds from 0.7 down to 0.05 — the
+positives per tile, the rescue-only share and the realised positive fraction. One pass over the
+boxes rather than nine: `box_iou` is the expensive line and it does not depend on the threshold.
+
+The prediction, and it contradicts this log rather than extending it. The entries of 2026-08-19
+and 2026-08-25 both explain the rescue rule through a worked example — "a 16 px ship sits inside a
+32 px anchor, the overlap is `256/1024 = 0.25` for every anchor containing it" — and 0.25 has
+since read as the threshold at which the median ship would stop being rescued. **That number
+squares a length.** Every level-0 anchor has an area of 1024 px² whatever its aspect ratio, and a
+contained ship's IoU is its own *area* over that, not its longest side squared. A hull is longer
+than it is wide, which this project's own aspect-ratio choice says in `model.py`. So the median
+ship's best IoU is predicted to come in **well below 0.25** — nearer 0.10 than 0.25 — and 0.25 is
+predicted to leave most ships rescued rather than to be the point at which they stop being.
+
+Recorded before the census runs, in the form the census's own prediction of 2026-08-19 was
+recorded in and was then found wrong in. If the sweep contradicts this, that is the entry that
+gets written.
+
+**Cost.** A parameter that changes nothing at inference now blocks a checkpoint from loading under
+a run config that misdescribes it — a refusal for a difference no measurement could reveal, which
+is a deliberate trade of convenience for provenance and is stated here rather than discovered by
+whoever meets it. And the ladder's one-line rule bends: the sixth rung moves two keys, presented
+as one decision that torchvision splits across two parameters, which is a weaker claim than the
+five rungs before it made and is written down as one.
+
+Held by `tests/test_rpn_thresholds.py` — the threshold reaching the matcher torchvision actually
+labels anchors with, the inversion refused by name, the checkpoint refused by a run naming another
+regime, and silence read as torchvision's own — and by the sweep's arithmetic in
+`tests/test_anchor_census.py`. Each was proved by making the revert and watching the test fail.
