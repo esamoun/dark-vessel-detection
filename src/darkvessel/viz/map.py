@@ -696,13 +696,29 @@ const FALLBACK = {{fallback}};
     markers[index] = marker;
   });
 
-  if (markers.length) {
-    map.fitBounds(L.featureGroup(markers).getBounds(), {
-      padding: [{{fit_padding}}, {{fit_padding}}]
-    });
-  } else {
-    map.setView({{empty_centre}}, {{empty_zoom}});
+  function show() {
+    // Leaflet measures its container once, when the map is constructed, and caches that size.
+    // A page whose layout has not settled by the time this script runs hands it a height of
+    // zero, and `fitBounds` against a viewport of zero returns the *maximum* zoom: the map then
+    // opens at street level, over exactly the right coordinates, with all 189 detections off the
+    // edge of the frame. It does not throw and it does not look broken. It looks like a map of a
+    // sea where nothing was found, which is the one wrong answer this page must never give.
+    //
+    // Measured again here, and again once the page has finished loading, because the first of
+    // those is not guaranteed to be late enough — this was caught on the published URL after
+    // rendering correctly from a local server every time.
+    map.invalidateSize();
+    if (markers.length) {
+      map.fitBounds(L.featureGroup(markers).getBounds(), {
+        padding: [{{fit_padding}}, {{fit_padding}}]
+      });
+    } else {
+      map.setView({{empty_centre}}, {{empty_zoom}});
+    }
   }
+
+  show();
+  window.addEventListener('load', show);
 
   document.querySelectorAll('.key input').forEach(function (box) {
     box.addEventListener('change', function () {

@@ -338,6 +338,22 @@ def test_a_title_carrying_the_template_syntax_is_not_expanded_into_the_page() ->
     assert "<h1>{{data}} {{legend}}</h1>" in rendered
 
 
+def test_the_map_measures_its_frame_again_before_it_fits_the_detections_into_it() -> None:
+    """Leaflet caches its container's size at construction. Handed a height of zero — a layout
+    that has not settled when the script runs — `fitBounds` returns the maximum zoom, and the map
+    opens at street level over the right coordinates with every detection outside the frame. It
+    throws nothing. It looks like a sea where nothing was found.
+
+    Caught on the published URL after rendering correctly from a local server every time, which
+    is why the fit is also repeated on `load` rather than only made later.
+    """
+    rendered = page(collection(layer((MATCHED, DARK))), title="Kattegat")
+    script = rendered.split("<script")[-1]
+
+    assert script.index("map.invalidateSize()") < script.index("map.fitBounds(")
+    assert "window.addEventListener('load', show)" in script
+
+
 def test_an_empty_collection_opens_on_water_rather_than_on_the_null_island() -> None:
     """Only ever reached by a layer with nothing in it — any detection fits the view to the
     detections. A map that opened at 0N 0E would read as a georeferencing fault rather than as a
