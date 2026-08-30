@@ -342,7 +342,7 @@ which is geolocation error and a centroid, and nothing else. A 24 m vessel makin
 matched at 116 m.
 
 **The other four are not dark, and finding out why is what this scene was for.** The fourteen
-dark detections belong to four vessels, and every one of them stands 341–632 m from a declared
+dark detections belong to four vessels, and every one of them stands 341-632 m from a declared
 vessel of 140 m or more. The offsets are not scattered. The first two rows below are the two
 matches, shown because they are the contrast that makes the pattern readable:
 
