@@ -88,11 +88,15 @@ MEASURES = (
 
 
 @dataclass(frozen=True)
-class Band:
-    """One slice of a variable's range, and the share of its detections that were undeclared."""
+class Rate:
+    """A count of detections, how many were undeclared, and how firmly that share is known.
 
-    low: float
-    high: float
+    Shared by the banded variables and the categorical one. The arithmetic of a share, and the
+    rule for deciding whether two shares differ, do not change when the thing being sliced stops
+    being a number and starts being the name of a zone — and two copies of `separated_from` would
+    be two places for the comparison every finding on this page is stated against to drift apart.
+    """
+
     total: int
     dark: int
     # Over the rows, which assumes they are independent and they are not. Reported beside the
@@ -115,8 +119,8 @@ class Band:
         """
         return not any(math.isnan(bound) for bound in self.interval)
 
-    def separated_from(self, other: "Band") -> bool:
-        """Whether two bands' scene-wise intervals fail to overlap.
+    def separated_from(self, other: "Rate") -> bool:
+        """Whether two scene-wise intervals fail to overlap.
 
         The weakest claim worth making here and the only comparison this module makes. It is not
         a test — non-overlapping 95% intervals is a stricter bar than a 5% two-sample test, which
@@ -125,6 +129,26 @@ class Band:
         if any(math.isnan(bound) for bound in (*self.interval, *other.interval)):
             return False
         return self.interval[1] < other.interval[0] or other.interval[1] < self.interval[0]
+
+
+@dataclass(frozen=True)
+class Band(Rate):
+    """One slice of a variable's range, and the share of its detections that were undeclared."""
+
+    low: float = float("nan")
+    high: float = float("nan")
+
+
+@dataclass(frozen=True)
+class Zone(Rate):
+    """One named water, and the share of the detections standing in it that were undeclared.
+
+    The categorical counterpart of a band. It carries an interval for the same reason a band
+    does: "a larger share of what is here is undeclared" is a claim about a difference, and a
+    difference between two counts with no interval around either is not a finding.
+    """
+
+    name: str = UNAVAILABLE
 
 
 @dataclass(frozen=True)
@@ -230,29 +254,71 @@ class Category:
 
     variable: str
     label: str
-    counts: dict[str, int]
-    dark: dict[str, int]
+    zones: tuple[Zone, ...]
+
+    @property
+    def counts(self) -> dict[str, int]:
+        return {zone.name: zone.total for zone in self.zones}
+
+    @property
+    def dark(self) -> dict[str, int]:
+        return {zone.name: zone.dark for zone in self.zones}
 
     @property
     def available(self) -> bool:
-        """False when every detection reads `unavailable`, which is the shipped state.
+        """False when every detection reads `unavailable`, which was the state until #35.
 
         A layer that answered for some detections and not others is available and carries an
         `unavailable` count beside the zones it did name — a different and more interesting
-        situation than the one this repository is in.
+        situation, and the one a fetch that did not cover the whole archive would produce.
         """
-        return any(zone != UNAVAILABLE for zone in self.counts)
+        return any(zone.name != UNAVAILABLE for zone in self.zones)
+
+    @property
+    def comparable(self) -> bool:
+        """Whether any two named zones carry intervals that could be compared at all."""
+        return sum(1 for zone in self.zones if zone.estimated and zone.name != UNAVAILABLE) >= 2
+
+    @property
+    def separations(self) -> tuple[tuple[str, str], ...]:
+        """Every pair of named zones whose intervals do not overlap, by name.
+
+        By name rather than by position, because a zone is not ordered: "band 1 vs band 2" means
+        something about a range and "Denmark vs Sweden" is the only way to say this one.
+        """
+        named = [zone for zone in self.zones if zone.name != UNAVAILABLE]
+        return tuple(
+            (first.name, second.name)
+            for index, first in enumerate(named)
+            for second in named[index + 1 :]
+            if first.separated_from(second)
+        )
 
     def lines(self) -> list[str]:
         if not self.available:
-            total = sum(self.counts.values())
+            total = sum(zone.total for zone in self.zones)
             return [
-                f"{self.label}: unavailable — all {total} detections, because the config names no "
-                f"boundary asset"
+                f"{self.label}: unavailable — all {total} detections, because the boundaries have "
+                f"not been fetched; run `darkvessel eez` and then `darkvessel zones`"
             ]
         out = [self.label]
-        for zone, count in sorted(self.counts.items()):
-            out.append(f"  {zone}: {count} detections, {self.dark.get(zone, 0)} dark")
+        for zone in self.zones:
+            estimated = (
+                "not estimated"
+                if not zone.estimated
+                else f"[{zone.interval[0]:.1%}, {zone.interval[1]:.1%}]"
+            )
+            out.append(
+                f"  {zone.name:<16} n={zone.total:3d}  dark={zone.dark:3d}  "
+                f"{zone.rate:6.1%}  {estimated}"
+            )
+        if self.separations:
+            pairs = ", ".join(f"{first} vs {second}" for first, second in self.separations)
+            out.append(f"  intervals do not overlap: {pairs}")
+        elif not self.comparable:
+            out.append("  no interval could be estimated; no zones are comparable")
+        else:
+            out.append("  every interval overlaps every other; no concentration established")
         return out
 
     def as_dict(self) -> dict[str, Any]:
@@ -260,8 +326,21 @@ class Category:
             "variable": self.variable,
             "label": self.label,
             "available": self.available,
+            "comparable": self.comparable,
             "counts": dict(sorted(self.counts.items())),
             "dark": dict(sorted(self.dark.items())),
+            "separations": [list(pair) for pair in self.separations],
+            "zones": [
+                {
+                    "name": zone.name,
+                    "total": zone.total,
+                    "dark": zone.dark,
+                    "rate": zone.rate,
+                    "wilson": list(zone.wilson),
+                    "interval": list(zone.interval),
+                }
+                for zone in self.zones
+            ],
         }
 
 
@@ -540,7 +619,11 @@ def concentrate(
             _profile(detections, measure, dark, scenes, bands=bands, draws=draws, seed=seed)
             for measure in MEASURES
         ),
-        categories=(_zones(detections, dark),) if EEZ in detections.columns else (),
+        categories=(
+            (_zones(detections, dark, scenes, draws=draws, seed=seed),)
+            if EEZ in detections.columns
+            else ()
+        ),
         sea=_sea(detections, dark, scenes),
         bands=bands,
         draws=draws,
@@ -595,14 +678,33 @@ def _profile(
     )
 
 
-def _zones(detections: gpd.GeoDataFrame, dark: np.ndarray) -> Category:
+def _zones(
+    detections: gpd.GeoDataFrame,
+    dark: np.ndarray,
+    scenes: np.ndarray,
+    *,
+    draws: int,
+    seed: int,
+) -> Category:
     zones = detections[EEZ].astype("string").fillna(UNAVAILABLE).to_numpy()
     names = sorted(set(zones.tolist()))
     return Category(
         variable=EEZ,
         label="EEZ",
-        counts={name: int((zones == name).sum()) for name in names},
-        dark={name: int(dark[zones == name].sum()) for name in names},
+        zones=tuple(
+            Zone(
+                name=name,
+                total=int((zones == name).sum()),
+                dark=int(dark[zones == name].sum()),
+                wilson=wilson(int(dark[zones == name].sum()), int((zones == name).sum())),
+                # Seeded by position in the sorted names, the convention `_profile` uses: adding
+                # a variable, or a zone, cannot move the numbers already published for the rest.
+                interval=interval_over(
+                    dark[zones == name], scenes[zones == name], draws=draws, seed=seed + position
+                ),
+            )
+            for position, name in enumerate(names)
+        ),
     )
 
 

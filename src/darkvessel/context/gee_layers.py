@@ -101,19 +101,22 @@ class LayerSources:
     this repository cannot keep true. What is here instead is the shape of the request and the
     checks that can be made before it is sent.
 
-    `eez` and `effort` may be `None`, and that is a configuration rather than a failure. Earth
-    Engine's public catalogue carries no EEZ boundaries — Marine Regions publishes them, and they
-    have to be ingested as an asset once before they can be named here. A source left null means
-    the run cannot sample that variable, and every row then says `unavailable` rather than
+    `effort` may be `None`, and that is a configuration rather than a failure: a source left null
+    means the run cannot sample that variable, and every row then says `unavailable` rather than
     carrying a zero nobody measured.
+
+    There is no EEZ source here, and its absence is the decision of #35. Earth Engine's public
+    catalogue carries no EEZ boundaries, and the conclusion drawn from that until then — ingest
+    them as a table asset and name the asset here — does not follow from it. A zone is a polygon
+    and membership is a point-in-polygon test, which needs no catalogue: `context/zones.py` does
+    it against a file, and `darkvessel zones` fills that column without an account. What is left
+    here is the three variables that really are rasters reduced at a point.
     """
 
     shore: str
     search_radius_m: float
     depth: str
     depth_band: str
-    eez: str | None
-    eez_property: str
     effort: str | None
     effort_bands: tuple[str, ...]
     effort_start: str
@@ -215,14 +218,26 @@ def coverage(detections: gpd.GeoDataFrame) -> list[str]:
         answered = int(np.isfinite(pd.to_numeric(detections[name], errors="coerce")).sum())
         lines.append(f"{LABELS[name]}: {answered} of {total} detection(s) carry a value")
 
+    lines.append(zone_coverage(detections))
+    return lines
+
+
+def zone_coverage(detections: gpd.GeoDataFrame) -> str:
+    """What the zone column answered, as one line.
+
+    Its own function because two commands report it — `context`, which no longer fills it, and
+    `zones`, which does. One sentence with one owner: a second copy of it would be free to start
+    counting `high seas` and `unavailable` as the same thing, which is the one mistake this
+    variable exists to avoid.
+    """
+    total = len(detections)
     zones = detections[EEZ].astype(object)
     unavailable = int((zones == UNAVAILABLE).sum())
     high_seas = int((zones == HIGH_SEAS).sum())
-    lines.append(
+    return (
         f"EEZ: {total - unavailable - high_seas} in a named EEZ, {high_seas} on the high seas, "
         f"{unavailable} unavailable"
     )
-    return lines
 
 
 def _number(value: float | None) -> float:
@@ -282,12 +297,14 @@ class _EarthEngineLayers:
             ]
         )
         measured = self._reduced(features)
-        zones = self._zones(features)
+        # `eez` is left unanswered on purpose, which is what `Context`'s default says. This
+        # sampler speaks to a catalogue of rasters and the zones are not in it; `context/zones.py`
+        # answers that column from published polygons, and `attach` writes `unavailable` here so
+        # that a layer sampled and not yet zoned says which of the two it is.
         return [
             Context(
                 distance_to_shore_m=measured.get(index, {}).get(DISTANCE_TO_SHORE),
                 depth_m=measured.get(index, {}).get(DEPTH),
-                eez=zones.get(index),
                 fishing_hours=measured.get(index, {}).get(FISHING_HOURS),
             )
             for index in range(len(points))
@@ -352,38 +369,3 @@ class _EarthEngineLayers:
             }
             for feature in answered["features"]
         }
-
-    def _zones(self, features: Any) -> dict[int, str]:
-        """Which EEZ each point falls in, or the high seas, or nothing at all.
-
-        A run with no EEZ source returns an empty mapping, which `sample` reads as `None` and
-        `attach` writes as `unavailable`. A run that has one and finds no polygon at a point
-        writes `high seas`, which is the answer rather than the absence of one — and the two
-        cases are told apart here, where the difference is known, rather than downstream where
-        it is not.
-        """
-        import ee
-
-        if self.sources.eez is None:
-            return {}
-
-        # An **outer** join, and that word is the whole correctness of this method. A plain
-        # `saveFirst` drops every primary feature that matched nothing, so a detection on the
-        # high seas would not come back at all — and a point that is missing from the answer is
-        # indistinguishable, by the time it reaches `attach`, from a point the layer could not
-        # answer for. The one case this variable exists to identify would read as unavailable.
-        joined = ee.Join.saveFirst(matchKey=EEZ, outer=True).apply(
-            primary=features,
-            secondary=ee.FeatureCollection(self.sources.eez),
-            condition=ee.Filter.intersects(leftField=".geo", rightField=".geo"),
-        )
-        found = {}
-        for feature in joined.getInfo()["features"]:
-            properties = feature["properties"]
-            zone = properties.get(EEZ)
-            found[int(properties[INDEX])] = (
-                str(zone["properties"][self.sources.eez_property])
-                if zone is not None
-                else HIGH_SEAS
-            )
-        return found
