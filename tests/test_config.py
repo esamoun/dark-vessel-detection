@@ -7,6 +7,7 @@ that is not there, and a merge that drops a key.
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -244,6 +245,71 @@ def test_the_chain_runs_the_weights_of_the_rung_the_ladder_kept() -> None:
 
     assert checkpoint.name.startswith(f"{kept.label.lower()}-"), (
         f"the ladder keeps {kept.label} and the chain loads {checkpoint.name}"
+    )
+
+
+# The README's ladder table, as `_readme_ladder` parses it back out. Unicode minus, because that
+# is what the prose uses and `ladder.table` writes ASCII.
+_MINUS = "\u2212"
+
+
+def _readme_ladder() -> list[tuple[str, ...]]:
+    """The rows of the ladder table in README.md, as tuples of their cells.
+
+    Every row whose first cell is a rung label. Matched on that rather than on a heading, so the
+    section can be retitled or moved without this test quietly matching nothing — which is the
+    failure mode a table-scraping test has, and the reason it asserts the row count separately.
+    """
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+
+    rows = []
+    for line in readme.splitlines():
+        cells = [cell.strip().replace(_MINUS, "-") for cell in line.split("|")]
+        if len(cells) > 2 and re.fullmatch(r"R\d+", cells[1]):
+            # `| a | b |` splits to ['', 'a', 'b', ''] — the empty ends are the pipes, not cells.
+            rows.append(tuple(cells[1:-1]))
+    return rows
+
+
+def test_the_ladder_table_in_the_readme_is_the_one_the_command_prints() -> None:
+    """The six rows the README publishes are read out of six journals by `darkvessel compare`, and
+    until now nothing checked that the prose and the command agreed.
+
+    They can part company without anything failing. A rung re-run and its journal recommitted — R1
+    already has two executions, and the entry of 2026-08-26 records why — moves every number in
+    that row, and the README would go on stating the old ones. So would a rung repointed at a
+    different `metrics:` file, or a window changed in `configs/ladder.yaml`: `judge` would return
+    different verdicts and the table in the prose would be a table of numbers nothing produced.
+
+    Only the numeric cells and the verdict are compared. "What changed" is deliberately worded
+    differently in the two places — the README says "`anchor_sizes` to `[[4], …]`" where the config
+    says it without backticks, and R0's row is written for a reader rather than for a diff — and
+    pinning prose to prose would make this a formatting test rather than a numbers one.
+    """
+    rungs, verdicts = _the_ladder()
+    published = _readme_ladder()
+
+    assert len(published) == len(verdicts), (
+        f"the README publishes {len(published)} rungs and the ladder judges {len(verdicts)}"
+    )
+
+    for row, verdict in zip(published, verdicts, strict=True):
+        label, _changed, statistic, against, band, gain, kept = row
+        where = f"README row {label}"
+
+        assert label == verdict.label, where
+        assert statistic == f"{verdict.statistic:.3f}", where
+        assert against == (verdict.against or "—"), where
+        assert band == ("—" if verdict.band is None else f"{verdict.band:.3f}"), where
+        assert gain == ("—" if verdict.gain is None else f"{verdict.gain:+.3f}"), where
+        assert kept == ("kept" if verdict.kept else "rejected"), where
+
+    # The claim the section leads with, and the one a seventh rung would silently falsify. R0 is
+    # excluded by `against is None` rather than by name: it is the first rung, which `judge` keeps
+    # by definition because there is nothing before it to beat, and it changed nothing. "One change
+    # of six was kept" is a claim about the five that had something to be measured against.
+    assert sum(verdict.kept for verdict in verdicts if verdict.against is not None) == 1, (
+        "the README says one change of six was kept"
     )
 
 

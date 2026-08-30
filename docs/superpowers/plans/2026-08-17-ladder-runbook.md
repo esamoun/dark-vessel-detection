@@ -191,7 +191,21 @@ version of the prediction.
 The sweep reproduced the census of 2026-08-19 on every figure but one, and that one was a defect in
 the sweep rather than in the census: see `docs/failures.md`, 2026-08-30.
 
-## Session 7 — the sixth rung
+## Session 7 — the sixth rung. Done on 2026-08-30. Rejected.
+
+**F1 0.82282 against R1's 0.83557** — a loss of 0.0128 against a band of 0.0099, so outside it and
+therefore a loss rather than R4's draw, though R5's own band of 0.0253 is twice the difference.
+Precision was unchanged at 0.850 and the whole loss was recall; 72 of the 2378 held-out ships left
+the detector's reach altogether. `docs/failures.md`, 2026-08-30, has the mechanism, which inverts
+the census's reading of the rescue rule. **R1 remains the kept rung and the chain is unchanged.**
+
+Two operational notes from this session, both paid for. The first attempt ran interactively
+overnight, reached epoch 10, and was lost when the browser connection dropped — with Persistence
+off, `/kaggle/working` went with it. Use **Save Version (Save & Run All)**, which runs headless and
+does not care about the browser, and turn Persistence on regardless so an interrupted attempt is
+resumable. The committed run was also faster than the interactive one: 4.93 it/s on the held-out
+pass against 3.9, about 12 min 45 an epoch rather than 15.
+
 
 `configs/ladder/r5-fg-iou.yaml` now exists, extends `r1-cosine.yaml` — the last rung kept — and
 moves **one** key: `model.rpn_fg_iou_thresh` from 0.7 to 0.3. One and not two, because 0.3 is the
