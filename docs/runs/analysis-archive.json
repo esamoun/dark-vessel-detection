@@ -258,13 +258,47 @@
     {
       "variable": "eez",
       "label": "EEZ",
-      "available": false,
+      "available": true,
+      "comparable": true,
       "counts": {
-        "unavailable": 189
+        "Denmark": 158,
+        "Sweden": 31
       },
       "dark": {
-        "unavailable": 40
-      }
+        "Denmark": 31,
+        "Sweden": 9
+      },
+      "separations": [],
+      "zones": [
+        {
+          "name": "Denmark",
+          "total": 158,
+          "dark": 31,
+          "rate": 0.1962025316455696,
+          "wilson": [
+            0.1418072547565553,
+            0.2650196442374817
+          ],
+          "interval": [
+            0.11920529801324503,
+            0.2847682119205298
+          ]
+        },
+        {
+          "name": "Sweden",
+          "total": 31,
+          "dark": 9,
+          "rate": 0.2903225806451613,
+          "wilson": [
+            0.1609580015630062,
+            0.46592329330749926
+          ],
+          "interval": [
+            0.09512987012987054,
+            0.48484848484848486
+          ]
+        }
+      ]
     }
   ],
   "sea": {
