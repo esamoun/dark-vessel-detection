@@ -62,6 +62,9 @@ from darkvessel.detect.checkpoints import atomically
 MARINE_REGIONS = "https://geo.vliz.be/geoserver/MarineRegions/wfs"
 EEZ_LAYER = "MarineRegions:eez"
 
+# Its own constant rather than the one `context/gee_layers.py` names, and deliberately: `data/`
+# does not import from `context/`, and inverting that for ten characters would buy a shared
+# spelling at the price of the layering. `viz/map.py` keeps its own for the same reason.
 DEGREES = "EPSG:4326"
 
 # Two layers, because the file has to answer two different questions. `zones` is which water
@@ -105,6 +108,11 @@ class Zones:
 
     zones: gpd.GeoDataFrame
     covers: Bounds
+    # Where these came from and what their publisher says they are worth. Carried as a field
+    # rather than read back off the first row: a fetch that found no zone at all has no first
+    # row, and the coverage rectangle it writes would then say nothing about its own provenance —
+    # which is exactly the file most in need of explaining itself.
+    provenance: dict[str, str]
 
     def __len__(self) -> int:
         return len(self.zones)
@@ -132,7 +140,7 @@ class Zones:
         """Both layers, into one GeoPackage, whole or not at all."""
         path.parent.mkdir(parents=True, exist_ok=True)
         covered = gpd.GeoDataFrame(
-            {name: [self.zones[name].iloc[0] if len(self.zones) else ""] for name in PROVENANCE},
+            {name: [self.provenance[name]] for name in PROVENANCE},
             geometry=[rectangle(*self.covers.as_rectangle())],
             crs=DEGREES,
         )
@@ -156,14 +164,20 @@ def fetch(bounds: Bounds, *, source: str = MARINE_REGIONS, layer: str = EEZ_LAYE
     # The server filtered on bounding boxes. This is the filter that was meant.
     meeting = answered[answered.intersects(wanted)].copy()
     clipped = gpd.clip(meeting, wanted).reset_index(drop=True)
-    clipped["source"] = source
-    clipped["layer"] = layer
-    clipped["retrieved_at"] = datetime.now(UTC).isoformat(timespec="seconds")
-    clipped["licence"] = LICENCE
-    clipped["citation"] = CITATION
-    clipped["terms"] = TERMS
-    clipped["attribution"] = ATTRIBUTION
-    return Zones(zones=clipped, covers=bounds)
+    provenance = {
+        "source": source,
+        "layer": layer,
+        "retrieved_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "licence": LICENCE,
+        # The version is in here rather than in a column of its own: "version 12" is a statement
+        # about the product, and the citation is the sentence its publisher wrote to make it.
+        "citation": CITATION,
+        "terms": TERMS,
+        "attribution": ATTRIBUTION,
+    }
+    for name, value in provenance.items():
+        clipped[name] = value
+    return Zones(zones=clipped, covers=bounds, provenance=provenance)
 
 
 def load(path: Path) -> Zones:
@@ -174,8 +188,13 @@ def load(path: Path) -> Zones:
             "Marine Regions asks not to be redistributed - so run `darkvessel eez` first"
         )
     zones = gpd.read_file(path, layer=ZONES_LAYER)
-    west, south, east, north = gpd.read_file(path, layer=COVERAGE_LAYER).total_bounds
-    return Zones(zones=zones, covers=Bounds(west=west, south=south, east=east, north=north))
+    covered = gpd.read_file(path, layer=COVERAGE_LAYER)
+    west, south, east, north = covered.total_bounds
+    return Zones(
+        zones=zones,
+        covers=Bounds(west=west, south=south, east=east, north=north),
+        provenance={name: str(covered[name].iloc[0]) for name in PROVENANCE},
+    )
 
 
 def _get(source: str, layer: str, bounds: Bounds) -> str:

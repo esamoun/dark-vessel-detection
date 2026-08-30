@@ -2616,8 +2616,8 @@ carries an EEZ asset, and a second way to fill one column would be a second plac
 about `high seas` and `unavailable` to drift.
 
 **What it found.** 158 detections in Danish water and 31 in Swedish; the study box straddles the
-boundary, which is the line already visible on the web map. 19.6% dark [11.9%, 28.5%] against
-29.0% [9.5%, 48.5%]. The intervals overlap across almost their whole width and nothing is claimed
+boundary, which is the line already visible on the web map. 19.6% dark [11.5%, 28.1%] against
+29.0% [10.0%, 48.6%]. The intervals overlap across almost their whole width and nothing is claimed
 from the difference — 31 detections is what that width is made of. It is reported anyway, because
 choosing which overlaps to show is how a page ends up with only the differences that looked good.
 
@@ -2654,6 +2654,24 @@ takes it longitude first — asked the other way round it does not fail, it answ
 exclusive economic zone of Yemen, which is how that was found. And the shapefile spells its fields
 in capitals while the WFS answers in lower case, so the config's `SOVEREIGN1` is matched without
 regard to case; matched strictly, every detection would have come back as unnamed water.
+
+**Two defects the review caught, both of them silent.** `Zone` was declared with
+`name: str = UNAVAILABLE`, a default that existed only to satisfy dataclass field ordering under
+inheritance: a `Zone` built without a name would not fail, it would claim to be the bucket of
+detections nobody could place, and the page would report a fetched archive as unfetched.
+`kw_only=True` removes the need for the default and the invariant comes back. And
+`gee_layers.attach` was still writing `unavailable` over the whole zone column on every run —
+harmless while Earth Engine answered it, and a silent wipe of `darkvessel zones` now that nothing
+does. It guarantees the column exists and no longer overwrites it. Both are held by tests that
+were checked to fail when the fix is reverted.
+
+The seeding comment claimed something the code did not do, which is worse than an absent comment:
+seeded by position in a sorted list of names, one new zone sorting early would move the interval
+of every zone after it, including ones already published. The seed now comes from the zone's name
+through SHA-256 — not `hash`, which is salted per process and would hand back a different interval
+on every run — so the promise the comment was making is one the code keeps. The published
+intervals moved by about 0.4 points when this changed, which is the Monte Carlo error at 4000
+draws that this file already records, not a change of finding.
 
 **Why the analysis grew a shared `Rate`.** The categorical variable now carries a rate and a
 scene-wise interval like every band does, and the comparison that decides whether two of them

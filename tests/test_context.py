@@ -27,6 +27,7 @@ from darkvessel.context.gee_layers import (
     CONTEXT,
     DEGREES,
     HIGH_SEAS,
+    MEASURED,
     UNAVAILABLE,
     Context,
     LayerSources,
@@ -86,7 +87,7 @@ def context_config() -> dict:
 
 
 def test_every_detection_carries_every_contextual_column() -> None:
-    layers = FakeLayers([Context(1.0, -20.0, "Denmark", 3.0)] * 3)
+    layers = FakeLayers([Context(1.0, -20.0, 3.0)] * 3)
 
     carried = attach(detections_at(*POSITIONS), layers)
 
@@ -98,9 +99,9 @@ def test_each_answer_lands_on_the_detection_it_was_sampled_at() -> None:
     """By position, which is the only correspondence there is — so it is checked, not trusted."""
     layers = FakeLayers(
         [
-            Context(1_000.0, -18.0, "Denmark", 0.0),
-            Context(2_000.0, -24.0, "Sweden", 1.5),
-            Context(3_000.0, -31.0, HIGH_SEAS, 12.25),
+            Context(1_000.0, -18.0, 0.0),
+            Context(2_000.0, -24.0, 1.5),
+            Context(3_000.0, -31.0, 12.25),
         ]
     )
 
@@ -108,7 +109,6 @@ def test_each_answer_lands_on_the_detection_it_was_sampled_at() -> None:
 
     assert list(carried["distance_to_shore_m"]) == [1_000.0, 2_000.0, 3_000.0]
     assert list(carried["depth_m"]) == [-18.0, -24.0, -31.0]
-    assert list(carried["eez"]) == ["Denmark", "Sweden", HIGH_SEAS]
     assert list(carried["fishing_hours"]) == [0.0, 1.5, 12.25]
 
 
@@ -120,28 +120,41 @@ def test_a_value_of_zero_is_kept_and_a_missing_one_is_not_turned_into_zero() -> 
     """
     layers = FakeLayers(
         [
-            Context(0.0, 0.0, HIGH_SEAS, 0.0),
-            Context(None, None, None, None),
+            Context(0.0, 0.0, 0.0),
+            Context(None, None, None),
         ]
     )
 
     carried = attach(detections_at(*POSITIONS[:2]), layers)
 
-    assert list(carried.loc[0, list(CONTEXT)]) == [0.0, 0.0, HIGH_SEAS, 0.0]
+    assert list(carried.loc[0, list(MEASURED)]) == [0.0, 0.0, 0.0]
     assert np.isnan(carried.loc[1, "distance_to_shore_m"])
     assert np.isnan(carried.loc[1, "depth_m"])
     assert np.isnan(carried.loc[1, "fishing_hours"])
     assert carried.loc[1, "eez"] == UNAVAILABLE
 
 
-def test_no_eez_at_a_position_is_the_high_seas_and_not_an_unanswered_layer() -> None:
-    """Two different statements, and the layer has to keep them apart."""
-    layers = FakeLayers([Context(1.0, -20.0, HIGH_SEAS, 0.0), Context(1.0, -20.0, None, 0.0)])
+def test_sampling_the_rasters_again_does_not_wipe_the_zone_somebody_already_named() -> None:
+    """`darkvessel context` and `darkvessel zones` write different columns of the same file, and
+    nothing orders them. This sampler answers no zone, so a version of `attach` that wrote its
+    own `unavailable` over the column would undo the zoning every time the rasters were
+    re-sampled — with no error, and with `analyse` then reporting a fetched archive as unfetched.
+    """
+    zoned = attach(detections_at(*POSITIONS[:2]), FakeLayers([Context(1.0, -20.0, 0.0)] * 2))
+    zoned["eez"] = ["Denmark", HIGH_SEAS]
 
-    carried = attach(detections_at(*POSITIONS[:2]), layers)
+    resampled = attach(zoned, FakeLayers([Context(2.0, -30.0, 1.0)] * 2))
 
-    assert carried.loc[0, "eez"] == HIGH_SEAS
-    assert carried.loc[1, "eez"] == UNAVAILABLE
+    assert list(resampled["eez"]) == ["Denmark", HIGH_SEAS]
+    assert list(resampled["distance_to_shore_m"]) == [2.0, 2.0]
+
+
+def test_a_layer_that_arrives_without_a_zone_column_leaves_with_one() -> None:
+    """The schema promise, kept without the overwrite: a layer whose columns depend on which
+    stages ran is a layer that cannot be stacked with the one beside it."""
+    carried = attach(detections_at(*POSITIONS[:2]), FakeLayers([Context(1.0, -20.0, 0.0)] * 2))
+
+    assert list(carried["eez"]) == [UNAVAILABLE, UNAVAILABLE]
     assert HIGH_SEAS != UNAVAILABLE
 
 
@@ -151,7 +164,7 @@ def test_the_sampler_is_asked_in_degrees_however_the_scene_is_projected() -> Non
     A UTM easting handed over as a longitude is not an error anything downstream could see: it
     samples a position off the coast of Africa and returns a number.
     """
-    layers = FakeLayers([Context(1.0, -20.0, "Denmark", 0.0)] * 3)
+    layers = FakeLayers([Context(1.0, -20.0, 0.0)] * 3)
 
     attach(detections_at(*POSITIONS), layers)
 
@@ -163,7 +176,7 @@ def test_the_sampler_is_asked_in_degrees_however_the_scene_is_projected() -> Non
 
 def test_a_sampler_that_answers_a_different_number_of_points_is_refused() -> None:
     """A short answer attached by position puts every value on the wrong vessel and still opens."""
-    layers = FakeLayers([Context(1.0, -20.0, "Denmark", 0.0)] * 2)
+    layers = FakeLayers([Context(1.0, -20.0, 0.0)] * 2)
 
     with pytest.raises(ValueError, match="3 detections"):
         attach(detections_at(*POSITIONS), layers)
@@ -191,7 +204,7 @@ def test_the_missing_values_are_still_missing_after_a_round_trip_through_the_geo
     tmp_path: Path,
 ) -> None:
     """The criterion is about the written output, so it is checked on the written output."""
-    layers = FakeLayers([Context(0.0, 0.0, HIGH_SEAS, 0.0), Context(None, None, None, None)])
+    layers = FakeLayers([Context(0.0, 0.0, 0.0), Context(None, None, None)])
     carried = attach(detections_at(*POSITIONS[:2]), layers)
 
     path = tmp_path / "detections.gpkg"
@@ -232,12 +245,14 @@ def test_a_write_that_fails_leaves_the_detections_it_was_enriching_where_they_we
 def test_the_coverage_says_what_each_layer_answered_and_what_it_did_not() -> None:
     layers = FakeLayers(
         [
-            Context(1_000.0, -18.0, "Denmark", 0.0),
-            Context(2_000.0, None, HIGH_SEAS, None),
-            Context(3_000.0, None, None, None),
+            Context(1_000.0, -18.0, 0.0),
+            Context(2_000.0, None, None),
+            Context(3_000.0, None, None),
         ]
     )
     carried = attach(detections_at(*POSITIONS), layers)
+
+    carried["eez"] = ["Denmark", HIGH_SEAS, UNAVAILABLE]
 
     lines = "\n".join(coverage(carried))
 

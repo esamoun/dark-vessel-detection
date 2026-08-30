@@ -35,8 +35,8 @@ from darkvessel.data.ais import independent_groups, load_ais, slice_for, slices_
 from darkvessel.data.area import Bounds
 from darkvessel.data.dma import danish_maritime_authority
 from darkvessel.data.eez import LICENCE
-from darkvessel.data.eez import fetch as fetch_zones
-from darkvessel.data.eez import load as load_zones
+from darkvessel.data.eez import fetch as fetch_boundaries
+from darkvessel.data.eez import load as load_boundaries
 from darkvessel.data.gee_export import DateWindow, earth_engine, export_archive, export_scene
 from darkvessel.data.scene import Scene
 from darkvessel.data.structures import Known
@@ -1866,15 +1866,9 @@ def _context(config_path: Path, over_archive: bool = False) -> int:
     config = load_config(config_path)
     relative_to = config_path.parent
     request = context_request_from(config, relative_to)
-    named = config["archive"]["detections"] if over_archive else config["run"]["output"]
-    output = (relative_to / named).resolve()
-
-    if not output.exists():
-        wrote = "archive-run" if over_archive else "run"
-        raise FileNotFoundError(
-            f"{output} does not exist; `darkvessel context` samples the layers at the detections "
-            f"of a run, so run `darkvessel {wrote} --config {config_path}` first"
-        )
+    output = _layer_of(
+        config, relative_to, config_path, over_archive=over_archive, needed_by="context"
+    )
 
     detections = gpd.read_file(output, layer=DETECTIONS_LAYER)
     sampled = attach_context(
@@ -1965,6 +1959,32 @@ def _map(config_path: Path) -> int:
     return 0
 
 
+def _layer_of(
+    config: dict[str, Any],
+    relative_to: Path,
+    config_path: Path,
+    *,
+    over_archive: bool,
+    needed_by: str,
+) -> Path:
+    """The layer a command that enriches one is being pointed at, and a refusal if it is not there.
+
+    One owner for the run-versus-archive choice, because two commands now make it and
+    `_context`'s own docstring says why a second copy is a liability: it would be a second place
+    for the rules about which file a `--archive` run reads to drift away from the first.
+    """
+    named = config["archive"]["detections"] if over_archive else config["run"]["output"]
+    output = (relative_to / named).resolve()
+    if not output.exists():
+        wrote = "archive-run" if over_archive else "run"
+        raise FileNotFoundError(
+            f"{output} does not exist; `darkvessel {needed_by}` enriches the detections of a run "
+            f"that has already been written, so run `darkvessel {wrote} --config {config_path}` "
+            "first"
+        )
+    return output
+
+
 def _eez(config_path: Path) -> int:
     """Fetch the published EEZ boundaries over the study area, once.
 
@@ -1984,7 +2004,7 @@ def _eez(config_path: Path) -> int:
     # decided by the clip rather than by the sea.
     area = Bounds(**config["area"]["bounds"]).grown_by(request["margin_m"])
 
-    boundaries = fetch_zones(area, source=request["source"], layer=request["layer"])
+    boundaries = fetch_boundaries(area, source=request["source"], layer=request["layer"])
     boundaries.write(request["reference"])
 
     named = ", ".join(boundaries.names(request["field"])) or "none"
@@ -2007,18 +2027,12 @@ def _zones(config_path: Path, over_archive: bool = False) -> int:
     config = load_config(config_path)
     relative_to = config_path.parent
     request = zones_request_from(config, relative_to)
-    named = config["archive"]["detections"] if over_archive else config["run"]["output"]
-    output = (relative_to / named).resolve()
-
-    if not output.exists():
-        wrote = "archive-run" if over_archive else "run"
-        raise FileNotFoundError(
-            f"{output} does not exist; `darkvessel zones` names the water the detections of a run "
-            f"are standing in, so run `darkvessel {wrote} --config {config_path}` first"
-        )
+    output = _layer_of(
+        config, relative_to, config_path, over_archive=over_archive, needed_by="zones"
+    )
 
     detections = gpd.read_file(output, layer=DETECTIONS_LAYER)
-    zoned = attach_zones(detections, load_zones(request["reference"]), field=request["field"])
+    zoned = attach_zones(detections, load_boundaries(request["reference"]), field=request["field"])
     write_detections(zoned, output)
 
     print(f"{len(zoned)} detection(s) zoned -> {output}")
