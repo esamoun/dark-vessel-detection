@@ -34,3 +34,11 @@ run:
   output: ../outputs/detections.gpkg
   detector: bright-pixel   # deterministic stand-in: no weights, no GPU, no network
   threshold: 0.5
+
+# The static page and its GeoJSON, written by `darkvessel map --config configs/pipeline.yaml`.
+# Into outputs/ rather than docs/: the synthetic scene's five detections are a demonstration that
+# the command works without credentials, not something to publish. docs/map/ is the real one, and
+# `configs/kattegat-lane.yaml` writes it.
+map:
+  title: Synthetic scene — five detections
+  out: ../outputs/map
