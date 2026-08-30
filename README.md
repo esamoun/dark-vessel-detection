@@ -1,5 +1,7 @@
 # Dark Vessel Detection
 
+**[See the detections on a map](https://esamoun.github.io/dark-vessel-detection/)** — 189 detections over 49 Sentinel-1 acquisitions of the northern Kattegat, matched against AIS. Static page, no backend.
+
 **Detecting undeclared vessels by fusing Sentinel-1 SAR imagery with AIS records over Danish waters.**
 
 [![CI](https://github.com/esamoun/dark-vessel-detection/actions/workflows/ci.yml/badge.svg)](https://github.com/esamoun/dark-vessel-detection/actions/workflows/ci.yml)
@@ -130,7 +132,8 @@ src/darkvessel/
   pipeline.py the single seam: scene + AIS + injected detector -> classified detections
   cli.py      the one command; builds the detector and hands it to the pipeline
   data/       study area and the survey that chose it, Sentinel-1 export, Danish AIS archives
-              and ingestion, published offshore-structure coordinates, tiling, fixtures
+              and ingestion, published offshore-structure coordinates and EEZ boundaries,
+              tiling, fixtures
   detect/     detector contract, labelled dataset and augmentations, model, training,
               checkpoints and resume, precision/recall, inference, pixel->geo
   embed/      detection crops, contrastive views and training, the archive they
@@ -147,7 +150,7 @@ configs/      pipeline configuration
 data/reference/  published structure coordinates, and the register built from the archive
 notebooks/    exploration and Kaggle/Colab training entry points
 tests/        unit tests for the geometry-critical paths
-docs/         decision log and failure log
+docs/         decision log, failure log, and the published page
 ```
 
 ## Related work
@@ -1380,6 +1383,8 @@ wrote docs/map/detections.geojson
 wrote docs/map/index.html
 ```
 
+It is published at **https://esamoun.github.io/dark-vessel-detection/**, served by GitHub Pages
+from `main` and the `docs/` folder — the site root redirects to it.
 [`docs/map/index.html`](docs/map/index.html) is the page and
 [`docs/map/detections.geojson`](docs/map/detections.geojson) is the export behind it, which QGIS
 opens directly. Both are committed, because `/outputs/` is not in the repository and a page nobody
