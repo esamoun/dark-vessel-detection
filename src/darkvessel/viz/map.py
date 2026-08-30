@@ -43,6 +43,7 @@ import base64
 import hashlib
 import html
 import json
+import math
 import re
 import shutil
 from collections.abc import Iterable
@@ -158,6 +159,14 @@ TILE_ATTRIBUTION = (
 # again in the script. Written out again, renaming a status there would put every marker in the
 # wrong group, draw nothing at all, and fail no test in this repository.
 ORDER = (UNSEARCHED, MATCHED, DARK)
+
+# The frame the opening zoom is computed against. Not a measurement of anybody's browser — it is
+# the size this page is laid out for, and the zoom that follows from it is a whole number that
+# errs towards showing more water rather than less.
+NOMINAL_FRAME = (1024, 450)
+_TILE = 256
+MIN_ZOOM = 3
+MAX_ZOOM = 19
 
 # Where the map looks at a collection with nothing in it. Only ever reached by an empty layer —
 # any detection at all fits the view to the detections — so it is not a study area, it is the
@@ -290,6 +299,48 @@ def summarise(exported: dict[str, Any]) -> Summary:
     )
 
 
+def opening_view(exported: dict[str, Any]) -> tuple[tuple[float, float], int]:
+    """Where the map should be looking when it opens, worked out here rather than in a browser.
+
+    Leaflet's `fitBounds` is a function of the frame it is given, and on the published page that
+    frame was not what it appeared to be: the fit came back at the maximum zoom, street level over
+    the right coordinates, with every detection outside the view. Nothing threw. It read as a sea
+    where nothing was found, which is the one wrong answer this page must never give.
+
+    The centre and the zoom are properties of the detections, so they are computed from the
+    detections — once, here, where the result can be asserted — and the page opens on them. The
+    browser may still improve on it once it knows its own size; it can no longer make it worse.
+
+    Web Mercator, and the zoom is floored so that a rounding error shows more water rather than
+    cutting a detection off the edge.
+    """
+    features = exported["features"]
+    if not features:
+        return EMPTY_VIEW
+
+    longitudes = [feature["geometry"]["coordinates"][0] for feature in features]
+    latitudes = [feature["geometry"]["coordinates"][1] for feature in features]
+    centre = ((min(latitudes) + max(latitudes)) / 2, (min(longitudes) + max(longitudes)) / 2)
+
+    # The same padding the browser's own fit leaves, so the two agree on a zoom rather than
+    # disagreeing by one and making the page jump when the frame is finally measured.
+    width = NOMINAL_FRAME[0] - 2 * FIT_PADDING
+    height = NOMINAL_FRAME[1] - 2 * FIT_PADDING
+    span_x = max(max(longitudes) - min(longitudes), 1e-6) / 360.0
+    span_y = max(_mercator(max(latitudes)) - _mercator(min(latitudes)), 1e-6)
+    zoom = min(
+        math.floor(math.log2(width / (_TILE * span_x))),
+        math.floor(math.log2(height / (_TILE * span_y))),
+    )
+    return centre, max(MIN_ZOOM, min(MAX_ZOOM, zoom))
+
+
+def _mercator(latitude: float) -> float:
+    """A latitude as a fraction of the Web Mercator world, which is not linear in degrees."""
+    radians = math.radians(latitude)
+    return 0.5 - math.log(math.tan(math.pi / 4 + radians / 2)) / (2 * math.pi)
+
+
 def page(exported: dict[str, Any], *, title: str) -> str:
     """One self-contained HTML file: the collection, a basemap, a legend and a table.
 
@@ -316,8 +367,8 @@ def page(exported: dict[str, Any], *, title: str) -> str:
             "labels": json.dumps(LABELS),
             "order": json.dumps(list(ORDER)),
             "fallback": json.dumps(UNSEARCHED),
-            "empty_centre": json.dumps(list(EMPTY_VIEW[0])),
-            "empty_zoom": json.dumps(EMPTY_VIEW[1]),
+            "opening_centre": json.dumps(list(opening_view(exported)[0])),
+            "opening_zoom": json.dumps(opening_view(exported)[1]),
             "fit_padding": json.dumps(FIT_PADDING),
             # `<` escaped rather than trusted: the collection goes inside a script element, and
             # the scene identifiers in it come off somebody else's product.
@@ -708,28 +759,35 @@ const FALLBACK = {{fallback}};
   // the frame can still be zero. What works is measuring again whenever the frame actually
   // changes size, which is also what makes the page survive a phone rotating and a desktop
   // window being dragged wider.
+  // The opening view is computed from the detections when this page is written, not derived here
+  // from a frame whose size the browser may not yet know. `fitBounds` against a frame that is not
+  // what it appears to be returns the *maximum* zoom rather than failing, and the page then shows
+  // street level over the right coordinates with every detection outside it — no error, no empty
+  // console, and indistinguishable from a run that found nothing. Two attempts to make the
+  // measurement reliable both looked correct and both shipped that page.
+  //
+  // So the map opens on the view that was worked out from the data, and the browser is only ever
+  // allowed to improve on it.
+  map.setView({{opening_centre}}, {{opening_zoom}});
+
   let touched = false;
   map.on('zoomstart dragstart', function () { touched = true; });
 
-  function show() {
+  function refine() {
+    if (touched || !markers.length) { return; }
     map.invalidateSize();
-    if (!markers.length) {
-      map.setView({{empty_centre}}, {{empty_zoom}});
-      return;
-    }
+    const size = map.getSize();
+    // A frame this small is not a frame; fitting to it is what produced the failure above.
+    if (size.x < 200 || size.y < 200) { return; }
     map.fitBounds(L.featureGroup(markers).getBounds(), {
       padding: [{{fit_padding}}, {{fit_padding}}]
     });
   }
 
-  show();
-  window.addEventListener('load', show);
+  refine();
+  window.addEventListener('load', refine);
   if (window.ResizeObserver) {
-    // Only until the reader takes hold of the map. Re-fitting under someone who has just zoomed
-    // in on a detection would be the page arguing with them.
-    new ResizeObserver(function () {
-      if (!touched) { show(); }
-    }).observe(document.getElementById('map'));
+    new ResizeObserver(refine).observe(document.getElementById('map'));
   }
 
   document.querySelectorAll('.key input').forEach(function (box) {
