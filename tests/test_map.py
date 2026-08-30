@@ -478,6 +478,22 @@ def test_a_vendored_file_that_is_not_what_it_claims_stops_the_write(
         write(collection(layer((MATCHED,))), out=tmp_path, title="Kattegat")
 
 
+def test_the_published_site_sends_its_root_to_the_map_the_config_writes() -> None:
+    """`docs/` is what GitHub Pages serves, and the map is one directory inside it, so the root
+    of the site is a 404 without this. Checked against `map.out` rather than against a hardcoded
+    path: move where the page is written and a redirect still pointing at the old place would be
+    a link that resolves to nothing, which is the state this file exists to end.
+    """
+    docs = Path(__file__).resolve().parents[1] / "docs"
+    out = map_request_from(yaml.safe_load(SHIPPED_CONFIG.read_text()), SHIPPED_CONFIG.parent)["out"]
+    target = out.relative_to(docs)
+
+    root = (docs / "index.html").read_text()
+
+    assert f'href="{target}/"' in root
+    assert f'content="0; url={target}/"' in root
+
+
 def test_the_shipped_config_maps_the_archive_rather_than_the_single_scene() -> None:
     """49 acquisitions and 189 detections against one acquisition and six. The single-scene run
     is what `configs/pipeline.yaml` has and the archive is what this box is for."""
