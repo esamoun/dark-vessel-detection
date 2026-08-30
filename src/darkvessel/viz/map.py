@@ -698,6 +698,15 @@ const FALLBACK = {{fallback}};
   }
 
   const map = L.map('map', { scrollWheelZoom: false });
+
+  // The view is set before anything is added to the map, and that order is the fix rather than a
+  // tidiness. A Leaflet layer added to a map that has no view yet is projected against no
+  // projection: the markers went into the renderer as degenerate paths — `M0 0`, the value its
+  // SVG renderer writes for a shape it considers outside the frame — and stayed that way after
+  // the view arrived. 188 of 189 detections were invisible on a map that was otherwise correct,
+  // at the right place and the right scale, with a clean console.
+  map.setView({{opening_centre}}, {{opening_zoom}});
+
   L.tileLayer('{{tiles}}', { maxZoom: 19, attribution: '{{tile_attribution}}' }).addTo(map);
 
   const groups = {};
@@ -759,17 +768,15 @@ const FALLBACK = {{fallback}};
   // the frame can still be zero. What works is measuring again whenever the frame actually
   // changes size, which is also what makes the page survive a phone rotating and a desktop
   // window being dragged wider.
-  // The opening view is computed from the detections when this page is written, not derived here
+  // The view above is computed from the detections when this page is written, not derived here
   // from a frame whose size the browser may not yet know. `fitBounds` against a frame that is not
   // what it appears to be returns the *maximum* zoom rather than failing, and the page then shows
-  // street level over the right coordinates with every detection outside it — no error, no empty
-  // console, and indistinguishable from a run that found nothing. Two attempts to make the
-  // measurement reliable both looked correct and both shipped that page.
+  // street level over the right coordinates with every detection outside it — no error, no
+  // console output, indistinguishable from a run that found nothing. Two attempts to make that
+  // measurement reliable both looked correct and both shipped exactly that page.
   //
   // So the map opens on the view that was worked out from the data, and the browser is only ever
   // allowed to improve on it.
-  map.setView({{opening_centre}}, {{opening_zoom}});
-
   let touched = false;
   map.on('zoomstart dragstart', function () { touched = true; });
 
