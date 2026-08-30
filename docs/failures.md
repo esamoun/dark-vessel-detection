@@ -839,3 +839,45 @@ the artefact rather than against the config that was supposed to produce it.
 own results. It has now been tested, and the explanation does not hold: the binding constraint is
 not the foreground IoU threshold either. Across six runs, the only change that helped remains the
 one that is not a domain adaptation at all — cosine decay.
+
+
+## 2026-08-30 — The map was published, and it showed a sea with nothing in it
+
+The page issue #8 asked for went up on GitHub Pages and was, by every check that had been run on
+it, correct. It was also useless: it opened at zoom 19 — street level — over exactly the right
+coordinates, with all 189 detections outside the frame. Nothing threw. The console was empty. The
+tiles loaded. A reader would have seen the northern Kattegat at 100 m across and concluded that
+the chain had found nothing.
+
+**The file was never wrong.** Served from a local disk, byte for byte the same file — sha256
+compared against what Pages returns — drew all 189. What differed was when the script ran.
+Leaflet measures its container once, when the map is constructed, and every later correction
+works from that measurement. Loaded over a CDN, the inline script executes before `leaflet.css`
+has arrived and before layout has settled, so the map is built against a frame that is not the
+frame the reader gets. `fitBounds` against a frame like that does not fail: **it returns the
+maximum zoom.** A function that answers "as close as possible" when it cannot measure anything is
+a function that turns a missing measurement into a confident wrong answer, and this project has
+now met that shape twice — the other was `attach` writing `unavailable` over a zone column, four
+hours earlier.
+
+**Three corrections that all looked right, and all shipped the same page.** Re-measuring the frame
+before fitting. Re-measuring again on `load`. Following the frame with a `ResizeObserver`. Each
+was reasoned from the same diagnosis, each was verified deployed, and each left the page exactly
+as it was, because nothing after construction rebuilds the renderer's own bounds. What worked was
+computing the opening view from the detections when the page is written — where a test can assert
+that every detection falls inside the frame the page is laid out for — and building the map after
+`load` rather than correcting it afterwards.
+
+**Part of what was chased was an artefact of the measurement.** The count of markers drawn as
+`M0 0` was used as the symptom, and Leaflet writes exactly that for any path outside the visible
+extent. In a narrow window most of the archive is outside the extent and the count is high with
+nothing wrong at all. Two of the readings that drove those three corrections were normal culling
+rather than the fault, which is how a genuine bug at zoom 19 stayed mixed up with an invented one
+at zoom 12.
+
+**The rule taken from it.** A static artefact is checked where it lives, not where it is convenient
+to serve it. Every local check passed, on every version, including the ones that were broken in
+production — and the local server is the environment this project controls, which is exactly why
+it could not see this. The same argument the repository already makes about Kaggle sessions and
+about Earth Engine filters applies to a page: the claim is about the published thing, so the
+check has to be against the published thing.
