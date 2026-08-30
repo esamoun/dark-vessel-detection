@@ -2494,3 +2494,10 @@ Held by `tests/test_config.py`, which asserts this rung differs from R1 by exact
 `model.rpn_fg_iou_thresh` and resolves to the cosine schedule R1 was kept for, and by
 `tests/test_anchor_census.py`, which pins the sweep's arithmetic including the float32 boundary
 `docs/failures.md` records for 2026-08-30.
+
+**Outcome, added after the run.** R5 scored F1 0.82282 and was rejected — a loss of 0.0128 against
+R1's band of 0.0099. The prediction above went one for two: not a draw, correctly, and the
+direction wrong. More usefully, the hypothesis this whole rung was built on does not hold, and the
+mechanism runs the other way: `allow_low_quality_matches` was selecting a *better* positive set
+than a lowered threshold does, because a tied maximum is a centring criterion and an IoU floor is
+not. `docs/failures.md`, 2026-08-30, with the numbers.

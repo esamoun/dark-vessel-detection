@@ -738,3 +738,104 @@ Held by `test_a_ship_sitting_exactly_on_the_threshold_is_counted_the_way_the_mat
 which builds one box overlapping one anchor at precisely `float32(0.7)` and asserts the matcher
 calls it positive and the count calls it un-rescued. Reverting the fix reproduces the disagreement
 on that single box.
+
+---
+
+## 2026-08-30 — R5, the RPN's foreground IoU threshold: rejected, and the rescue rule was not the defect
+
+**The rung.** `rpn_fg_iou_thresh` from torchvision's 0.7 to 0.3, one line different from R1, twelve
+epochs on a T4, scored over the whole held-out split — scenes 11 to 15, 3000 sub-images, 2378
+ships. This is the rung issue #11 closed without having, and its hypothesis is the census's own
+reservation of 2026-08-19: almost no ship reaches 0.7 against any anchor, so the stock anchors work
+through `allow_low_quality_matches` rather than through fitting the targets, and the threshold is
+the number that region is defined by.
+
+**The verdict.** F1 **0.82282** against R1's **0.83557** — a loss of **0.0128** against R1's band of
+**0.0099**, and a bar of 0.84543. Rejected.
+
+Outside the band, so it is not R4's finding restated: R4 lost 0.0087 *inside* 0.0099 and the honest
+word for it was a draw. This one is a measurable loss. But it is a small one and the entry says so
+in both directions — R5's *own* band is **0.0253**, the widest of any run on the kept branch, so
+the run wanders by twice the difference it lost by. The strongest claim the numbers support is that
+lowering the threshold is **not better**, and probably slightly worse.
+
+**Where the loss is, which is not where it was predicted.** At the score threshold of 0.75 where the
+statistic is decided:
+
+| | precision | recall | found | false | missed |
+| --- | --- | --- | --- | --- | --- |
+| R1 | 0.848 | 0.824 | 1959 | 352 | 419 |
+| R5 | **0.850** | **0.798** | 1897 | 336 | 481 |
+
+**Precision is unchanged.** The entire loss is recall: 62 ships found by R1 that R5 does not find.
+
+The prediction committed on 2026-08-30, before the run, named the opposite risk — "an anchor at 0.3
+IoU is a poor localisation target … a rung that finds more ships and localises them worse can lose
+on the number it wins on the mechanism". Localisation is exactly what did not suffer. The rung found
+*fewer* ships and placed them as precisely as before.
+
+**And the ceiling moved, not just the operating point.** At the most permissive threshold reported,
+0.05:
+
+| | found of 2378 | missed | false |
+| --- | --- | --- | --- |
+| R1 | 2275 | 103 | 27039 |
+| R5 | 2203 | 175 | **11397** |
+
+72 ships that R1 can find at *some* confidence, R5 cannot find at any. This is not a calibration
+shift that a different operating point would recover; the detector's reach is smaller.
+
+**The mechanism, and it inverts the census's reading.** Under the 0.7 threshold a ship's positive
+anchors are the ones tied at *its own maximum* overlap — when a 16 px ship sits inside a 32 px
+anchor every containing anchor ties at `256/1024`, and the rescue rule forces that whole tied set
+positive. At level 0's stride of 4 that is on the order of twenty-five anchors, every one of them
+within half a ship's length of the target: the tied set is, by construction, the anchors **centred**
+on the ship. Drop the threshold to 0.3 and the positive set becomes every anchor above 0.3, which
+includes anchors sitting off to one side. The RPN is then trained to answer "ship" on off-centre
+anchors, and its objectness map is correspondingly less sharp.
+
+**And it bites on a minority of ships, which makes it a sharper finding rather than a weaker one.**
+The rescue rule is untouched by this rung, so the 61.5% of ships whose best overlap does not reach
+0.3 keep exactly the positive set they had — still the tied maximum, still rescued. Only the 38.5%
+that clear 0.3 contribute anything new, and what they contribute is off-centre anchors. The mean
+positives per tile more than doubles, 97.6 to 210.0, on that minority alone. So a change to the
+positive set of two ships in five was enough to cost 0.0128 of F1 and 72 ships of reach — which
+says the objectness map is more sensitive to *which* anchors are called positive than to how many.
+
+So `allow_low_quality_matches` was not a pathology being worked around. It was selecting a *better*
+positive set than a lowered threshold does — the tied maximum is a centring criterion, and an IoU
+floor is not. The census of 2026-08-19 read 90% rescue-only as evidence that the anchors "work
+through the rescue rule rather than through fitting the targets", with the implication that
+something was wrong. Three rungs have now tested that region — R2 the geometry, R4 the sampler
+batch, R5 the threshold — and none of them improved on it.
+
+**Two things that behaved exactly as the log said they would.** The first epoch's training loss is
+**0.2645**, the highest of all six runs, beating R4's 0.2511: doubling the positives makes a harder
+batch, which is the mirror of R2's 0.0374 and is not to be read as failure any more than that was
+to be read as success. And R5 cuts low-confidence noise like both rejected RPN rungs before it —
+11397 false detections at 0.05 against R1's 27039, where R2 gave 9883 and R4 gave 14887. That is
+now **three** observations of the same shape: every change to the RPN's positive/negative
+bookkeeping suppresses low-confidence detections, and none of them moves the statistic, which is
+decided at 0.75.
+
+**The prediction, judged.** It was in two parts and it went one for two.
+
+* *"Not a draw — the statistic moves by more than R1's band of 0.0099, unlike R3's 0.00001 and
+  R4's 0.0087."* **Right.** 0.0128.
+* *"Direction predicted positive."* **Wrong.** The direction is negative, and the risk named
+  beside it was the wrong risk — precision held and recall fell.
+
+That is the second half-wrong prediction of this ticket. The first, on 2026-08-29, got the mechanism
+right and the magnitude wrong by a factor of two; this one got the magnitude class right and the
+direction wrong. Both are recorded as they landed rather than narrowed to the half that held.
+
+**What the run block confirms.** Of the 26 fields the two run blocks record, R5 differs from R1 in
+`rpn_fg_iou_thresh` and `rpn_bg_iou_thresh` alone — and `rpn_bg_iou_thresh` is 0.3 on both sides,
+recorded on one and silent on the other, because R1 predates the key. Silence there means
+torchvision's default, which is what `trained._check_built` reads it as. One line, verified against
+the artefact rather than against the config that was supposed to produce it.
+
+**What this closes.** Issue #11 closed saying it had not tested the most likely explanation of its
+own results. It has now been tested, and the explanation does not hold: the binding constraint is
+not the foreground IoU threshold either. Across six runs, the only change that helped remains the
+one that is not a domain adaptation at all — cosine decay.
