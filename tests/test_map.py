@@ -352,6 +352,10 @@ def test_the_map_measures_its_frame_again_before_it_fits_the_detections_into_it(
 
     assert script.index("map.invalidateSize()") < script.index("map.fitBounds(")
     assert "window.addEventListener('load', show)" in script
+    # Measuring once more is not enough: on the published page the frame was still zero by the
+    # time `load` fired. The fit has to follow the frame, and stop once the reader takes hold.
+    assert "ResizeObserver" in script
+    assert "if (!touched) { show(); }" in script
 
 
 def test_an_empty_collection_opens_on_water_rather_than_on_the_null_island() -> None:
