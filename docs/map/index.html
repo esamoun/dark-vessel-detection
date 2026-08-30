@@ -82,133 +82,155 @@ const ORDER = ["unsearched", "matched", "dark"];
 const FALLBACK = "unsearched";
 
 (function () {
-  if (typeof L === 'undefined') {
-    // Leaflet is the one thing on this page that comes from somewhere else. If it does not
-    // arrive, say so where the map would have been instead of dying at the next line: every
-    // detection is in the table below, with the date, the scene and the radius it was searched
-    // at, so the page is diminished rather than empty.
-    const frame = document.getElementById('map');
-    frame.className = 'absent';
-    frame.textContent = 'The map library did not load. Every detection is listed below.';
-    return;
-  }
-
-  const map = L.map('map', { scrollWheelZoom: false });
-
-  // The view is set before anything is added to the map, and that order is the fix rather than a
-  // tidiness. A Leaflet layer added to a map that has no view yet is projected against no
-  // projection: the markers went into the renderer as degenerate paths — `M0 0`, the value its
-  // SVG renderer writes for a shape it considers outside the frame — and stayed that way after
-  // the view arrived. 188 of 189 detections were invisible on a map that was otherwise correct,
-  // at the right place and the right scale, with a clean console.
-  map.setView([57.624201, 11.146071], 12);
-
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(map);
-
-  const groups = {};
-  const markers = [];
-
-  function esc(value) {
-    return String(value === null || value === undefined ? '—' : value)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-
-  function metres(value) {
-    return value === null || value === undefined ? '—' : value.toFixed(0) + ' m';
-  }
-
-  function popup(properties) {
-    const rows = [
-      ['Status', esc(LABELS[properties.status] || properties.status)],
-      ['Acquired (UTC)', esc((properties.acquired_at || '').replace('T', ' ').slice(0, 16))],
-      ['Scene', '<span class="scene">' + esc(properties.scene) + '</span>'],
-      ['Match tolerance', metres(properties.tolerance_m)],
-      ['Match distance', metres(properties.match_distance_m)],
-      ['Declared length', metres(properties.length_m)],
-      ['Detector score', properties.score === null ? '—' : properties.score.toFixed(3)]
-    ];
-    return '<dl class="popup">' + rows.map(function (row) {
-      return '<dt>' + row[0] + '</dt><dd>' + row[1] + '</dd>';
-    }).join('') + '</dl>';
-  }
-
-  function groupFor(status) {
-    return groups[status] || groups[FALLBACK];
-  }
-
-  ORDER.forEach(function (status) { groups[status] = L.layerGroup().addTo(map); });
-
-  DETECTIONS.features.forEach(function (feature, index) {
-    const properties = feature.properties;
-    const position = [feature.geometry.coordinates[1], feature.geometry.coordinates[0]];
-    const marker = L.circleMarker(position, {
-      radius: 6,
-      weight: 1.5,
-      color: '#ffffff',
-      fillColor: COLOURS[properties.status] || COLOURS[FALLBACK],
-      fillOpacity: 0.92
-    }).bindPopup(popup(properties));
-    marker.addTo(groupFor(properties.status));
-    markers[index] = marker;
-  });
-
-  // Leaflet measures its container once, when the map is constructed, and caches that size. This
-  // frame is sized in `vh`, so a browser that has not settled its viewport by the time this
-  // script runs reports a height of zero — and `fitBounds` against a viewport of zero returns
-  // the *maximum* zoom rather than failing. The map then opens at street level, over exactly the
-  // right coordinates, with every detection off the edge of the frame. Nothing throws and the
-  // console stays clean. It looks like a map of a sea where nothing was found, which is the one
-  // wrong answer this page must never give.
+  // Built after the page has loaded, and that is the fix rather than a nicety.
   //
-  // Measuring once more is not enough, and that was the first attempt: by the time `load` fires
-  // the frame can still be zero. What works is measuring again whenever the frame actually
-  // changes size, which is also what makes the page survive a phone rotating and a desktop
-  // window being dragged wider.
-  // The view above is computed from the detections when this page is written, not derived here
-  // from a frame whose size the browser may not yet know. `fitBounds` against a frame that is not
-  // what it appears to be returns the *maximum* zoom rather than failing, and the page then shows
-  // street level over the right coordinates with every detection outside it — no error, no
-  // console output, indistinguishable from a run that found nothing. Two attempts to make that
-  // measurement reliable both looked correct and both shipped exactly that page.
+  // Leaflet measures its container once, when the map is constructed, and every later
+  // correction works from that measurement. Run inline, this script can execute before
+  // `leaflet.css` has arrived and before layout has settled — over a CDN it reliably does —
+  // and the map is then built against a frame that is not the frame the reader will see. The
+  // markers enter the SVG renderer as degenerate paths, `M0 0`, and stay there: 188 of 189
+  // detections invisible on a map that is otherwise perfect, at the right place, at the right
+  // scale, with a clean console. The identical file served from a local disk drew all 189.
   //
-  // So the map opens on the view that was worked out from the data, and the browser is only ever
-  // allowed to improve on it.
-  let touched = false;
-  map.on('zoomstart dragstart', function () { touched = true; });
+  // Three attempts to correct the measurement afterwards — re-measuring, re-measuring on
+  // `load`, following the frame with a ResizeObserver — all looked right and all shipped that
+  // page. Nothing after construction rebuilds the renderer's own bounds. So construction
+  // waits instead.
+  function start() {
+    if (typeof L === 'undefined') {
+      // Leaflet is the one thing on this page that comes from somewhere else. If it does not
+      // arrive, say so where the map would have been instead of dying at the next line: every
+      // detection is in the table below, with the date, the scene and the radius it was searched
+      // at, so the page is diminished rather than empty.
+      const frame = document.getElementById('map');
+      frame.className = 'absent';
+      frame.textContent = 'The map library did not load. Every detection is listed below.';
+      return;
+    }
 
-  function refine() {
-    if (touched || !markers.length) { return; }
-    map.invalidateSize();
-    const size = map.getSize();
-    // A frame this small is not a frame; fitting to it is what produced the failure above.
-    if (size.x < 200 || size.y < 200) { return; }
-    map.fitBounds(L.featureGroup(markers).getBounds(), {
-      padding: [28, 28]
+    const map = L.map('map', { scrollWheelZoom: false });
+
+    // The view is set before anything is added to the map, and that order is the fix rather than a
+    // tidiness. A Leaflet layer added to a map that has no view yet is projected against no
+    // projection: the markers went into the renderer as degenerate paths — `M0 0`, the value its
+    // SVG renderer writes for a shape it considers outside the frame — and stayed that way after
+    // the view arrived. 188 of 189 detections were invisible on a map that was otherwise correct,
+    // at the right place and the right scale, with a clean console.
+    map.setView([57.624201, 11.146071], 12);
+
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(map);
+
+    const groups = {};
+    const markers = [];
+
+    function esc(value) {
+      return String(value === null || value === undefined ? '—' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function metres(value) {
+      return value === null || value === undefined ? '—' : value.toFixed(0) + ' m';
+    }
+
+    function popup(properties) {
+      const rows = [
+        ['Status', esc(LABELS[properties.status] || properties.status)],
+        ['Acquired (UTC)', esc((properties.acquired_at || '').replace('T', ' ').slice(0, 16))],
+        ['Scene', '<span class="scene">' + esc(properties.scene) + '</span>'],
+        ['Match tolerance', metres(properties.tolerance_m)],
+        ['Match distance', metres(properties.match_distance_m)],
+        ['Declared length', metres(properties.length_m)],
+        ['Detector score', properties.score === null ? '—' : properties.score.toFixed(3)]
+      ];
+      return '<dl class="popup">' + rows.map(function (row) {
+        return '<dt>' + row[0] + '</dt><dd>' + row[1] + '</dd>';
+      }).join('') + '</dl>';
+    }
+
+    function groupFor(status) {
+      return groups[status] || groups[FALLBACK];
+    }
+
+    ORDER.forEach(function (status) { groups[status] = L.layerGroup().addTo(map); });
+
+    DETECTIONS.features.forEach(function (feature, index) {
+      const properties = feature.properties;
+      const position = [feature.geometry.coordinates[1], feature.geometry.coordinates[0]];
+      const marker = L.circleMarker(position, {
+        radius: 6,
+        weight: 1.5,
+        color: '#ffffff',
+        fillColor: COLOURS[properties.status] || COLOURS[FALLBACK],
+        fillOpacity: 0.92
+      }).bindPopup(popup(properties));
+      marker.addTo(groupFor(properties.status));
+      markers[index] = marker;
+    });
+
+    // Leaflet measures its container once, when the map is constructed, and caches that size. This
+    // frame is sized in `vh`, so a browser that has not settled its viewport by the time this
+    // script runs reports a height of zero — and `fitBounds` against a viewport of zero returns
+    // the *maximum* zoom rather than failing. The map then opens at street level, over exactly the
+    // right coordinates, with every detection off the edge of the frame. Nothing throws and the
+    // console stays clean. It looks like a map of a sea where nothing was found, which is the one
+    // wrong answer this page must never give.
+    //
+    // Measuring once more is not enough, and that was the first attempt: by the time `load` fires
+    // the frame can still be zero. What works is measuring again whenever the frame actually
+    // changes size, which is also what makes the page survive a phone rotating and a desktop
+    // window being dragged wider.
+    // The view above is computed from the detections when this page is written, not derived here
+    // from a frame whose size the browser may not yet know. `fitBounds` against a frame that is not
+    // what it appears to be returns the *maximum* zoom rather than failing, and the page then shows
+    // street level over the right coordinates with every detection outside it — no error, no
+    // console output, indistinguishable from a run that found nothing. Two attempts to make that
+    // measurement reliable both looked correct and both shipped exactly that page.
+    //
+    // So the map opens on the view that was worked out from the data, and the browser is only ever
+    // allowed to improve on it.
+    let touched = false;
+    map.on('zoomstart dragstart', function () { touched = true; });
+
+    function refine() {
+      if (touched || !markers.length) { return; }
+      map.invalidateSize();
+      const size = map.getSize();
+      // A frame this small is not a frame; fitting to it is what produced the failure above.
+      if (size.x < 200 || size.y < 200) { return; }
+      map.fitBounds(L.featureGroup(markers).getBounds(), {
+        padding: [28, 28]
+      });
+    }
+
+    refine();
+    window.addEventListener('load', refine);
+    if (window.ResizeObserver) {
+      new ResizeObserver(refine).observe(document.getElementById('map'));
+    }
+
+    document.querySelectorAll('.key input').forEach(function (box) {
+      box.addEventListener('change', function () {
+        const group = groups[box.dataset.status];
+        if (!group) { return; }
+        if (box.checked) { map.addLayer(group); } else { map.removeLayer(group); }
+      });
+    });
+
+    document.querySelectorAll('tbody tr').forEach(function (row) {
+      row.addEventListener('click', function () {
+        const marker = markers[Number(row.dataset.index)];
+        if (!marker) { return; }
+        map.setView(marker.getLatLng(), Math.max(map.getZoom(), 12));
+        marker.openPopup();
+      });
     });
   }
 
-  refine();
-  window.addEventListener('load', refine);
-  if (window.ResizeObserver) {
-    new ResizeObserver(refine).observe(document.getElementById('map'));
+  if (document.readyState === 'complete') {
+    start();
+  } else {
+    window.addEventListener('load', start);
   }
-
-  document.querySelectorAll('.key input').forEach(function (box) {
-    box.addEventListener('change', function () {
-      const group = groups[box.dataset.status];
-      if (!group) { return; }
-      if (box.checked) { map.addLayer(group); } else { map.removeLayer(group); }
-    });
-  });
-
-  document.querySelectorAll('tbody tr').forEach(function (row) {
-    row.addEventListener('click', function () {
-      const marker = markers[Number(row.dataset.index)];
-      if (!marker) { return; }
-      map.setView(marker.getLatLng(), Math.max(map.getZoom(), 12));
-      marker.openPopup();
-    });
-  });
 })();
 </script>
 </body>
