@@ -2561,3 +2561,19 @@ acquisition date, the scene identifier and the match tolerance are on every row 
 rendered into the file. A reader who never clicks a marker, or arrives with scripting off, or
 turns up on a morning a tile server is down, still has the four facts. What Leaflet adds is where
 the detections are, which is the one thing the table cannot say.
+
+**Two things the review changed.** The page's script had `['unsearched', 'matched', 'dark']`
+written into it as literals, beside a module that imports those three names from
+`fusion/match.py` precisely so the vocabulary has one owner. Renaming a status there would have
+put every marker into a layer group that does not exist, drawn an empty map, and failed no test
+in this repository; the order and the fallback are now handed to the page as data, and
+`test_the_statuses_reach_the_script_as_data_rather_than_as_literals` holds it. And Leaflet's
+absence is now a sentence where the map would have been rather than a throw at the first
+`L.map(...)` — which took the table's own click handlers down with it, so the page lost the part
+it could still do because of the part it could not.
+
+**Leaflet stays on a CDN, and that is the one open risk on this page.** It is pinned by version
+and by subresource hash, so it cannot be substituted, but it can be absent, and the page is then
+a table. Vendoring the two files beside `index.html` would leave the tiles as the only external
+dependency; it would also put 160 KB of somebody else's JavaScript in this repository, where it
+would never be updated again. Recorded as a choice rather than an oversight.

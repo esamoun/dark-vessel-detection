@@ -39,7 +39,7 @@ altered does not run at all.
 
 import html
 import json
-import math
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
@@ -131,6 +131,25 @@ TILE_ATTRIBUTION = (
     '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
 )
 
+# The order the classes are drawn in, and it is not alphabetical: matched first, so that a dark
+# candidate standing on top of one is the dot that survives. The page exists to show the second
+# class, and a finding hidden under a dot the reader is not looking for is a finding nobody has.
+#
+# Taken from `fusion/match.py`'s own names and handed to the page as data rather than written out
+# again in the script. Written out again, renaming a status there would put every marker in the
+# wrong group, draw nothing at all, and fail no test in this repository.
+ORDER = (UNSEARCHED, MATCHED, DARK)
+
+# Where the map looks at a collection with nothing in it. Only ever reached by an empty layer —
+# any detection at all fits the view to the detections — so it is not a study area, it is the
+# water this chain runs over. A page that opened on the null island instead would read as a
+# georeferencing fault rather than as a run that found nothing.
+EMPTY_VIEW = ((57.6, 11.15), 9)
+
+# Room around the fitted bounds, in pixels, so a detection on the edge of the box does not sit
+# half under the frame.
+FIT_PADDING = 28
+
 # How the statuses are named to a reader who has not read `fusion/match.py`.
 LABELS = {
     MATCHED: "Matched a declared position",
@@ -155,13 +174,19 @@ class Summary:
     last: datetime | None
     tolerances: tuple[float, ...]
 
+    def span(self) -> str:
+        """The dates these detections were acquired between, or nothing where none carried one.
+
+        One expression, because the terminal's caption and the page's are exactly the pair this
+        module exists to keep from drifting apart.
+        """
+        if not (self.first and self.last):
+            return ""
+        return f"{self.first.date().isoformat()} to {self.last.date().isoformat()}"
+
     def lines(self) -> list[str]:
         """The same sentences the page carries, printed by the command that writes it."""
-        span = (
-            f", {self.first.date().isoformat()} to {self.last.date().isoformat()}"
-            if self.first and self.last
-            else ""
-        )
+        span = f", {self.span()}" if self.span() else ""
         found = ", ".join(
             f"{count} {LABELS[status].lower()}"
             if status not in (MATCHED, DARK)
@@ -257,31 +282,44 @@ def page(exported: dict[str, Any], *, title: str) -> str:
     say.
     """
     summary = summarise(exported)
-    payload = json.dumps(exported, separators=(",", ":")).replace("<", "\\u003c")
 
-    return (
-        _TEMPLATE.replace("{{title}}", html.escape(title))
-        .replace("{{lede}}", _lede(summary))
-        .replace("{{legend}}", _legend(summary))
-        .replace("{{rows}}", _rows(exported))
-        .replace("{{leaflet_version}}", LEAFLET_VERSION)
-        .replace("{{leaflet_css_sri}}", LEAFLET_CSS_SRI)
-        .replace("{{leaflet_js_sri}}", LEAFLET_JS_SRI)
-        .replace("{{tiles}}", TILES)
-        .replace("{{tile_attribution}}", TILE_ATTRIBUTION)
-        .replace("{{colours}}", json.dumps(COLOURS))
-        .replace("{{labels}}", json.dumps(LABELS))
-        .replace("{{data}}", payload)
+    return _filled(
+        _TEMPLATE,
+        {
+            "title": html.escape(title),
+            "lede": _lede(summary),
+            "legend": _legend(summary),
+            "rows": _rows(exported),
+            "leaflet_version": LEAFLET_VERSION,
+            "leaflet_css_sri": LEAFLET_CSS_SRI,
+            "leaflet_js_sri": LEAFLET_JS_SRI,
+            "tiles": TILES,
+            "tile_attribution": TILE_ATTRIBUTION,
+            "colours": json.dumps(COLOURS),
+            "labels": json.dumps(LABELS),
+            "order": json.dumps(list(ORDER)),
+            "fallback": json.dumps(UNSEARCHED),
+            "empty_centre": json.dumps(list(EMPTY_VIEW[0])),
+            "empty_zoom": json.dumps(EMPTY_VIEW[1]),
+            "fit_padding": json.dumps(FIT_PADDING),
+            # `<` escaped rather than trusted: the collection goes inside a script element, and
+            # the scene identifiers in it come off somebody else's product.
+            "data": json.dumps(exported, separators=(",", ":")).replace("<", "\\u003c"),
+        },
     )
 
 
-def write(detections: gpd.GeoDataFrame, *, out: Path, title: str) -> list[Path]:
-    """The GeoJSON and the page beside it, returned in the order they were written."""
+def write(exported: dict[str, Any], *, out: Path, title: str) -> list[Path]:
+    """The GeoJSON and the page beside it, returned in the order they were written.
+
+    Takes the collection rather than the layer, which is the shape `concentration.write` has and
+    for the same reason: the caller computes the artefact once and both files are serialised from
+    that one object, so the page and the export cannot be two renderings of the same run.
+    """
     out.mkdir(parents=True, exist_ok=True)
-    exported = collection(detections)
 
     geojson_path = out / GEOJSON_NAME
-    geojson_path.write_text(json.dumps(exported, indent=1) + "\n")
+    geojson_path.write_text(json.dumps(exported, indent=2) + "\n")
 
     page_path = out / PAGE_NAME
     page_path.write_text(page(exported, title=title))
@@ -332,18 +370,14 @@ def _scalar(value: Any, places: int | None = None) -> Any:
     has no match distance by definition — is enough to empty the map while the export reports
     success.
     """
-    if value is None or (isinstance(value, float) and math.isnan(value)):
-        return None
     if pd.isna(value):
         return None
     if isinstance(value, datetime):
         return value.isoformat()
     if hasattr(value, "item"):
         value = value.item()
-    if isinstance(value, float):
-        if math.isnan(value):
-            return None
-        return round(value, places) if places is not None else value
+    if isinstance(value, float) and places is not None:
+        return round(value, places)
     return value
 
 
@@ -436,9 +470,9 @@ def _rows(exported: dict[str, Any]) -> str:
         f"{html.escape(LABELS.get(row.get('status'), str(row.get('status'))))}</td>"
         f"<td>{html.escape(_when(row.get('acquired_at')))}</td>"
         f'<td class="scene">{html.escape(str(row.get("scene") or "—"))}</td>'
-        f"<td>{_number(row.get('tolerance_m'), 'm')}</td>"
-        f"<td>{_number(row.get('match_distance_m'), 'm')}</td>"
-        f"<td>{_number(row.get('score'), '')}</td>"
+        f"<td>{_number(row.get('tolerance_m'), unit='m')}</td>"
+        f"<td>{_number(row.get('match_distance_m'), unit='m')}</td>"
+        f"<td>{_number(row.get('score'), places=3)}</td>"
         "</tr>"
         for index, row in ordered
     )
@@ -451,11 +485,26 @@ def _when(acquired_at: str | None) -> str:
     return moment.strftime("%Y-%m-%d %H:%M")
 
 
-def _number(value: Any, unit: str) -> str:
+def _number(value: Any, *, unit: str = "", places: int = 0) -> str:
+    """One cell of the table, or an em dash where the layer holds nothing.
+
+    The precision is a parameter rather than something read off the unit: a distance to the metre
+    and a score to three places are two decisions, and inferring one from the other hides both
+    behind whether a caller passed an empty string.
+    """
     if value is None:
         return "—"
-    written = f"{float(value):.0f}" if unit else f"{float(value):.3f}"
-    return f"{written} {unit}".strip()
+    return f"{float(value):.{places}f} {unit}".strip()
+
+
+def _filled(template: str, values: dict[str, str]) -> str:
+    """Substitute every `{{name}}` in one pass.
+
+    One pass rather than a chain of `.replace()` calls, so that a value carrying the syntax — a
+    title with braces in it, a scene identifier — cannot be re-expanded by a later substitution.
+    The CSS and the tile URL hold single braces, which this does not touch.
+    """
+    return re.sub(r"\{\{(\w+)\}\}", lambda match: values[match.group(1)], template)
 
 
 _TEMPLATE = """<!doctype html>
@@ -483,6 +532,8 @@ _TEMPLATE = """<!doctype html>
          border: 1px solid rgba(255,255,255,0.85); flex: none; }
   #map { height: 65vh; min-height: 380px; border: 1px solid var(--line); border-radius: 6px;
          background: #eef1f4; }
+  #map.absent { display: flex; align-items: center; justify-content: center; height: 120px;
+                min-height: 0; color: var(--muted); font-size: 14px; }
   h2 { font-size: 17px; margin: 36px 0 6px; }
   .scroll { max-height: 420px; overflow: auto; border: 1px solid var(--line);
             border-radius: 6px; }
@@ -535,78 +586,100 @@ _TEMPLATE = """<!doctype html>
 const DETECTIONS = {{data}};
 const COLOURS = {{colours}};
 const LABELS = {{labels}};
+// The statuses, in the order they are drawn, and the one an unrecognised status falls back to.
+// Handed down from `fusion/match.py` rather than written out again here: renaming a status there
+// and leaving a literal behind in this script would put every marker in the wrong group, or in
+// no group at all, and would fail no test in the repository.
+const ORDER = {{order}};
+const FALLBACK = {{fallback}};
 
-const map = L.map('map', { scrollWheelZoom: false });
-L.tileLayer('{{tiles}}', { maxZoom: 19, attribution: '{{tile_attribution}}' }).addTo(map);
+(function () {
+  if (typeof L === 'undefined') {
+    // Leaflet is the one thing on this page that comes from somewhere else. If it does not
+    // arrive, say so where the map would have been instead of dying at the next line: every
+    // detection is in the table below, with the date, the scene and the radius it was searched
+    // at, so the page is diminished rather than empty.
+    const frame = document.getElementById('map');
+    frame.className = 'absent';
+    frame.textContent = 'The map library did not load. Every detection is listed below.';
+    return;
+  }
 
-const groups = {};
-const markers = [];
+  const map = L.map('map', { scrollWheelZoom: false });
+  L.tileLayer('{{tiles}}', { maxZoom: 19, attribution: '{{tile_attribution}}' }).addTo(map);
 
-function esc(value) {
-  return String(value === null || value === undefined ? '\\u2014' : value)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+  const groups = {};
+  const markers = [];
 
-function metres(value) {
-  return value === null || value === undefined ? '\\u2014' : value.toFixed(0) + ' m';
-}
+  function esc(value) {
+    return String(value === null || value === undefined ? '\u2014' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
 
-function popup(properties) {
-  const rows = [
-    ['Status', esc(LABELS[properties.status] || properties.status)],
-    ['Acquired (UTC)', esc((properties.acquired_at || '').replace('T', ' ').slice(0, 16))],
-    ['Scene', '<span class="scene">' + esc(properties.scene) + '</span>'],
-    ['Match tolerance', metres(properties.tolerance_m)],
-    ['Match distance', metres(properties.match_distance_m)],
-    ['Declared length', metres(properties.length_m)],
-    ['Detector score', properties.score === null ? '\\u2014' : properties.score.toFixed(3)]
-  ];
-  return '<dl class="popup">' + rows.map(function (row) {
-    return '<dt>' + row[0] + '</dt><dd>' + row[1] + '</dd>';
-  }).join('') + '</dl>';
-}
+  function metres(value) {
+    return value === null || value === undefined ? '\u2014' : value.toFixed(0) + ' m';
+  }
 
-// Matched first, so that a dark candidate standing on top of one is the dot that is visible.
-// The page exists to show the second class, and a hidden finding is a finding nobody has.
-const order = ['unsearched', 'matched', 'dark'];
-order.forEach(function (status) { groups[status] = L.layerGroup().addTo(map); });
+  function popup(properties) {
+    const rows = [
+      ['Status', esc(LABELS[properties.status] || properties.status)],
+      ['Acquired (UTC)', esc((properties.acquired_at || '').replace('T', ' ').slice(0, 16))],
+      ['Scene', '<span class="scene">' + esc(properties.scene) + '</span>'],
+      ['Match tolerance', metres(properties.tolerance_m)],
+      ['Match distance', metres(properties.match_distance_m)],
+      ['Declared length', metres(properties.length_m)],
+      ['Detector score', properties.score === null ? '\u2014' : properties.score.toFixed(3)]
+    ];
+    return '<dl class="popup">' + rows.map(function (row) {
+      return '<dt>' + row[0] + '</dt><dd>' + row[1] + '</dd>';
+    }).join('') + '</dl>';
+  }
 
-DETECTIONS.features.forEach(function (feature, index) {
-  const properties = feature.properties;
-  const position = [feature.geometry.coordinates[1], feature.geometry.coordinates[0]];
-  const marker = L.circleMarker(position, {
-    radius: 6,
-    weight: 1.5,
-    color: '#ffffff',
-    fillColor: COLOURS[properties.status] || COLOURS.unsearched,
-    fillOpacity: 0.92
-  }).bindPopup(popup(properties));
-  marker.addTo(groups[properties.status] || groups.unsearched);
-  markers[index] = marker;
-});
+  function groupFor(status) {
+    return groups[status] || groups[FALLBACK];
+  }
 
-if (markers.length) {
-  map.fitBounds(L.featureGroup(markers).getBounds(), { padding: [28, 28] });
-} else {
-  map.setView([57.6, 11.15], 10);
-}
+  ORDER.forEach(function (status) { groups[status] = L.layerGroup().addTo(map); });
 
-document.querySelectorAll('.key input').forEach(function (box) {
-  box.addEventListener('change', function () {
-    const group = groups[box.dataset.status];
-    if (!group) { return; }
-    if (box.checked) { map.addLayer(group); } else { map.removeLayer(group); }
+  DETECTIONS.features.forEach(function (feature, index) {
+    const properties = feature.properties;
+    const position = [feature.geometry.coordinates[1], feature.geometry.coordinates[0]];
+    const marker = L.circleMarker(position, {
+      radius: 6,
+      weight: 1.5,
+      color: '#ffffff',
+      fillColor: COLOURS[properties.status] || COLOURS[FALLBACK],
+      fillOpacity: 0.92
+    }).bindPopup(popup(properties));
+    marker.addTo(groupFor(properties.status));
+    markers[index] = marker;
   });
-});
 
-document.querySelectorAll('tbody tr').forEach(function (row) {
-  row.addEventListener('click', function () {
-    const marker = markers[Number(row.dataset.index)];
-    if (!marker) { return; }
-    map.setView(marker.getLatLng(), Math.max(map.getZoom(), 12));
-    marker.openPopup();
+  if (markers.length) {
+    map.fitBounds(L.featureGroup(markers).getBounds(), {
+      padding: [{{fit_padding}}, {{fit_padding}}]
+    });
+  } else {
+    map.setView({{empty_centre}}, {{empty_zoom}});
+  }
+
+  document.querySelectorAll('.key input').forEach(function (box) {
+    box.addEventListener('change', function () {
+      const group = groups[box.dataset.status];
+      if (!group) { return; }
+      if (box.checked) { map.addLayer(group); } else { map.removeLayer(group); }
+    });
   });
-});
+
+  document.querySelectorAll('tbody tr').forEach(function (row) {
+    row.addEventListener('click', function () {
+      const marker = markers[Number(row.dataset.index)];
+      if (!marker) { return; }
+      map.setView(marker.getLatLng(), Math.max(map.getZoom(), 12));
+      marker.openPopup();
+    });
+  });
+})();
 </script>
 </body>
 </html>
