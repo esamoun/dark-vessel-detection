@@ -2501,3 +2501,63 @@ direction wrong. More usefully, the hypothesis this whole rung was built on does
 mechanism runs the other way: `allow_low_quality_matches` was selecting a *better* positive set
 than a lowered threshold does, because a tied maximum is a centring criterion and an IoU floor is
 not. `docs/failures.md`, 2026-08-30, with the numbers.
+
+## 2026-08-30 — The map is two files, and the basemap is the one with nothing in front of it
+
+Issue #8 asks for a static page showing the detections over a basemap, matched in one colour and
+dark candidates in another, and it says why it is built now rather than at the end: once the map
+exists, every later improvement to the chain becomes visible instead of living in a metrics
+table. `darkvessel map` writes it, from a layer the chain has already produced. No network, no
+torch, no credentials, no scene — the same standing as `darkvessel analyse`.
+
+**Two files, written together.** `docs/map/detections.geojson` is the export the ticket asks for,
+and QGIS opens it directly. `docs/map/index.html` is the page. The page does *not* fetch the
+GeoJSON beside it: opened from a disk — which is how anybody checks a page before publishing it —
+the browser's own origin rules refuse that read and the map draws an empty sea over a working
+basemap, which looks exactly like a run that found nothing. So the collection is inlined into the
+page as well as written beside it, and `test_the_page_and_the_geojson_beside_it_hold_the_same
+_detections` is the only thing stopping the two from drifting apart.
+
+**The basemap changed after it was looked at.** The first version drew CARTO's Positron, which is
+the quieter backdrop and the better one for a scatter of points over water. Opened in a browser,
+every tile came back as a grey square with `API KEY REQUIRED` printed across it. The page loaded,
+placed all 189 detections correctly, and was worthless. That is precisely the failure the ticket's
+"no backend, no scheduled job, no hosted service" is written against, and it arrived through a
+third party rather than through a service of ours — "nothing of mine can go down" is not the same
+claim as "nothing here can go dark". The tiles are now OpenStreetMap's own, which need no account
+and no key, and `test_the_basemap_needs_no_account_and_no_key` holds it. Leaflet stays on a CDN
+and is pinned by version and by subresource hash: a script that comes back altered does not run.
+
+**`unsearched` is a third colour, not folded into either.** `fusion/match.py` keeps that status
+apart because a run with no declarations that called its detections dark would publish a sea full
+of undeclared vessels. This page is the one output of the chain read by people with no way to open
+the layer and check, so it is the last place to lose the distinction. The archive layer carries
+none today; the class exists on the page anyway, because the run that produces one will not come
+with a reminder to add it.
+
+**The MMSI does not leave the GeoPackage.** A matched detection is a vessel that declared itself
+and did everything right, and naming it on a public page adds nothing to the demonstration — the
+finding is the detections nobody declared, and those carry no identifier by definition. The column
+stays in `outputs/`, where an analyst who needs it has it.
+
+**The export is reprojected, and the measurements are rounded.** GeoJSON is WGS84 by
+specification and has no way to say otherwise, so the layer's EPSG:25832 is converted rather than
+relabelled; written as it stands, the northern Kattegat lands off the coast of Ghana and the
+terminal still reports 189 detections written. A NaN, meanwhile, is not JSON — `json.dumps` emits
+the bare literal and no browser will parse the file — so a missing measurement is `null`, and one
+dark detection, which has no match distance by definition, was enough to empty the map. Distances
+are published to a tenth of a metre and scores to four places: 136.51302541327746 m is a claim
+about femtometres made of a detection placed to the nearest 10 m pixel, and a reader of the file
+cannot tell a digit that means something from one that fell out of a float.
+
+**The page is committed; the layer it came from is not.** `/outputs/` is ignored, and a page
+nobody can reach is a page that does not exist. So `docs/map/` is in the repository and the
+GeoPackage behind it is not, which means the two can disagree — regenerate the page and it is
+consistent again, and `darkvessel map` prints the same three numbers the page carries so that a
+run and its caption cannot quietly differ.
+
+**Everything the ticket asks to be shown is in the HTML as text, not only in a popup.** The
+acquisition date, the scene identifier and the match tolerance are on every row of a table
+rendered into the file. A reader who never clicks a marker, or arrives with scripting off, or
+turns up on a morning a tile server is down, still has the four facts. What Leaflet adds is where
+the detections are, which is the one thing the table cannot say.

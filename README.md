@@ -141,7 +141,7 @@ src/darkvessel/
               depth, EEZ membership, fishing effort
   analysis/   the distribution of dark candidates against each of those variables, with
               intervals resampled over acquisitions rather than over detections
-  viz/        GeoJSON export for the web map
+  viz/        the GeoJSON export and the static page it is drawn on
 configs/      pipeline configuration
 data/reference/  published structure coordinates, and the register built from the archive
 notebooks/    exploration and Kaggle/Colab training entry points
@@ -239,12 +239,14 @@ darkvessel archive-ais --config configs/kattegat-lane.yaml  # declarations, one 
 darkvessel archive-run --config configs/kattegat-lane.yaml  # the chain over all 50 acquisitions
 darkvessel context --config configs/kattegat-lane.yaml --archive  # the layers, in one round trip
 darkvessel analyse --config configs/kattegat-lane.yaml      # the distribution, and its intervals
+darkvessel map     --config configs/kattegat-lane.yaml      # the static page, and the GeoJSON
 ```
 
-`analyse` is the only one of the four that needs neither credentials nor a network: everything it
-reads is already on the row. It writes [`docs/runs/analysis-archive.json`](docs/runs/analysis-archive.json)
-and one figure per variable, so every number in the section below is re-derivable by anyone
-holding the GeoPackage.
+`analyse` and `map` are the two of the five that need neither credentials nor a network:
+everything they read is already on the row. `analyse` writes
+[`docs/runs/analysis-archive.json`](docs/runs/analysis-archive.json) and one figure per variable,
+so every number in the section below is re-derivable by anyone holding the GeoPackage; `map`
+writes the page in [`docs/map/`](docs/map/), described at the foot of this file.
 
 ```
 4676 crops from 96 scene(s): 318 distinct positions, 65 of them standing in 20+ acquisitions
@@ -1353,6 +1355,52 @@ acceptance criterion of #16 this run does not answer.
 each rate, and a comparison that asks only whether two intervals overlap. Non-overlapping 95%
 intervals is a stricter bar than a two-sample test at 5%, which is the direction to err in on a
 page that will be read as a result.
+
+## The map — 2026-08-30
+
+The chain's one output that is not for an analyst: a static page of the archive's detections over
+a basemap, matched in one colour and dark candidates in the other.
+
+```bash
+darkvessel map --config configs/kattegat-lane.yaml
+```
+
+```
+189 detections over 49 acquisitions, 2026-06-01 to 2026-08-09
+  149 matched, 40 dark at a tolerance of 200 m
+wrote docs/map/detections.geojson
+wrote docs/map/index.html
+```
+
+[`docs/map/index.html`](docs/map/index.html) is the page and
+[`docs/map/detections.geojson`](docs/map/detections.geojson) is the export behind it, which QGIS
+opens directly. Both are committed, because `/outputs/` is not in the repository and a page nobody
+can reach is a page that does not exist.
+
+It is a file. There is no backend, no scheduled job and no hosted service to wake up — the
+detections are embedded in the HTML rather than fetched from beside it, so it works opened from a
+disk as well as served. The one thing on it this repository does not hold is the basemap, and that
+is OpenStreetMap's own tiles: the first version used CARTO's Positron, which now answers every
+tile with `API KEY REQUIRED` written across it, and a page that loads, places its detections
+correctly and is worthless is exactly the failure the ticket was written against. Leaflet is
+pinned by version and by subresource hash.
+
+Everything the map claims is on the page as text as well as in a popup — every detection's
+acquisition time, the scene it came from, the radius it was searched at and the distance to the
+declaration that explained it, in a table rendered into the file. A reader with scripting off, or
+on a morning the tiles do not load, still has the four facts.
+
+### What is not claimed
+
+**A dot is not a vessel and a red dot is not an offence.** The page says what the layer says:
+this detection had no declared position within 200 m of where the radar would have drawn a vessel
+travelling at that speed, on a day whose declarations were ingested in full. A fishing boat under
+the AIS carriage threshold, a gap in the national archive and a fixed structure all produce the
+same red dot, and the page says so under the table rather than in a caveats file.
+
+**Nothing on the page identifies a vessel.** The MMSI of a matched vessel stays in the GeoPackage.
+A matched detection is a ship that declared itself; naming it publicly adds nothing to the
+demonstration, and the dark candidates carry no identifier by definition.
 
 ## Licence
 

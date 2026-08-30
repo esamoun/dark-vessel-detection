@@ -196,6 +196,18 @@ context:
   # cell at 10 m would not make the answer sharper, it would make it look sharper.
   scale_m: 1000
 
+# The static page in docs/map/, written by `darkvessel map --config configs/kattegat-lane.yaml`
+# from the accumulated layer above. The one output of this chain aimed at somebody who will not
+# open a GeoPackage, and the only one that is committed rather than regenerated: a page nobody
+# can reach is a page that does not exist, and outputs/ is not in the repository.
+#
+# No source is named here, so the archive layer is what is drawn — 189 detections over 49
+# acquisitions rather than the single scene's six. `map.detections` overrides that for anyone who
+# wants a particular file.
+map:
+  title: Dark vessel candidates — northern Kattegat
+  out: ../docs/map
+
 # What `darkvessel analyse` reads the accumulated layer with, and where it writes the answer.
 # The last stage of the chain and the only one whose output is prose, which is why its settings
 # are in the file rather than in the code: the intervals below are quoted in the README, and a

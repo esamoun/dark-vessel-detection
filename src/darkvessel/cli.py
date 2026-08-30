@@ -73,6 +73,8 @@ from darkvessel.fusion.interpolate import INTERPOLATED, REPORTED
 from darkvessel.fusion.match import DARK, MATCHED
 from darkvessel.fusion.register import Register, reduction
 from darkvessel.pipeline import run as run_pipeline
+from darkvessel.viz.map import collection, map_request_from, summarise
+from darkvessel.viz.map import write as write_map
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -188,6 +190,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     analyse_command.add_argument("--config", type=Path, required=True)
 
+    map_command = commands.add_parser(
+        "map",
+        help="write the static page and the GeoJSON behind it, from a layer already produced",
+    )
+    map_command.add_argument("--config", type=Path, required=True)
+
     args = parser.parse_args(argv)
 
     if args.command == "synthesise":
@@ -224,6 +232,8 @@ def main(argv: list[str] | None = None) -> int:
         return _context(args.config, over_archive=args.archive)
     if args.command == "analyse":
         return _analyse(args.config)
+    if args.command == "map":
+        return _map(args.config)
     return _run(args.config)
 
 
@@ -1894,5 +1904,36 @@ def _analyse(config_path: Path) -> int:
     for written in write_analysis(
         result, report_path=request["report"], figures=request["figures"]
     ):
+        print(f"wrote {written}")
+    return 0
+
+
+def _map(config_path: Path) -> int:
+    """The static page, and the GeoJSON it is drawn from.
+
+    Reads a layer the chain has already written and touches nothing else: no network, no torch,
+    no credentials, and no scene. That is what makes the page cheap enough to regenerate whenever
+    the pipeline improves, which is the reason issue #8 asked for it early — a metrics table
+    records that the detector found more, and this is where it becomes visible.
+
+    Two files, into a directory named by the config. Both are written, always: a page regenerated
+    without its export, or an export without its page, is a map of one run captioned with the
+    numbers of another.
+    """
+    config = load_config(config_path)
+    request = map_request_from(config, config_path.parent)
+    layer_path = request["detections"]
+
+    if not layer_path.exists():
+        raise FileNotFoundError(
+            f"{layer_path} does not exist; `darkvessel map` draws a layer the chain has already "
+            f"produced, so run `darkvessel archive-run --config {config_path}` — or "
+            f"`darkvessel run` for a single scene — first"
+        )
+
+    detections = gpd.read_file(layer_path, layer=DETECTIONS_LAYER)
+    for line in summarise(collection(detections)).lines():
+        print(line)
+    for written in write_map(detections, out=request["out"], title=request["title"]):
         print(f"wrote {written}")
     return 0

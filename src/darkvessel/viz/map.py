@@ -2,4 +2,612 @@
 
 Static output, no backend: matched detections in one layer, unmatched in another. The map is
 the proof that the pipeline produces something real.
+
+Two files, written together and read as one: a GeoJSON of every detection, which QGIS and
+anything else opens, and an HTML page that draws it over a basemap. Nothing else — no service to
+wake, no job to schedule, no build step. A demo that sleeps and takes forty seconds to answer is
+worse than no demo, and it is worse in the specific way that matters here: the thing being shown
+is that the chain found something, and a spinner is indistinguishable from having found nothing.
+
+Three decisions in here would each pass review as correct and publish a false statement:
+
+**The export is reprojected.** The chain works in EPSG:25832 because a match tolerance in degrees
+is not a tolerance. GeoJSON is WGS84 by specification and carries no way to say otherwise, so a
+layer written as it stands puts the northern Kattegat off the coast of Ghana while the terminal
+reports 189 detections written.
+
+**The page carries its own data.** It could fetch the GeoJSON beside it in three lines. Opened
+from a disk — which is how anyone checks a page before it is published — the browser's origin
+rules refuse that read and the map draws an empty sea. So the same collection is inlined into the
+page as well as written beside it, and `test_the_page_and_the_geojson_beside_it_hold_the_same
+_detections` is what stops the two drifting apart.
+
+**`unsearched` is not `dark`.** `fusion/match.py` keeps those apart because a run with nothing to
+search that called its detections dark would report a sea full of undeclared vessels. This page
+is the one output where that error is read by people with no way to check it, so the third status
+is drawn in its own colour rather than folded into either of the others.
+
+What is deliberately not published is the MMSI. A matched detection is a vessel that declared
+itself, and naming it on a public page adds nothing to the demo — the finding is the detections
+nobody declared. The identifier stays in the GeoPackage, where an analyst who needs it has it.
+
+The basemap tiles and Leaflet itself come from other people's CDNs, which is the one thing on the
+page this repository does not hold. Both are pinned by version and by hash: a tile server that
+disappears leaves a grey backdrop with the detections still on it, and a script that comes back
+altered does not run at all.
+"""
+
+import html
+import json
+import math
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import geopandas as gpd
+import pandas as pd
+from pyproj import CRS
+
+from darkvessel.fusion.match import DARK, MATCHED, UNSEARCHED
+
+# GeoJSON's one coordinate reference system. Named rather than assumed, because the whole of the
+# reprojection below is a claim about which CRS the file is in.
+WGS84 = "EPSG:4326"
+
+GEOJSON_NAME = "detections.geojson"
+PAGE_NAME = "index.html"
+
+# Six decimal places is a tenth of a metre at this latitude, against detections placed to the
+# nearest 10 m pixel. Enough precision to be honest and not enough to suggest the position is
+# better known than it is; it also halves the file.
+PLACES = 6
+
+# How many decimals each measurement is published to. A match distance of 136.51302541327746 m
+# is a claim about femtometres made of a detection placed to the nearest 10 m pixel, and a reader
+# has no way to tell a digit that means something from one that fell out of a float. Rounded here
+# rather than in the page, so that the GeoJSON somebody downloads carries the same statement the
+# page does. Anything not named keeps its value as it stands.
+PRECISION = {
+    "tolerance_m": 1,
+    "score": 4,
+    "match_distance_m": 1,
+    "length_m": 1,
+    "azimuth_shift_m": 1,
+    "distance_to_shore_m": 0,
+    "depth_m": 1,
+}
+
+# What travels to the page, in the order a popup reads them. `status`, `acquired_at`, `scene` and
+# `tolerance_m` are the ticket's four; the rest are what makes a row believable rather than
+# decorative — a match at 120 m inside a 200 m radius is a different claim from one at 199 m.
+# A column the layer does not carry is skipped rather than invented, so the synthetic run's
+# output, which never met the contextual sampling, exports the same way as the archive's.
+PUBLISHED = (
+    "status",
+    "acquired_at",
+    "scene",
+    "tolerance_m",
+    "score",
+    "match_distance_m",
+    "length_m",
+    "position_basis",
+    "azimuth_shift_m",
+    "distance_to_shore_m",
+    "depth_m",
+)
+
+# The palette the figures in docs/figures already use, so that a bar in the analysis and a dot on
+# the map are the same colour for the same thing. Blue and red rather than green and red: the
+# most common colour blindness is on that axis, and the two classes here are the whole point of
+# the page.
+COLOURS = {
+    MATCHED: "#1f6feb",
+    DARK: "#e5534b",
+    UNSEARCHED: "#8b949e",
+}
+
+# Pinned by version and by hash. Subresource integrity is not ceremony here: this page is meant
+# to be published and left alone, and a CDN that serves something else one day would be running
+# it in the reader's browser under this project's name.
+LEAFLET_VERSION = "1.9.4"
+LEAFLET_CSS_SRI = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+LEAFLET_JS_SRI = "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+
+# OpenStreetMap's own tiles, which need no account and no key.
+#
+# The first version of this page used CARTO's Positron, which is the quieter basemap and the
+# better backdrop for a scatter of points over water. It renders, today, as a grey field with
+# "API KEY REQUIRED" written across it in every tile — a page that loads, draws its detections
+# in the right places, and is worthless. That is the whole failure mode issue #8 exists to avoid,
+# and it arrived through a dependency rather than through a server of ours, which is the part
+# worth remembering: "no backend" is not the same as "nothing can go dark".
+#
+# So the basemap is the one with no gate in front of it. Its usage policy asks for light traffic
+# and attribution, and a static page of one study area is what that policy is for.
+TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+TILE_ATTRIBUTION = (
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+)
+
+# How the statuses are named to a reader who has not read `fusion/match.py`.
+LABELS = {
+    MATCHED: "Matched a declared position",
+    DARK: "Dark candidate",
+    UNSEARCHED: "Not searched",
+}
+
+
+@dataclass(frozen=True)
+class Summary:
+    """What the page says about itself, taken from the collection it is drawing.
+
+    Derived from the exported features rather than from the layer, so that the caption and the
+    dots cannot describe two different runs: the numbers in the header are counted off the same
+    bytes that were written to disk.
+    """
+
+    detections: int
+    counts: dict[str, int]
+    acquisitions: int
+    first: datetime | None
+    last: datetime | None
+    tolerances: tuple[float, ...]
+
+    def lines(self) -> list[str]:
+        """The same sentences the page carries, printed by the command that writes it."""
+        span = (
+            f", {self.first.date().isoformat()} to {self.last.date().isoformat()}"
+            if self.first and self.last
+            else ""
+        )
+        found = ", ".join(
+            f"{count} {LABELS[status].lower()}"
+            if status not in (MATCHED, DARK)
+            else f"{count} {status}"
+            for status, count in self.counts.items()
+        )
+        radius = (
+            f" at a tolerance of {_metres(self.tolerances)}"
+            if self.tolerances
+            else " with nothing to match against"
+        )
+        return [
+            f"{self.detections} detections over {_acquisitions(self.acquisitions)}{span}",
+            f"  {found}{radius}",
+        ]
+
+
+def collection(detections: gpd.GeoDataFrame) -> dict[str, Any]:
+    """The detections as a GeoJSON FeatureCollection, in longitude and latitude.
+
+    A dictionary rather than a string, so that the page and the file are serialised from one
+    object and a caller can assert on it without parsing anything.
+    """
+    if detections.crs is None:
+        raise ValueError(
+            "these detections carry no CRS, and GeoJSON is longitude and latitude by "
+            "specification; there is nothing to reproject from"
+        )
+    in_degrees = (
+        detections
+        if CRS.from_user_input(detections.crs).equals(CRS.from_epsg(4326))
+        else detections.to_crs(WGS84)
+    )
+
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [
+                        round(point.x, PLACES),
+                        round(point.y, PLACES),
+                    ],
+                },
+                "properties": {
+                    name: _scalar(row[name], PRECISION.get(name))
+                    for name in PUBLISHED
+                    if name in in_degrees.columns
+                },
+            }
+            for (_, row), point in zip(in_degrees.iterrows(), in_degrees.geometry, strict=True)
+        ],
+    }
+
+
+def summarise(exported: dict[str, Any]) -> Summary:
+    """Count what the collection holds, in the order the statuses are worth reading."""
+    properties = [feature["properties"] for feature in exported["features"]]
+    statuses = [row.get("status") for row in properties]
+    times = sorted(
+        datetime.fromisoformat(row["acquired_at"])
+        for row in properties
+        if row.get("acquired_at") is not None
+    )
+    tolerances = {
+        float(row["tolerance_m"]) for row in properties if row.get("tolerance_m") is not None
+    }
+
+    return Summary(
+        detections=len(properties),
+        counts={
+            status: statuses.count(status)
+            for status in (MATCHED, DARK, UNSEARCHED)
+            if status in statuses
+        },
+        acquisitions=_acquisitions_in(properties),
+        first=times[0] if times else None,
+        last=times[-1] if times else None,
+        tolerances=tuple(sorted(tolerances)),
+    )
+
+
+def page(exported: dict[str, Any], *, title: str) -> str:
+    """One self-contained HTML file: the collection, a basemap, a legend and a table.
+
+    The table is not decoration. Everything the ticket asks the page to show — the acquisition
+    date, the scene the detection came from, the radius it was searched at — is in it as plain
+    HTML, so a reader who never clicks a marker, or who arrives with scripting turned off, or who
+    reaches the page on the morning a tile server is down, still has the four facts in front of
+    them. What Leaflet adds is where the detections are, which is the one thing a table cannot
+    say.
+    """
+    summary = summarise(exported)
+    payload = json.dumps(exported, separators=(",", ":")).replace("<", "\\u003c")
+
+    return (
+        _TEMPLATE.replace("{{title}}", html.escape(title))
+        .replace("{{lede}}", _lede(summary))
+        .replace("{{legend}}", _legend(summary))
+        .replace("{{rows}}", _rows(exported))
+        .replace("{{leaflet_version}}", LEAFLET_VERSION)
+        .replace("{{leaflet_css_sri}}", LEAFLET_CSS_SRI)
+        .replace("{{leaflet_js_sri}}", LEAFLET_JS_SRI)
+        .replace("{{tiles}}", TILES)
+        .replace("{{tile_attribution}}", TILE_ATTRIBUTION)
+        .replace("{{colours}}", json.dumps(COLOURS))
+        .replace("{{labels}}", json.dumps(LABELS))
+        .replace("{{data}}", payload)
+    )
+
+
+def write(detections: gpd.GeoDataFrame, *, out: Path, title: str) -> list[Path]:
+    """The GeoJSON and the page beside it, returned in the order they were written."""
+    out.mkdir(parents=True, exist_ok=True)
+    exported = collection(detections)
+
+    geojson_path = out / GEOJSON_NAME
+    geojson_path.write_text(json.dumps(exported, indent=1) + "\n")
+
+    page_path = out / PAGE_NAME
+    page_path.write_text(page(exported, title=title))
+
+    return [geojson_path, page_path]
+
+
+def map_request_from(config: dict[str, Any], relative_to: Path) -> dict[str, Any]:
+    """What the map is asked for, read out of a config file.
+
+    The same shape as the other `*_request_from` functions in `cli.py`, and here for the reason
+    they are there: what can be checked without doing the work is checked before the work starts.
+
+    The layer to draw is the archive's if the config has one, and the single run's otherwise. An
+    accumulated layer is 49 acquisitions against one, and a map of one acquisition's six
+    detections is a screenshot rather than a demonstration — so the archive wins where both are
+    named, and `map.detections` overrides both for anyone who wants a particular file.
+    """
+    settings = config.get("map", {})
+    named = (
+        settings.get("detections")
+        or config.get("archive", {}).get("detections")
+        or config.get("run", {}).get("output")
+    )
+    if named is None:
+        raise ValueError(
+            "nothing to map: this config names neither map.detections, archive.detections nor "
+            "run.output, and the page is drawn from a layer the chain has already written"
+        )
+    if "out" not in settings:
+        raise ValueError(
+            "map.out is missing: the page and its GeoJSON have to be written somewhere, and this "
+            "is not a path to guess at inside somebody's repository"
+        )
+
+    return {
+        "detections": (relative_to / str(named)).resolve(),
+        "out": (relative_to / str(settings["out"])).resolve(),
+        "title": str(settings.get("title", config.get("area", {}).get("name", "Detections"))),
+    }
+
+
+def _scalar(value: Any, places: int | None = None) -> Any:
+    """One cell, as something a JSON parser in a browser will accept.
+
+    `json.dumps` writes a bare `NaN` for a missing float and does not consider that an error.
+    It is not JSON, every browser refuses the whole file over it, and one dark detection — which
+    has no match distance by definition — is enough to empty the map while the export reports
+    success.
+    """
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return None
+    if pd.isna(value):
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if hasattr(value, "item"):
+        value = value.item()
+    if isinstance(value, float):
+        if math.isnan(value):
+            return None
+        return round(value, places) if places is not None else value
+    return value
+
+
+def _metres(values: Iterable[float]) -> str:
+    """A radius, or every radius an accumulated layer was matched at.
+
+    Two runs can be accumulated into one layer at two tolerances. Printing the first would state
+    a radius most of the detections were not searched at, which is the kind of caption that
+    survives every review because it is a number and it is nearly right.
+    """
+    written = [
+        f"{value:.0f} m" if float(value).is_integer() else f"{value:.1f} m" for value in values
+    ]
+    if len(written) <= 1:
+        return "".join(written)
+    return f"{', '.join(written[:-1])} and {written[-1]}"
+
+
+def _acquisitions(count: int) -> str:
+    return "1 acquisition" if count == 1 else f"{count} acquisitions"
+
+
+def _acquisitions_in(properties: list[dict[str, Any]]) -> int:
+    """How many passes of the satellite these detections came from.
+
+    Counted off the scene identifiers where the layer carries them, and off the acquisition
+    instants where it does not. `archive-run` puts a scene on every row because an accumulated
+    layer cannot be read without one; a single run's output has no such column, and reporting
+    "0 scenes" for a page drawing one acquisition is a caption that is wrong in the direction of
+    looking like a bug in the chain rather than in the sentence.
+    """
+    scenes = {row.get("scene") for row in properties if row.get("scene") is not None}
+    if scenes:
+        return len(scenes)
+    return len({row.get("acquired_at") for row in properties if row.get("acquired_at") is not None})
+
+
+def _lede(summary: Summary) -> str:
+    span = (
+        f", {summary.first.date().isoformat()} to {summary.last.date().isoformat()}"
+        if summary.first and summary.last
+        else ""
+    )
+    sentences = [
+        f"<strong>{summary.detections}</strong> detections over "
+        f"<strong>{_acquisitions(summary.acquisitions)}</strong> of Sentinel-1{span}."
+    ]
+    if summary.tolerances:
+        sentences.append(
+            f"<strong>{summary.counts.get(MATCHED, 0)}</strong> matched a position declared "
+            f"over AIS within <strong>{_metres(summary.tolerances)}</strong> of where the radar "
+            f"drew them; <strong>{summary.counts.get(DARK, 0)}</strong> did not."
+        )
+    if UNSEARCHED in summary.counts:
+        sentences.append(
+            f"{summary.counts[UNSEARCHED]} were never searched — no declarations were supplied "
+            "for their acquisition, which is a different statement from finding none."
+        )
+    return " ".join(sentences)
+
+
+def _legend(summary: Summary) -> str:
+    """A swatch per status, and the checkbox that hides it.
+
+    Only the statuses the layer actually holds. A legend entry for a class with nothing in it
+    reads as a class with nothing found in it.
+    """
+    return "".join(
+        f'<label class="key"><input type="checkbox" data-status="{status}" checked>'
+        f'<span class="dot" style="background:{COLOURS[status]}"></span>'
+        f'{html.escape(LABELS[status])} <span class="count">{count}</span></label>'
+        for status, count in summary.counts.items()
+    )
+
+
+def _rows(exported: dict[str, Any]) -> str:
+    """Every detection as a table row, oldest acquisition first.
+
+    Written into the file rather than built by script, so that the four facts the ticket asks for
+    are on the page whether or not anything runs.
+    """
+    ordered = sorted(
+        enumerate(feature["properties"] for feature in exported["features"]),
+        key=lambda pair: (pair[1].get("acquired_at") or "", pair[1].get("status") or ""),
+    )
+    return "".join(
+        f'<tr data-index="{index}" data-status="{html.escape(str(row.get("status", "")))}">'
+        f'<td><span class="dot" style="background:'
+        f'{COLOURS.get(row.get("status"), COLOURS[UNSEARCHED])}"></span>'
+        f"{html.escape(LABELS.get(row.get('status'), str(row.get('status'))))}</td>"
+        f"<td>{html.escape(_when(row.get('acquired_at')))}</td>"
+        f'<td class="scene">{html.escape(str(row.get("scene") or "—"))}</td>'
+        f"<td>{_number(row.get('tolerance_m'), 'm')}</td>"
+        f"<td>{_number(row.get('match_distance_m'), 'm')}</td>"
+        f"<td>{_number(row.get('score'), '')}</td>"
+        "</tr>"
+        for index, row in ordered
+    )
+
+
+def _when(acquired_at: str | None) -> str:
+    if not acquired_at:
+        return "—"
+    moment = datetime.fromisoformat(acquired_at)
+    return moment.strftime("%Y-%m-%d %H:%M")
+
+
+def _number(value: Any, unit: str) -> str:
+    if value is None:
+        return "—"
+    written = f"{float(value):.0f}" if unit else f"{float(value):.3f}"
+    return f"{written} {unit}".strip()
+
+
+_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<link rel="stylesheet"
+      href="https://unpkg.com/leaflet@{{leaflet_version}}/dist/leaflet.css"
+      integrity="{{leaflet_css_sri}}" crossorigin="anonymous">
+<style>
+  :root { --ink: #24292f; --muted: #57606a; --line: #d0d7de; --bg: #ffffff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.55 system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 26px; margin: 0 0 8px; letter-spacing: -0.01em; }
+  p.lede { margin: 0 0 20px; max-width: 76ch; color: var(--ink); }
+  p.note { margin: 16px 0 0; max-width: 76ch; color: var(--muted); font-size: 13.5px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; margin: 0 0 12px; }
+  .key { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; cursor: pointer; }
+  .key .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block;
+         border: 1px solid rgba(255,255,255,0.85); flex: none; }
+  #map { height: 65vh; min-height: 380px; border: 1px solid var(--line); border-radius: 6px;
+         background: #eef1f4; }
+  h2 { font-size: 17px; margin: 36px 0 6px; }
+  .scroll { max-height: 420px; overflow: auto; border: 1px solid var(--line);
+            border-radius: 6px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  thead th { position: sticky; top: 0; background: #f6f8fa; text-align: left;
+             border-bottom: 1px solid var(--line); padding: 8px 10px; font-weight: 600; }
+  td { padding: 6px 10px; border-bottom: 1px solid #eaeef2; white-space: nowrap; }
+  tbody tr:hover { background: #f6f8fa; cursor: pointer; }
+  td:first-child { display: flex; align-items: center; gap: 7px; }
+  td.scene { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+             color: var(--muted); }
+  td:nth-child(n+4) { text-align: right; font-variant-numeric: tabular-nums; }
+  .popup dt { color: var(--muted); font-size: 11.5px; text-transform: uppercase;
+              letter-spacing: 0.04em; margin-top: 6px; }
+  .popup dd { margin: 0; font-size: 13px; }
+  .popup .scene { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                  font-size: 11px; word-break: break-all; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>{{title}}</h1>
+  <p class="lede">{{lede}}</p>
+  <div class="legend">{{legend}}</div>
+  <div id="map"></div>
+  <h2>Every detection</h2>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Status</th><th>Acquired (UTC)</th><th>Scene</th><th>Tolerance</th>
+            <th>Match distance</th><th>Score</th></tr>
+      </thead>
+      <tbody>{{rows}}</tbody>
+    </table>
+  </div>
+  <p class="note"><em>Dark</em> is a claim about evidence, not a verdict: no position declared
+  over AIS, interpolated to the instant of acquisition and moved to where the radar would have
+  drawn a vessel travelling at that speed, stood within the tolerance above. Every reason a
+  detection can be undeclared that is not an undeclared vessel &mdash; a fishing boat under the
+  AIS carriage threshold, a gap in the national archive, a fixed structure &mdash; is still on
+  the table.</p>
+  <p class="note">Written by <code>darkvessel map</code> from the layer the chain produced. This
+  page is a file: no backend, no scheduled job, nothing to wake up. The detections are embedded
+  in it and also sit beside it as
+  <a href="detections.geojson">detections.geojson</a>, which QGIS opens directly.</p>
+</div>
+<script src="https://unpkg.com/leaflet@{{leaflet_version}}/dist/leaflet.js"
+        integrity="{{leaflet_js_sri}}" crossorigin="anonymous"></script>
+<script>
+const DETECTIONS = {{data}};
+const COLOURS = {{colours}};
+const LABELS = {{labels}};
+
+const map = L.map('map', { scrollWheelZoom: false });
+L.tileLayer('{{tiles}}', { maxZoom: 19, attribution: '{{tile_attribution}}' }).addTo(map);
+
+const groups = {};
+const markers = [];
+
+function esc(value) {
+  return String(value === null || value === undefined ? '\\u2014' : value)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function metres(value) {
+  return value === null || value === undefined ? '\\u2014' : value.toFixed(0) + ' m';
+}
+
+function popup(properties) {
+  const rows = [
+    ['Status', esc(LABELS[properties.status] || properties.status)],
+    ['Acquired (UTC)', esc((properties.acquired_at || '').replace('T', ' ').slice(0, 16))],
+    ['Scene', '<span class="scene">' + esc(properties.scene) + '</span>'],
+    ['Match tolerance', metres(properties.tolerance_m)],
+    ['Match distance', metres(properties.match_distance_m)],
+    ['Declared length', metres(properties.length_m)],
+    ['Detector score', properties.score === null ? '\\u2014' : properties.score.toFixed(3)]
+  ];
+  return '<dl class="popup">' + rows.map(function (row) {
+    return '<dt>' + row[0] + '</dt><dd>' + row[1] + '</dd>';
+  }).join('') + '</dl>';
+}
+
+// Matched first, so that a dark candidate standing on top of one is the dot that is visible.
+// The page exists to show the second class, and a hidden finding is a finding nobody has.
+const order = ['unsearched', 'matched', 'dark'];
+order.forEach(function (status) { groups[status] = L.layerGroup().addTo(map); });
+
+DETECTIONS.features.forEach(function (feature, index) {
+  const properties = feature.properties;
+  const position = [feature.geometry.coordinates[1], feature.geometry.coordinates[0]];
+  const marker = L.circleMarker(position, {
+    radius: 6,
+    weight: 1.5,
+    color: '#ffffff',
+    fillColor: COLOURS[properties.status] || COLOURS.unsearched,
+    fillOpacity: 0.92
+  }).bindPopup(popup(properties));
+  marker.addTo(groups[properties.status] || groups.unsearched);
+  markers[index] = marker;
+});
+
+if (markers.length) {
+  map.fitBounds(L.featureGroup(markers).getBounds(), { padding: [28, 28] });
+} else {
+  map.setView([57.6, 11.15], 10);
+}
+
+document.querySelectorAll('.key input').forEach(function (box) {
+  box.addEventListener('change', function () {
+    const group = groups[box.dataset.status];
+    if (!group) { return; }
+    if (box.checked) { map.addLayer(group); } else { map.removeLayer(group); }
+  });
+});
+
+document.querySelectorAll('tbody tr').forEach(function (row) {
+  row.addEventListener('click', function () {
+    const marker = markers[Number(row.dataset.index)];
+    if (!marker) { return; }
+    map.setView(marker.getLatLng(), Math.max(map.getZoom(), 12));
+    marker.openPopup();
+  });
+});
+</script>
+</body>
+</html>
 """
