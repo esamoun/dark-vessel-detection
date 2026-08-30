@@ -2525,8 +2525,8 @@ placed all 189 detections correctly, and was worthless. That is precisely the fa
 "no backend, no scheduled job, no hosted service" is written against, and it arrived through a
 third party rather than through a service of ours — "nothing of mine can go down" is not the same
 claim as "nothing here can go dark". The tiles are now OpenStreetMap's own, which need no account
-and no key, and `test_the_basemap_needs_no_account_and_no_key` holds it. Leaflet stays on a CDN
-and is pinned by version and by subresource hash: a script that comes back altered does not run.
+and no key, and `test_the_basemap_needs_no_account_and_no_key` holds it. Leaflet is vendored, for
+the reason set out at the foot of this entry.
 
 **`unsearched` is a third colour, not folded into either.** `fusion/match.py` keeps that status
 apart because a run with no declarations that called its detections dark would publish a sea full
@@ -2572,8 +2572,27 @@ absence is now a sentence where the map would have been rather than a throw at t
 `L.map(...)` — which took the table's own click handlers down with it, so the page lost the part
 it could still do because of the part it could not.
 
-**Leaflet stays on a CDN, and that is the one open risk on this page.** It is pinned by version
-and by subresource hash, so it cannot be substituted, but it can be absent, and the page is then
-a table. Vendoring the two files beside `index.html` would leave the tiles as the only external
-dependency; it would also put 160 KB of somebody else's JavaScript in this repository, where it
-would never be updated again. Recorded as a choice rather than an oversight.
+**Leaflet is vendored, and the page now asks for no host but the tile server's.** It was on a
+CDN, pinned by version and by subresource hash, and that pin was answering the wrong question: it
+stops the script being *substituted* and does nothing about it being *absent*, at which point the
+page keeps its table and loses its map. The CARTO episode two paragraphs up is the standing
+evidence that a third party's terms outlive nobody's attention, and the same argument applies to
+a script as to a tile.
+
+So `src/darkvessel/viz/vendor/leaflet-1.9.4/` holds Leaflet 1.9.4 — the minified JS and CSS, the
+five images its CSS and default icon reach for, and its BSD-2-Clause licence — and `write` copies
+the directory out beside the page. Checked rather than trusted: the two pinned SHA-256 digests are
+verified against the bytes at the moment the page is written, and a mismatch stops the write
+instead of publishing a page around it. Verified at generation rather than by an `integrity`
+attribute in the HTML, because these are now same-origin files served beside the page and an
+attribute a viewer resolved differently would fail closed to a blank map — which is the failure
+vendoring them exists to remove.
+
+**What it costs, stated rather than discovered later.** 188 KB of somebody else's code in this
+repository, which nothing will ever update: a security advisory against Leaflet 1.9.4 will not
+reach this page through a CDN's own upgrade, and bumping it is a deliberate act — replace the
+directory, replace the two digests, regenerate. In exchange, the only host the published page
+contacts is `tile.openstreetmap.org`, and that one cannot be removed because a basemap is a tile
+server by definition. Without it the page draws its detections on an empty ground, with the
+coordinates, the dates and the scenes still on it.
+`test_the_page_asks_for_no_host_but_the_one_serving_the_basemap` holds the boundary.

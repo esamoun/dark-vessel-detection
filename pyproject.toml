@@ -38,6 +38,13 @@ darkvessel = "darkvessel.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Leaflet, vendored under viz/vendor/ so that the page `darkvessel map` writes depends on no host
+# but the basemap's. Listed here because it is data rather than a package — there is no
+# __init__.py under vendor/ and there should not be — and without this an installed wheel would
+# carry the generator and not the thing it copies out.
+[tool.setuptools.package-data]
+"darkvessel.viz" = ["vendor/leaflet-1.9.4/*", "vendor/leaflet-1.9.4/images/*"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

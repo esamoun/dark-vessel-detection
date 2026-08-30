@@ -31,15 +31,20 @@ What is deliberately not published is the MMSI. A matched detection is a vessel 
 itself, and naming it on a public page adds nothing to the demo — the finding is the detections
 nobody declared. The identifier stays in the GeoPackage, where an analyst who needs it has it.
 
-The basemap tiles and Leaflet itself come from other people's CDNs, which is the one thing on the
-page this repository does not hold. Both are pinned by version and by hash: a tile server that
-disappears leaves a grey backdrop with the detections still on it, and a script that comes back
-altered does not run at all.
+Leaflet is vendored, under `viz/vendor/`, and copied out beside the page. It was on a CDN, pinned
+by version and by subresource hash, and a pin stops a script being substituted while doing nothing
+about it being absent — at which point the page keeps its table and loses its map. The basemap
+tiles are the one thing left that this repository does not hold, and they cannot be: a basemap is
+a tile server by definition. Without them the page draws its detections on an empty ground, with
+the coordinates, the dates and the scenes all still on it.
 """
 
+import base64
+import hashlib
 import html
 import json
 import re
+import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
@@ -108,12 +113,26 @@ COLOURS = {
     UNSEARCHED: "#8b949e",
 }
 
-# Pinned by version and by hash. Subresource integrity is not ceremony here: this page is meant
-# to be published and left alone, and a CDN that serves something else one day would be running
-# it in the reader's browser under this project's name.
-LEAFLET_VERSION = "1.9.4"
-LEAFLET_CSS_SRI = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-LEAFLET_JS_SRI = "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+# Leaflet, vendored, and copied out beside the page it is asked for.
+#
+# It was on a CDN, pinned by version and by subresource hash, which stops it being *substituted*
+# and does nothing about it being *absent*. The page is meant to be published once and left
+# alone, and the CARTO basemap below is the standing evidence that a third party's terms outlive
+# nobody's attention: it started answering every tile with "API KEY REQUIRED" and the page went
+# on loading. What that costs is 188 KB of somebody else's code in this repository, under its own
+# BSD licence, which nothing will ever update — stated here rather than discovered by whoever
+# next reads a security advisory about it.
+LEAFLET = Path(__file__).resolve().parent / "vendor" / "leaflet-1.9.4"
+
+# What those files have to be, written in the subresource-integrity form leafletjs.com publishes
+# so the pin can be checked against upstream by eye. Verified here, at the moment the page is
+# written, rather than by an `integrity` attribute in the page: served from beside the page these
+# are same-origin files, and an attribute a viewer resolved differently would fail closed to a
+# blank map — the exact failure vendoring them was meant to remove.
+LEAFLET_CHECKSUMS = {
+    "leaflet.css": "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=",
+    "leaflet.js": "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=",
+}
 
 # OpenStreetMap's own tiles, which need no account and no key.
 #
@@ -290,9 +309,7 @@ def page(exported: dict[str, Any], *, title: str) -> str:
             "lede": _lede(summary),
             "legend": _legend(summary),
             "rows": _rows(exported),
-            "leaflet_version": LEAFLET_VERSION,
-            "leaflet_css_sri": LEAFLET_CSS_SRI,
-            "leaflet_js_sri": LEAFLET_JS_SRI,
+            "leaflet": LEAFLET.name,
             "tiles": TILES,
             "tile_attribution": TILE_ATTRIBUTION,
             "colours": json.dumps(COLOURS),
@@ -324,7 +341,34 @@ def write(exported: dict[str, Any], *, out: Path, title: str) -> list[Path]:
     page_path = out / PAGE_NAME
     page_path.write_text(page(exported, title=title))
 
-    return [geojson_path, page_path]
+    return [geojson_path, page_path, _leaflet_beside(page_path)]
+
+
+def _leaflet_beside(page_path: Path) -> Path:
+    """Copy the vendored Leaflet next to the page, having checked it is what it claims to be.
+
+    Checked rather than trusted, because the whole argument for carrying 188 KB of somebody
+    else's code in this repository is that the page then depends on nothing that can change
+    without anyone noticing — and a vendored file nobody verifies is a file nobody notices
+    changing. A mismatch stops the write; it does not publish a page around it.
+    """
+    for name, expected in LEAFLET_CHECKSUMS.items():
+        found = _checksum(LEAFLET / name)
+        if found != expected:
+            raise ValueError(
+                f"{LEAFLET / name} hashes to {found}, not the pinned {expected}; this is not the "
+                "Leaflet this page was built against, and the page is not written around it"
+            )
+
+    beside = page_path.parent / LEAFLET.name
+    shutil.copytree(LEAFLET, beside, dirs_exist_ok=True)
+    return beside
+
+
+def _checksum(path: Path) -> str:
+    """A file's SHA-256, in the form a subresource-integrity attribute would carry it."""
+    digest = hashlib.sha256(path.read_bytes()).digest()
+    return "sha256-" + base64.b64encode(digest).decode()
 
 
 def map_request_from(config: dict[str, Any], relative_to: Path) -> dict[str, Any]:
@@ -513,9 +557,7 @@ _TEMPLATE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{title}}</title>
-<link rel="stylesheet"
-      href="https://unpkg.com/leaflet@{{leaflet_version}}/dist/leaflet.css"
-      integrity="{{leaflet_css_sri}}" crossorigin="anonymous">
+<link rel="stylesheet" href="{{leaflet}}/leaflet.css">
 <style>
   :root { --ink: #24292f; --muted: #57606a; --line: #d0d7de; --bg: #ffffff; }
   * { box-sizing: border-box; }
@@ -580,8 +622,7 @@ _TEMPLATE = """<!doctype html>
   in it and also sit beside it as
   <a href="detections.geojson">detections.geojson</a>, which QGIS opens directly.</p>
 </div>
-<script src="https://unpkg.com/leaflet@{{leaflet_version}}/dist/leaflet.js"
-        integrity="{{leaflet_js_sri}}" crossorigin="anonymous"></script>
+<script src="{{leaflet}}/leaflet.js"></script>
 <script>
 const DETECTIONS = {{data}};
 const COLOURS = {{colours}};
