@@ -36,7 +36,7 @@ backend.
 > where it breaks, and the ten conditions it has never been asked to work under. See
 > [Approach](#approach) for what is real and
 > what is not, [what the first run on the lane showed](#what-the-first-run-on-the-lane-showed-2026-08-14),
-> [Training the detector](#training-the-detector) and [the ladder](CHANGELOG.md#the-ladder--2026-08-23).
+> [Training the detector](#training-the-detector) and [the ladder](CHANGELOG.md#the-ladder-2026-08-23).
 
 ---
 
@@ -103,7 +103,7 @@ Two deep learning components sit inside this:
   0.768 against 0.5 at chance. It turned out not to separate them *well enough to delete a
   detection on*, so the exclusion is built on where a thing stands over ten weeks rather than on
   what it looks like, and the measurement that settled it is
-  [below](CHANGELOG.md#telling-a-turbine-from-a-ship--2026-08-27). The embedding earns its place as a
+  [below](CHANGELOG.md#telling-a-turbine-from-a-ship-2026-08-27). The embedding earns its place as a
   similarity-search index over the detection archive and as the evidence that the clusters exist.
 
 Everything else (AIS interpolation, spatio-temporal matching, contextual analysis) is
