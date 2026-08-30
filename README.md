@@ -1382,8 +1382,10 @@ detections are embedded in the HTML rather than fetched from beside it, so it wo
 disk as well as served. The one thing on it this repository does not hold is the basemap, and that
 is OpenStreetMap's own tiles: the first version used CARTO's Positron, which now answers every
 tile with `API KEY REQUIRED` written across it, and a page that loads, places its detections
-correctly and is worthless is exactly the failure the ticket was written against. Leaflet is
-pinned by version and by subresource hash.
+correctly and is worthless is exactly the failure the ticket was written against. Leaflet itself is
+vendored under [`src/darkvessel/viz/vendor/`](src/darkvessel/viz/vendor) and copied out beside the
+page, checked against its pinned SHA-256 on the way, so the tile server is the only host the page
+contacts at all.
 
 Everything the map claims is on the page as text as well as in a popup — every detection's
 acquisition time, the scene it came from, the radius it was searched at and the distance to the
