@@ -22,7 +22,10 @@ refused by the browser's own origin rules and renders an empty basemap. This dem
 being double-clicked, which is what "no backend" means when nobody is watching.
 """
 
+import base64
+import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -37,6 +40,8 @@ from darkvessel.viz.map import (
     COLOURS,
     EMPTY_VIEW,
     GEOJSON_NAME,
+    LEAFLET,
+    LEAFLET_CHECKSUMS,
     ORDER,
     PAGE_NAME,
     PUBLISHED,
@@ -274,7 +279,7 @@ def test_the_page_and_the_geojson_beside_it_hold_the_same_detections(tmp_path: P
     the numbers of another."""
     written = write(collection(layer((MATCHED, DARK))), out=tmp_path, title="Kattegat")
 
-    assert written == [tmp_path / GEOJSON_NAME, tmp_path / PAGE_NAME]
+    assert written == [tmp_path / GEOJSON_NAME, tmp_path / PAGE_NAME, tmp_path / LEAFLET.name]
     exported = json.loads((tmp_path / GEOJSON_NAME).read_text())
     rendered = (tmp_path / PAGE_NAME).read_text()
     assert json.dumps(exported, sort_keys=True) in _embedded(rendered)
@@ -341,6 +346,53 @@ def test_an_empty_collection_opens_on_water_rather_than_on_the_null_island() -> 
 
     (latitude, longitude), zoom = EMPTY_VIEW
     assert f"map.setView([{latitude}, {longitude}], {zoom});" in rendered
+
+
+def test_the_page_asks_for_no_host_but_the_one_serving_the_basemap() -> None:
+    """Leaflet was on a CDN. A pin stops a script being substituted and does nothing about it
+    being absent, and an absent Leaflet leaves a page with a table where its map was. The tiles
+    are the one host that cannot be vendored — a basemap is a tile server by definition — and
+    everything else now travels with the page."""
+    rendered = page(collection(layer((MATCHED, DARK))), title="Kattegat")
+
+    hosts = set(re.findall(r"https?://([^/\"' )]+)", rendered))
+
+    assert hosts == {"tile.openstreetmap.org", "www.openstreetmap.org"}
+    assert "unpkg" not in rendered
+    assert '<script src="leaflet-1.9.4/leaflet.js">' in rendered
+
+
+def test_leaflet_travels_beside_the_page_rather_than_being_fetched(tmp_path: Path) -> None:
+    write(collection(layer((MATCHED,))), out=tmp_path, title="Kattegat")
+
+    beside = tmp_path / LEAFLET.name
+    assert (beside / "leaflet.js").exists()
+    assert (beside / "leaflet.css").exists()
+    # The CSS asks for these three by relative path; without them a default marker or a layers
+    # control added later would draw as a broken image rather than as an icon.
+    assert (beside / "images" / "marker-icon.png").exists()
+    assert (beside / "images" / "layers.png").exists()
+    # Somebody else's code, under somebody else's licence, which travels with it.
+    assert (beside / "LICENSE").read_text().startswith("BSD 2-Clause License")
+
+
+def test_the_vendored_leaflet_is_the_one_the_page_was_built_against() -> None:
+    """The pinned hashes, against the bytes in the repository. The whole argument for carrying
+    188 KB of somebody else's code here is that the page then depends on nothing that can change
+    unnoticed, and a vendored file nobody checks is a file nobody notices changing."""
+    for name, expected in LEAFLET_CHECKSUMS.items():
+        digest = hashlib.sha256((LEAFLET / name).read_bytes()).digest()
+        assert "sha256-" + base64.b64encode(digest).decode() == expected
+
+
+def test_a_vendored_file_that_is_not_what_it_claims_stops_the_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mismatch is refused rather than published around. The page would still have rendered."""
+    monkeypatch.setitem(LEAFLET_CHECKSUMS, "leaflet.js", "sha256-somethingelse")
+
+    with pytest.raises(ValueError, match="not the pinned"):
+        write(collection(layer((MATCHED,))), out=tmp_path, title="Kattegat")
 
 
 def test_the_shipped_config_maps_the_archive_rather_than_the_single_scene() -> None:
