@@ -373,6 +373,10 @@ def test_the_map_opens_on_the_computed_view_before_it_measures_anything() -> Non
     script = rendered.split("<script")[-1]
 
     assert script.index("map.setView(") < script.index("map.fitBounds(")
+    # Before anything is added to it, too. A layer added to a map with no view is projected
+    # against no projection, and 188 of 189 markers stayed degenerate after the view arrived.
+    assert script.index("map.setView(") < script.index("L.tileLayer(")
+    assert script.index("map.setView(") < script.index("L.circleMarker(")
     assert "if (size.x < 200 || size.y < 200) { return; }" in script
 
 
