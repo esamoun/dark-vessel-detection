@@ -252,10 +252,15 @@ class TestTheBands:
         )
 
 
-class TestWhatIsNotSampled:
-    """The EEZ, which is the one variable of the four the public catalogue cannot answer."""
+class TestTheZones:
+    """The EEZ, which was empty on every row until #35 answered it without Earth Engine.
 
-    def test_the_eez_is_reported_unavailable_rather_than_as_a_finding(self):
+    It is the one categorical variable here, and everything that makes a banded variable
+    trustworthy has to hold for it too: a rate, an interval resampled over acquisitions rather
+    than over rows, and a comparison that reports overlap rather than a difference.
+    """
+
+    def test_an_unfetched_eez_is_reported_unavailable_rather_than_as_a_finding(self):
         layer = detections(
             status=[DARK, MATCHED, MATCHED, MATCHED],
             scene=[f"s{n}" for n in range(4)],
@@ -265,11 +270,13 @@ class TestWhatIsNotSampled:
         (zones,) = [each for each in result.categories if each.variable == EEZ]
 
         assert not zones.available
-        assert zones.counts == {UNAVAILABLE: 4}
+        assert [zone.name for zone in zones.zones] == [UNAVAILABLE]
         assert any("unavailable" in line for line in zones.lines())
 
-    def test_a_sampled_eez_is_counted_by_zone(self):
-        """The column is not permanently decorative: ingest the boundaries and it reports."""
+    def test_a_sampled_zone_carries_a_rate_and_an_interval_like_every_band(self):
+        """Counts alone are not a finding. "A larger share of what is here is undeclared" is a
+        claim about a difference, and a difference between two counts with no interval around
+        either is arithmetic rather than evidence."""
         layer = detections(
             status=[DARK, MATCHED, MATCHED, DARK],
             scene=[f"s{n}" for n in range(4)],
@@ -278,10 +285,73 @@ class TestWhatIsNotSampled:
 
         result = concentrate(layer, draws=200, seed=0)
         (zones,) = [each for each in result.categories if each.variable == EEZ]
+        denmark, sweden = zones.zones
 
         assert zones.available
-        assert zones.counts == {"Denmark": 3, "Sweden": 1}
-        assert zones.dark == {"Denmark": 2, "Sweden": 0}
+        assert (denmark.name, denmark.total, denmark.dark) == ("Denmark", 3, 2)
+        assert (sweden.name, sweden.total, sweden.dark) == ("Sweden", 1, 0)
+        assert denmark.rate == pytest.approx(2 / 3)
+        assert denmark.estimated
+        assert 0.0 <= denmark.interval[0] <= denmark.interval[1] <= 1.0
+
+    def test_a_zone_whose_detections_came_from_one_acquisition_has_no_interval(self):
+        """The property that says the interval is resampled over acquisitions and not over rows.
+        One morning is one draw however many detections came out of it, and no uncertainty is
+        measurable from it — which is reported, rather than being handed back as a narrow band."""
+        layer = detections(
+            status=[DARK, MATCHED, DARK, MATCHED],
+            scene=["s0", "s0", "s1", "s2"],
+            eez=["Denmark", "Denmark", "Sweden", "Sweden"],
+        )
+
+        result = concentrate(layer, draws=200, seed=0)
+        (zones,) = [each for each in result.categories if each.variable == EEZ]
+        denmark, sweden = zones.zones
+
+        assert not denmark.estimated
+        assert sweden.estimated
+
+    def test_two_zones_are_reported_as_overlapping_rather_than_as_a_difference(self):
+        """The comparison every finding on this page is stated against, applied to words instead
+        of to a range. Two rates that differ inside their intervals are not a finding."""
+        layer = detections(
+            status=[DARK, MATCHED, MATCHED, DARK, MATCHED, MATCHED],
+            scene=[f"s{n}" for n in range(6)],
+            eez=["Denmark"] * 3 + ["Sweden"] * 3,
+        )
+
+        result = concentrate(layer, draws=200, seed=0)
+        (zones,) = [each for each in result.categories if each.variable == EEZ]
+
+        assert zones.comparable
+        assert zones.separations == ()
+        assert any("no concentration established" in line for line in zones.lines())
+
+    def test_a_zones_interval_follows_its_name_and_not_its_place_in_the_list(self):
+        """Seeded by position, adding a zone that sorts early would move the interval of every
+        zone after it — including ones this project has already published. `_profile` is safe
+        because a band's index is stable; a name sorted alphabetically is not."""
+        rows = {
+            "status": [DARK, MATCHED, MATCHED, DARK, MATCHED, MATCHED],
+            "scene": [f"s{n}" for n in range(6)],
+        }
+        without = detections(**rows, eez=["Denmark"] * 3 + ["Sweden"] * 3)
+        # "Belgium" sorts before both, so under a positional seed it displaces them.
+        with_belgium = detections(
+            status=[*rows["status"], MATCHED],
+            scene=[*rows["scene"], "s6"],
+            eez=["Denmark"] * 3 + ["Sweden"] * 3 + ["Belgium"],
+        )
+
+        def sweden(layer):
+            (zones,) = [
+                each
+                for each in concentrate(layer, draws=200, seed=0).categories
+                if each.variable == EEZ
+            ]
+            return next(zone for zone in zones.zones if zone.name == "Sweden")
+
+        assert sweden(with_belgium).interval == sweden(without).interval
 
 
 class TestTheConfound:

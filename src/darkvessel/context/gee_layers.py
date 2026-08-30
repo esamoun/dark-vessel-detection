@@ -76,11 +76,15 @@ class Context:
     `None` means the layer did not answer, in every field. It is spelled that way rather than as
     NaN because this is the boundary a sampler writes to, and a sampler that has to remember which
     sentinel each field uses is a sampler that will eventually pick the wrong one.
+
+    There is no zone here, and there is no `eez=None` waiting for a sampler that might answer it
+    one day either. A catalogue of rasters cannot answer a polygon membership, `context/zones.py`
+    can and does, and a field on this boundary that no implementation ever fills would be a second
+    route into the one column whose two missing-value words have to stay apart. See #35.
     """
 
     distance_to_shore_m: float | None = None
     depth_m: float | None = None
-    eez: str | None = None
     fishing_hours: float | None = None
 
 
@@ -195,8 +199,14 @@ def attach(detections: gpd.GeoDataFrame, layers: Layers) -> gpd.GeoDataFrame:
     carried = detections.copy()
     carried[DISTANCE_TO_SHORE] = [_number(one.distance_to_shore_m) for one in sampled]
     carried[DEPTH] = [_number(one.depth_m) for one in sampled]
-    carried[EEZ] = [one.eez if one.eez is not None else UNAVAILABLE for one in sampled]
     carried[FISHING_HOURS] = [_number(one.fishing_hours) for one in sampled]
+    # The zone column is **not** written here, only guaranteed to exist. This sampler does not
+    # answer it — `context/zones.py` does, from published polygons — and a version of this that
+    # wrote `unavailable` over whatever it found would silently undo `darkvessel zones` every
+    # time somebody re-sampled the rasters. The schema promise is kept without the overwrite:
+    # a layer that arrives without the column leaves with it, empty.
+    if EEZ not in carried.columns:
+        carried[EEZ] = np.full(len(carried), UNAVAILABLE, dtype=object)
     return carried
 
 
@@ -297,10 +307,6 @@ class _EarthEngineLayers:
             ]
         )
         measured = self._reduced(features)
-        # `eez` is left unanswered on purpose, which is what `Context`'s default says. This
-        # sampler speaks to a catalogue of rasters and the zones are not in it; `context/zones.py`
-        # answers that column from published polygons, and `attach` writes `unavailable` here so
-        # that a layer sampled and not yet zoned says which of the two it is.
         return [
             Context(
                 distance_to_shore_m=measured.get(index, {}).get(DISTANCE_TO_SHORE),
