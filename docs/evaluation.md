@@ -108,10 +108,14 @@ Two honest deductions from that number before anything is built on it.
   The curve says what lowering it costs: 0.75 buys 238 of those ships back for 246 extra false
   alarms, and 0.05 buys 542 back for 25200.
 
-What this points at is **score calibration** rather than detection capacity, and it is the second
-independent line of evidence pointing at the region
-[issue #24](https://github.com/esamoun/dark-vessel-detection/issues/24) describes. The first was
-the anchor census.
+What this points at is **score calibration** rather than detection capacity. That was written on
+2026-08-26 as the second independent line of evidence pointing at the region
+[issue #24](https://github.com/esamoun/dark-vessel-detection/issues/24) describes, the first being
+the anchor census — and issue #24 has since been run and has **refuted** the reading. Lowering the
+RPN's foreground threshold to 0.3 did not sharpen the calibration; it left precision at 0.75
+unchanged at 0.850 and cost recall. The observation above stands; the explanation attached to it
+in this paragraph does not. See the entry of 2026-08-30 in `docs/failures.md`, and failure mode 1
+below.
 
 ## Failure modes, by cause
 
@@ -124,10 +128,27 @@ ship-bearing training tiles and their 3637 ships, ninety percent of ships never 
 `allow_low_quality_matches` guarantees every box its best anchor, and when a 16 px ship sits
 inside a 32 px anchor the overlap is `256/1024 = 0.25` for every anchor containing it,
 identically, so they tie at the maximum and the rescue rule forces all of them positive at once —
-one tile produced 3098 that way. *Evidence: the census of 2026-08-19, `docs/decisions.md`.* This
-is the standing explanation for the weak, badly separated confidences the section above measures,
-and it is untested: two rungs failed in the region it describes (R2's anchor geometry, −0.048;
-R4's sampler batch, −0.009) and neither changed the threshold itself. That is issue #24.
+one tile produced 3098 that way. *Evidence: the census of 2026-08-19, `docs/decisions.md`.*
+
+**This was written as the standing explanation for the weak, badly separated confidences the
+section above measures, and it is no longer one.** It was called untested on 2026-08-26, two rungs
+having failed in the region it describes without changing the threshold itself — R2's anchor
+geometry, −0.048, and R4's sampler batch, −0.009. Issue #24 tested it on 2026-08-30 and the
+hypothesis did not survive: R5 took the foreground threshold to 0.3, giving 1019 more ships a
+genuine match and doubling the positives the RPN samples, and scored **0.823 against R1's 0.836**.
+Precision at 0.75 was unchanged; the whole loss was recall, and 72 of the 2378 held-out ships left
+the detector's reach altogether.
+
+The mechanism runs the other way from the one this paragraph implies. The tied set the rescue rule
+forces positive is, by construction, the anchors *centred* on the ship — at level 0's stride of 4,
+some twenty-five of them, each within half a ship's length. An IoU floor of 0.3 admits anchors
+sitting off to one side as well, and the RPN learns a blunter answer. A tied maximum is a centring
+criterion and a floor is not. So the count above is a true description of how these anchors match,
+and **not** a description of a defect. `docs/failures.md`, 2026-08-30, has the numbers.
+
+What that leaves is the observation of the section above without an explanation for it. Three rungs
+have now been spent in this region and none improved on it, so whatever separates these confidences
+badly is not the RPN's positive/negative bookkeeping.
 
 **2. Confidence wanders between epochs that are otherwise identical.** Recall at 0.90 covered
 0.656–0.736 over the last four epochs; precision at 0.25 covered 0.499–0.611. *Evidence: the
@@ -153,8 +174,12 @@ became 5. This is a fusion failure rather than a detector failure, and it is in 
 because it is the largest single source of false dark vessels this project has found.
 
 **5. Low-confidence noise, at a scale the statistic does not see.** 25299 false alarms at 0.05
-against 99 at 0.90. Both rejected RPN rungs cut it — R2 to 9883, R4 to 14887 — and neither moved
-the statistic, which is decided at 0.75. *Evidence: `docs/failures.md`, 2026-08-23 and 2026-08-25.*
+against 99 at 0.90. All three rejected RPN rungs cut it — R2 to 9883, R4 to 14887, R5 to 11397 —
+and none moved the statistic, which is decided at 0.75. Three observations of one shape now, rather
+than two: every change to the RPN's positive/negative bookkeeping suppresses low-confidence
+detections and none of them reaches the operating point. *Evidence: `docs/failures.md`, 2026-08-23,
+2026-08-25 and 2026-08-30.* Each count is that rung's own run; the 25299 is R1's second execution,
+which is the one this report describes.
 It matters here only as a description of the proposal distribution: the detector is generous and
 its scores, not its proposals, are what separate.
 
@@ -162,9 +187,16 @@ its scores, not its proposals, are what separate.
 
 The list is long, and its length is the point.
 
-- **One acquisition.** Every scene-level number in this project comes from a single Sentinel-1
-  IW GRD frame over the northern Kattegat, on one date, in one sea state. There is no second scene,
-  no second season and no repeat pass.
+- **One acquisition — for the numbers *in this report*.** Every scene-level number below comes from
+  a single Sentinel-1 IW GRD frame over the northern Kattegat, on one date, in one sea state, and
+  causes 3 and 4 are single observations on it. That was the whole project's limit when this was
+  written on 2026-08-26 and it is no longer: `darkvessel archive-run` has since carried the chain
+  over **50 acquisitions** of the study area between 1 June and 9 August 2026, 49 of which held a
+  detection, and `docs/runs/analysis-archive.json` is what came back. What has not happened is this
+  report being redone against them — so the limit is now that its failure modes are evidenced on one
+  frame while fifty are sitting in the repository, which is a smaller and more embarrassing limit
+  than the one this bullet used to state. Sea state, season and repeat pass are no longer untouched;
+  they are untouched *here*.
 - **VV only, at both ends.** LS-SSDD is VV throughout and the Kattegat export is VV because Earth
   Engine's 48 MiB limit forced a choice between area and polarisation. Dual-polarisation is
   untested because there is no data for it — `docs/failures.md`, 2026-08-17.

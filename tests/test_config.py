@@ -313,6 +313,48 @@ def test_the_ladder_table_in_the_readme_is_the_one_the_command_prints() -> None:
     )
 
 
+def test_every_rejected_rpn_rung_cut_the_low_confidence_noise() -> None:
+    """`docs/evaluation.md`, failure mode 5, claims one shape three times: every rung that changed
+    the RPN's positive/negative bookkeeping — R2's anchor geometry, R4's sampler batch, R5's
+    foreground IoU threshold — cut the false alarms at the most permissive threshold reported, and
+    none of them moved the statistic, which is decided at 0.75.
+
+    That sentence is now quoted in two documents and is the strongest general claim this project
+    makes about its detector, so it is asserted from the journals rather than left as prose. It is
+    also the sentence a seventh rung could silently falsify: a rung that raised the low-confidence
+    count, or one that was *kept*, would make it false everywhere it is written without failing
+    anything. The rungs are read off the ladder's own verdicts rather than named here, so a rung
+    added to `configs/ladder.yaml` joins this check by existing.
+
+    The same class of staleness this guards was found by hand on 2026-08-30: failure mode 1 of that
+    report still called the threshold untested and pointed at issue #24 as an open question, three
+    days after the rung had run and refuted it.
+    """
+    rungs, verdicts = _the_ladder()
+    rejected = {verdict.label for verdict in verdicts if not verdict.kept}
+
+    def false_alarms_at_the_floor(label: str) -> int:
+        """The false-detection count at the lowest score threshold that rung reported."""
+        entry = rungs[label].epochs[-1]
+        return min(entry["at"], key=lambda point: point["score"])["false"]
+
+    # R1 is the standing rung and the one the others are measured against. Its two executions
+    # differ here — 27039 on the ladder's run, 25299 on the one the evaluation report describes —
+    # so the comparison is made against whichever the ladder is reading, not against a literal.
+    standing = false_alarms_at_the_floor("R1")
+
+    rpn_rungs = {"R2", "R4", "R5"}
+    assert rpn_rungs <= rejected, (
+        f"the report says all three RPN rungs were rejected; the ladder keeps "
+        f"{rpn_rungs - rejected}"
+    )
+    for label in sorted(rpn_rungs):
+        assert false_alarms_at_the_floor(label) < standing, (
+            f"{label} did not cut the low-confidence noise: "
+            f"{false_alarms_at_the_floor(label)} against R1's {standing}"
+        )
+
+
 def test_the_chains_score_threshold_holds_the_precision_the_swap_was_decided_on() -> None:
     """A threshold does not survive a change of weights; the operating point is what does.
 
