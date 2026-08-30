@@ -366,6 +366,26 @@ def _mercator(latitude: float) -> float:
     return 0.5 - math.log(math.tan(math.pi / 4 + radians / 2)) / (2 * math.pi)
 
 
+def test_the_map_is_built_only_once_the_page_has_finished_loading() -> None:
+    """Leaflet measures its container once, at construction, and every later correction works
+    from that measurement. Run inline, this script can execute before `leaflet.css` has arrived
+    and before layout has settled — over a CDN it reliably does — and the markers then enter the
+    renderer as degenerate paths and stay there. 188 of 189 detections were invisible on a page
+    whose bytes were identical to one that drew all 189 from a local disk.
+
+    Three attempts to correct the measurement after construction all looked right and all shipped
+    that page. Nothing after construction rebuilds the renderer's own bounds, so construction is
+    what waits.
+    """
+    rendered = page(collection(layer((MATCHED, DARK))), title="Kattegat")
+    script = rendered.split("<script")[-1]
+
+    assert "function start()" in script
+    assert "document.readyState === 'complete'" in script
+    assert "window.addEventListener('load', start)" in script
+    assert script.index("function start()") < script.index("L.map(")
+
+
 def test_the_map_opens_on_the_computed_view_before_it_measures_anything() -> None:
     """The browser is allowed to improve the view and never to produce it. A frame too small to
     be a frame is refused rather than fitted to, which is the shape the failure took twice."""
