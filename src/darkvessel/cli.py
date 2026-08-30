@@ -1932,8 +1932,10 @@ def _map(config_path: Path) -> int:
         )
 
     detections = gpd.read_file(layer_path, layer=DETECTIONS_LAYER)
-    for line in summarise(collection(detections)).lines():
+    exported = collection(detections)
+
+    for line in summarise(exported).lines():
         print(line)
-    for written in write_map(detections, out=request["out"], title=request["title"]):
+    for written in write_map(exported, out=request["out"], title=request["title"]):
         print(f"wrote {written}")
     return 0

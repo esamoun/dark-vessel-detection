@@ -35,7 +35,9 @@ from shapely import Point
 from darkvessel.fusion.match import DARK, MATCHED, UNSEARCHED
 from darkvessel.viz.map import (
     COLOURS,
+    EMPTY_VIEW,
     GEOJSON_NAME,
+    ORDER,
     PAGE_NAME,
     PUBLISHED,
     collection,
@@ -270,7 +272,7 @@ def test_the_page_and_the_geojson_beside_it_hold_the_same_detections(tmp_path: P
     """Two files written from one layer, and nothing but this test stops them drifting: a page
     regenerated without its export, or the other way round, is a map of one run captioned with
     the numbers of another."""
-    written = write(layer((MATCHED, DARK)), out=tmp_path, title="Kattegat")
+    written = write(collection(layer((MATCHED, DARK))), out=tmp_path, title="Kattegat")
 
     assert written == [tmp_path / GEOJSON_NAME, tmp_path / PAGE_NAME]
     exported = json.loads((tmp_path / GEOJSON_NAME).read_text())
@@ -289,12 +291,56 @@ def _embedded(rendered: str) -> str:
 
 def test_the_export_opens_as_a_geojson_that_geopandas_reads_back(tmp_path: Path) -> None:
     """The first acceptance criterion, checked by something other than the writer of the file."""
-    write(layer((MATCHED, DARK)), out=tmp_path, title="Kattegat")
+    write(collection(layer((MATCHED, DARK))), out=tmp_path, title="Kattegat")
 
     read_back = gpd.read_file(tmp_path / GEOJSON_NAME)
 
     assert read_back.crs.to_epsg() == 4326
     assert list(read_back["status"]) == [MATCHED, DARK]
+
+
+def test_the_statuses_reach_the_script_as_data_rather_than_as_literals() -> None:
+    """`fusion/match.py` owns these three words. Written out a second time in the page's script,
+    renaming one there would put every marker in the wrong layer group — or in none — draw a map
+    that is subtly or completely wrong, and fail nothing in this repository."""
+    rendered = page(collection(layer((MATCHED, DARK))), title="Kattegat")
+    script = rendered.split("<script")[-1]
+
+    assert f"const ORDER = {json.dumps(list(ORDER))};" in script
+    assert f"const FALLBACK = {json.dumps(UNSEARCHED)};" in script
+    assert "['unsearched', 'matched', 'dark']" not in script
+    assert "groups.unsearched" not in script
+
+
+def test_a_page_whose_map_library_never_arrives_still_carries_its_detections() -> None:
+    """Leaflet is the one script here that comes from somewhere else. Unguarded, its absence
+    throws at the first `L.map(...)` and takes the table's click handlers down with it — so the
+    page loses the thing it can still do because of the thing it cannot."""
+    rendered = page(collection(layer((MATCHED, DARK))), title="Kattegat")
+    script = rendered.split("<script")[-1]
+
+    assert "typeof L === 'undefined'" in script
+    assert script.index("typeof L === 'undefined'") < script.index("L.map(")
+
+
+def test_a_title_carrying_the_template_syntax_is_not_expanded_into_the_page() -> None:
+    """Substitution happens once, over the whole template. Done as a chain of replacements, a
+    title is put in before the data is, and a title reading `{{data}}` would be handed the whole
+    collection — which no reader would report as anything but a strange caption."""
+    rendered = page(collection(layer((MATCHED,))), title="{{data}} {{legend}}")
+
+    assert "&lbrace;" not in rendered  # nothing clever; the braces survive as themselves
+    assert "<h1>{{data}} {{legend}}</h1>" in rendered
+
+
+def test_an_empty_collection_opens_on_water_rather_than_on_the_null_island() -> None:
+    """Only ever reached by a layer with nothing in it — any detection fits the view to the
+    detections. A map that opened at 0N 0E would read as a georeferencing fault rather than as a
+    run that found nothing, which is the more expensive of the two misreadings."""
+    rendered = page(collection(layer(())), title="Kattegat")
+
+    (latitude, longitude), zoom = EMPTY_VIEW
+    assert f"map.setView([{latitude}, {longitude}], {zoom});" in rendered
 
 
 def test_the_shipped_config_maps_the_archive_rather_than_the_single_scene() -> None:
