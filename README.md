@@ -11,23 +11,23 @@ ran over 50 Sentinel-1 acquisitions of the northern Kattegat, 49 of which carrie
 detection: 189 detections in all, matched against AIS, 40 of them undeclared. Static page, no
 backend.
 
-> **Status — work in progress.** The chain runs end to end today on real data at both ends: a real
+> **Status: work in progress.** The chain runs end to end today on real data at both ends: a real
 > Sentinel-1 scene, and a real day of the Danish Maritime Authority's AIS archive. Three commands
-> in — the scene, the declarations, the chain — and a georeferenced GeoPackage out that opens in
+> in (the scene, the declarations, the chain) and a georeferenced GeoPackage out that opens in
 > QGIS where it should. It tiles a scene larger than one tile and reports a target sitting on a
 > tile boundary exactly once. The study area is now measured rather than picked, and sits on the
 > Kattegat shipping lane: the latest run has six commercial ships in one frame, four of them
 > trailing a wake. The trained detector took the bright-pixel stand-in's place in the chain on
-> 2026-08-16 — six detections for six hulls and none on open water, where the threshold reported
-> the same six sixteen times — and the problem that run surfaced is fixed: a ship making twelve
+> 2026-08-16: six detections for six hulls and none on open water, where the threshold reported
+> the same six sixteen times. The problem that run surfaced is fixed: a ship making twelve
 > knots is imaged half a kilometre from where it declared itself, so the declaration is moved to
 > where the radar would have drawn it before anything is matched, which took this scene from two
-> matched vessels to five. The detector was then measured rather than assumed — six runs one line
+> matched vessels to five. The detector was then measured rather than assumed: six runs one line
 > apart, of which one was kept, and the ticket's own three domain adaptations refuted at that
 > resolution rather than left unproven.
 >
 > The kept rung now runs in the chain: six detections, six hulls, five matched and one dark on the
-> Kattegat frame, the same six vessels the older detector found and every score higher — and at the
+> Kattegat frame, the same six vessels the older detector found and every score higher, and at the
 > threshold this chain runs, the older weights would have returned four of the six. What is not
 > done: the chain has run on one scene; offshore structures are not yet told apart from vessels, so
 > a dark candidate here is not yet a finding about the sea; and the older detector's numbers are
@@ -35,8 +35,8 @@ backend.
 > [`docs/evaluation.md`](docs/evaluation.md) is the honest account of how well the detector works,
 > where it breaks, and the ten conditions it has never been asked to work under. See
 > [Approach](#approach) for what is real and
-> what is not, [what the first run on the lane showed](#what-the-first-run-on-the-lane-showed--2026-08-14),
-> [Training the detector](#training-the-detector) and [the ladder](#the-ladder--2026-08-23).
+> what is not, [what the first run on the lane showed](#what-the-first-run-on-the-lane-showed-2026-08-14),
+> [Training the detector](#training-the-detector) and [the ladder](CHANGELOG.md#the-ladder--2026-08-23).
 
 ---
 
@@ -44,7 +44,7 @@ backend.
 
 Ships are legally required to broadcast their position over AIS (Automatic Identification
 System). Some do not: the transponder is switched off, spoofed, or simply absent. These are
-*dark vessels*, and they matter — illegal fishing, sanctions evasion, unreported transfers at sea.
+*dark vessels*, and they matter: illegal fishing, sanctions evasion, unreported transfers at sea.
 
 Radar sees them anyway. Sentinel-1 acquires C-band SAR regardless of cloud or darkness, and a
 metal hull on water is a strong scatterer against a near-black background. Detect every vessel in
@@ -57,10 +57,10 @@ The pipeline is built in four levels, each one shippable on its own.
 
 | Level | What it does | Status |
 | --- | --- | --- |
-| **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.73 recall over a held-out split of 3000 sub-images, and the four changes that did not clear the noise are written up rather than removed |
-| **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene with the trained detector in it, since 2026-08-16 |
-| **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | **complete.** Runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching; detections are described by a representation learned without labels, and retrieval across ten weeks of acquisitions returns the same object 71% of the time against 0.02% at chance. Offshore structures are separated from vessels and excluded from the dark count without a single label: 65 fixed positions found by recurrence across 47 acquisitions, every one of them verified against published coordinates to 5.1 m, taking 80.5% of the detections a run over the wind farm would have had to explain |
-| **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | **complete.** The chain ran across all 50 acquisitions of the study area and 189 detections accumulated into one layer, 40 of them undeclared — 21.2%, and [13.6%, 29.4%] once the interval is resampled over acquisitions rather than over detections. Against depth and against recorded fishing effort every band's interval overlaps every other and nothing is claimed. Against distance to shore one band separates from all three others: the 770 m stripe carrying the declared lane, 61 detections per kilometre against 8.8 in the widest band, is 2.1% dark [0.0%, 6.5%] where the archive is 21.2%. Against the EEZ, 158 detections stand in Danish water and 31 in Swedish, 19.6% [11.5%, 28.1%] dark against 29.0% [10.0%, 48.6%] — the intervals overlap and nothing is claimed from the difference |
+| **1. Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.73 recall over a held-out split of 3000 sub-images, and the four changes that did not clear the noise are written up rather than removed |
+| **2. Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene with the trained detector in it, since 2026-08-16 |
+| **3. AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | **complete.** Runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching; detections are described by a representation learned without labels, and retrieval across ten weeks of acquisitions returns the same object 71% of the time against 0.02% at chance. Offshore structures are separated from vessels and excluded from the dark count without a single label: 65 fixed positions found by recurrence across 47 acquisitions, every one of them verified against published coordinates to 5.1 m, taking 80.5% of the detections a run over the wind farm would have had to explain |
+| **4. Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | **complete.** The chain ran across all 50 acquisitions of the study area and 189 detections accumulated into one layer, 40 of them undeclared: 21.2%, and [13.6%, 29.4%] once the interval is resampled over acquisitions rather than over detections. Against depth and against recorded fishing effort every band's interval overlaps every other and nothing is claimed. Against distance to shore one band separates from all three others: the 770 m stripe carrying the declared lane, 61 detections per kilometre against 8.8 in the widest band, is 2.1% dark [0.0%, 6.5%] where the archive is 21.2%. Against the EEZ, 158 detections stand in Danish water and 31 in Swedish, 19.6% [11.5%, 28.1%] dark against 29.0% [10.0%, 48.6%]; the intervals overlap and nothing is claimed from the difference |
 
 The chain that carries these was built first, deliberately, with a deterministic stand-in where
 the detector would go; the stand-in is still there, behind the same parameter, and is what the
@@ -80,7 +80,7 @@ A vessel moves between its last AIS report and the instant the radar images it: 
 taken as it stands therefore manufactures dark vessels that were never there, and that is the
 most likely way for this project to produce a confidently wrong answer. Each vessel is placed at
 the acquisition timestamp before anything is compared. Where its track gives nothing to
-interpolate between — it ends before the radar looks, or the vessel reported once — the nearest
+interpolate between, because it ends before the radar looks or the vessel reported once, the nearest
 report is used and the row says so, in `position_basis`. Nothing is extrapolated past a track:
 prolonging one from a course and speed derived from earlier points would manufacture a position
 where no measurement exists.
@@ -93,20 +93,20 @@ merge radius to tune. The reasoning, and the one condition it places on the conf
 
 Two deep learning components sit inside this:
 
-- **Supervised object detection** on SAR. The hard parts are genuinely hard — vessels are a few
+- **Supervised object detection** on SAR. The hard parts are genuinely hard: vessels are a few
   pixels wide at 10 m resolution, the background/foreground imbalance is extreme, pretrained RGB
   backbones have to be adapted to single-channel radar amplitude, and only geometry-preserving
   augmentations are physically valid on SAR.
 - **Self-supervised contrastive embeddings** over detection crops. Offshore wind turbines are
   bright point scatterers that look a great deal like ships, and an unsupervised embedding space
-  does separate them into distinct clusters without any additional labelling — measurably, at
+  does separate them into distinct clusters without any additional labelling: measurably, at
   0.768 against 0.5 at chance. It turned out not to separate them *well enough to delete a
   detection on*, so the exclusion is built on where a thing stands over ten weeks rather than on
   what it looks like, and the measurement that settled it is
-  [below](#telling-a-turbine-from-a-ship--2026-08-27). The embedding earns its place as a
+  [below](CHANGELOG.md#telling-a-turbine-from-a-ship--2026-08-27). The embedding earns its place as a
   similarity-search index over the detection archive and as the evidence that the clusters exist.
 
-Everything else — AIS interpolation, spatio-temporal matching, contextual analysis — is
+Everything else (AIS interpolation, spatio-temporal matching, contextual analysis) is
 geospatial data engineering, not deep learning, and is described as such.
 
 ## Data
@@ -119,8 +119,8 @@ geospatial data engineering, not deep learning, and is described as such.
 | Earth Engine catalogue | Bathymetry, coastline, fishing effort | Google Earth Engine |
 | Marine Regions (VLIZ) | EEZ boundaries | Maritime Boundaries Geodatabase v12, CC-BY, fetched per run and not redistributed |
 
-Study area: **Danish waters** — dense and varied traffic, excellent Sentinel-1 revisit as a
-Copernicus priority zone, and freely available raw AIS.
+Study area: **Danish waters**, chosen for dense and varied traffic, excellent Sentinel-1 revisit
+as a Copernicus priority zone, and freely available raw AIS.
 
 Within them, a 17 km box in the northern Kattegat on the approach to Skagen, and the box is
 measured rather than picked. `darkvessel survey` streams a day of Danish AIS and ranks every
@@ -173,13 +173,13 @@ embedding-based disambiguation of vessels from fixed offshore structures.
 
 Constraints are stated rather than hidden. Training runs on free-tier cloud GPUs with short,
 resumable sessions and checkpointing from the first epoch. The training subset is deliberately
-scoped and documented. Where results are modest, they are reported as modest — a detector that
+scoped and documented. Where results are modest, they are reported as modest. A detector that
 usefully ranks candidates for inspection is a different and more honest claim than a detector
 that maps them.
 
-- [`docs/evaluation.md`](docs/evaluation.md) — how well the detector works, and where it breaks
-- [`docs/decisions.md`](docs/decisions.md) — why each choice was made
-- [`docs/failures.md`](docs/failures.md) — what was tried and did not work
+- [`docs/evaluation.md`](docs/evaluation.md): how well the detector works, and where it breaks
+- [`docs/decisions.md`](docs/decisions.md): why each choice was made
+- [`docs/failures.md`](docs/failures.md): what was tried and did not work
 
 ## Setup
 
@@ -189,7 +189,7 @@ conda activate darkvessel
 pip install -e ".[dev]"
 ```
 
-Training and Earth Engine dependencies are extras — `".[detector]"` and `".[gee]"` — and are not
+Training and Earth Engine dependencies are extras, `".[detector]"` and `".[gee]"`, and are not
 needed to run the pipeline.
 
 ## Running the chain
@@ -240,8 +240,8 @@ darkvessel structures --config configs/embeddings.yaml  # the register, verified
 ```
 
 Level 4 runs the same chain across every acquisition of the archive rather than one, because a
-distribution cannot be read off six detections. `archive-ais` is the long one — 21 GB, a few
-hours — and it resumes where it stopped:
+distribution cannot be read off six detections. `archive-ais` is the long one (21 GB, a few
+hours) and it resumes where it stopped:
 
 ```bash
 darkvessel archive-ais --config configs/kattegat-lane.yaml  # declarations, one day per download
@@ -267,10 +267,10 @@ writes the page in [`docs/map/`](docs/map/), described at the foot of this file.
   published at 0.9: 782 of 972 detections stand at a registered structure (80.5%), leaving 190
 ```
 
-`survey` is the command that chose the study area, and it needs no credentials — only the AIS
+`survey` is the command that chose the study area, and it needs no credentials, only the AIS
 archive. It streams one day of Danish AIS and ranks every rectangle of the study area's size in
 the Kattegat by how many vessels of 100 m or more, **under way**, stand inside it during a half
-hour — the same half hour `ais` fetches — averaged over every half hour of the day, empty ones
+hour (the same half hour `ais` fetches) averaged over every half hour of the day, empty ones
 included. Each of those qualifications is load-bearing, and each of them is a way the first study
 area was chosen wrongly; the argument is in [`docs/decisions.md`](docs/decisions.md).
 
@@ -286,12 +286,12 @@ reprojected into the working CRS, and writes a single GeoTIFF carrying its acqui
 scene id, polarisations and orbit pass. Clipping and reprojection happen on Google's machines,
 and no GRD product reaches the local disk: a single response is two orders of magnitude smaller
 than a whole product, and an area that would ask for one is refused before the request is sent.
-The shipped area came back as 1845 x 1727 px in VV — 22 MB, and sixteen tiles at 512/64 with real
+The shipped area came back as 1845 x 1727 px in VV: 22 MB, and sixteen tiles at 512/64 with real
 seams between them rather than the four the synthetic scene has. VV only is what the larger box
 costs; the trade is stated in the config and in the decision log.
 
-`ais` fetches the Danish Maritime Authority's archive for the day of that acquisition — the
-acquisition instant is read off the scene, so the two cannot describe different moments — and
+`ais` fetches the Danish Maritime Authority's archive for the day of that acquisition (the
+acquisition instant is read off the scene, so the two cannot describe different moments) and
 filters it down to the study area and a quarter of an hour either side. The archive for this day
 is 662 MB compressed and 3.3 GB of CSV; it is inflated off the network a chunk at a time and
 never stored, so what stays on disk is the reports that survive:
@@ -316,7 +316,7 @@ good as what was thrown away on the way to it.
   of those matches, 2 on a position interpolated to the acquisition and 0 on a report taken as it stands
 ```
 
-#### What the first run on the lane showed — 2026-08-14
+#### What the first run on the lane showed, 2026-08-14
 
 Scene `S1C_IW_GRDH_1SDV_20260809T053124_…`, acquired 2026-08-09 05:31:24 UTC, descending, VV,
 1845 x 1727 px over the northern Kattegat, against the Danish archive for that day.
@@ -337,7 +337,7 @@ larger ships come with a cross of sidelobes bright enough for the threshold to r
 separate targets, so a 274 m vessel arrives as eight detections. That is the placeholder
 detector's problem, and it is the same one the wind farm showed at Anholt.
 
-**Two matched, and both of them make sense.** A 228 m vessel making 0.0 knots matched at 41 m —
+**Two matched, and both of them make sense.** A 228 m vessel making 0.0 knots matched at 41 m,
 which is geolocation error and a centroid, and nothing else. A 24 m vessel making 2.6 knots
 matched at 116 m.
 
@@ -358,8 +358,8 @@ matches, shown because they are the contrast that makes the pattern readable:
 Every displacement points north or south whatever the ship's course, and which of the two depends
 on whether the ship is closing on the sensor or opening from it. The vessel making no way is not
 displaced; the one making 2.6 knots is displaced by 116 m; the four making twelve knots are
-displaced by half a kilometre. This is the SAR azimuth shift — a moving target is imaged
-displaced along the azimuth direction by `(R / V) · v_radial` — and the numbers above imply an
+displaced by half a kilometre. This is the SAR azimuth shift: a moving target is imaged
+displaced along the azimuth direction by `(R / V) · v_radial`, and the numbers above imply an
 `R / V` of about 115 s, which is Sentinel-1's.
 
 So the honest reading of `2 matched, 14 dark` is that the chain is correct, the tolerance is not,
@@ -374,13 +374,13 @@ What earlier real runs caught is in [`docs/failures.md`](docs/failures.md), one 
 chain read the product's nodata fill as the brightest targets in the scene; the export's size
 guard was sized from an assumed dtype and then, on a second reading, from a ceiling nobody had
 measured, so it let through the very request Earth Engine refused; the AIS outlier rule removed
-the evidence along with the noise; and the first AIS slice ingested was empty — which the chain
+the evidence along with the noise; and the first AIS slice ingested was empty, which the chain
 correctly, and unreadably, reported as 115 dark vessels.
 
 `outputs/detections.gpkg` opens directly in QGIS, in EPSG:25832. Each detection carries its
 `status` (`matched` or `dark`), the `mmsi` that explains it if one does, that vessel's declared
 `length_m`, the distance to its declared position, the `tolerance_m` the decision was made at,
-and `declarations_searched` — how many declared positions that radius was applied to. Both
+and `declarations_searched`: how many declared positions that radius was applied to. Both
 numbers are part of the result, because "dark" is a claim about a search: without the radius it
 cannot be read at all, and without the count a scene where nobody declared themselves is
 indistinguishable from a scene full of ships that switched their transponders off. The length is
@@ -404,20 +404,20 @@ make test    # the seam: georeferencing, tiling, matching and export, offline an
 make lint
 ```
 
-The export is tested with Earth Engine faked — the catalogue is a parameter, the same seam that
+The export is tested with Earth Engine faked: the catalogue is a parameter, the same seam that
 lets the pipeline run without a detector. What that cannot check is whether Earth Engine's own
 filters select what this code believes they select; that is verified by hand on the first real
 export and recorded here rather than asserted in a test that could not fail.
 
 Both run on every push and pull request, from
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) — the same two commands, not a second
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml): the same two commands, not a second
 definition of them. Lint runs on Python 3.11; the tests run on 3.11 and 3.13.
 
 ## Training the detector
 
 This is the one part of the project that needs a GPU, and it does not run here: the development
 machine is an 8 GB M1 laptop, so training happens on a Kaggle free tier where the labelled data
-is already attached and never touches the local disk. What is in the repository is the run —
+is already attached and never touches the local disk. What is in the repository is the run:
 `darkvessel train --config configs/train.yaml`, driven by a config file like every other stage,
 with [`notebooks/kaggle-train.ipynb`](notebooks/kaggle-train.ipynb) as a four-cell wrapper that
 clones, installs and calls it.
@@ -427,4 +427,4 @@ not clear the noise is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Licence
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
