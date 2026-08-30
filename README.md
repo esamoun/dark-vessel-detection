@@ -15,7 +15,7 @@
 > the same six sixteen times — and the problem that run surfaced is fixed: a ship making twelve
 > knots is imaged half a kilometre from where it declared itself, so the declaration is moved to
 > where the radar would have drawn it before anything is matched, which took this scene from two
-> matched vessels to five. The detector was then measured rather than assumed — five runs one line
+> matched vessels to five. The detector was then measured rather than assumed — six runs one line
 > apart, of which one was kept, and the ticket's own three domain adaptations refuted at that
 > resolution rather than left unproven.
 >
@@ -50,7 +50,7 @@ The pipeline is built in four levels, each one shippable on its own.
 
 | Level | What it does | Status |
 | --- | --- | --- |
-| **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.73 recall over a held-out split of 3000 sub-images, and the three changes that did not clear the noise are written up rather than removed |
+| **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.73 recall over a held-out split of 3000 sub-images, and the four changes that did not clear the noise are written up rather than removed |
 | **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene with the trained detector in it, since 2026-08-16 |
 | **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | **complete.** Runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching; detections are described by a representation learned without labels, and retrieval across ten weeks of acquisitions returns the same object 71% of the time against 0.02% at chance. Offshore structures are separated from vessels and excluded from the dark count without a single label: 65 fixed positions found by recurrence across 47 acquisitions, every one of them verified against published coordinates to 5.1 m, taking 80.5% of the detections a run over the wind farm would have had to explain |
 | **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | **complete.** The chain ran across all 50 acquisitions of the study area and 189 detections accumulated into one layer, 40 of them undeclared — 21.2%, and [13.6%, 29.4%] once the interval is resampled over acquisitions rather than over detections. Against depth and against recorded fishing effort every band's interval overlaps every other and nothing is claimed. Against distance to shore one band separates from all three others: the 770 m stripe carrying the declared lane, 61 detections per kilometre against 8.8 in the widest band, is 2.1% dark [0.0%, 6.5%] where the archive is 21.2%. EEZ boundaries are not in Earth Engine's public catalogue and read `unavailable` on all 189 rows until one is ingested |
@@ -528,9 +528,11 @@ is kept only if it beats the previous kept configuration by more than the noise 
 was already showing.** The noise is measured, not assumed — the spread of the statistic over a
 run's last four epochs. A threshold chosen after seeing the numbers is a narration of them.
 
-Five runs of twelve epochs, one line different each, every one scored over the same held-out
-scenes 11 to 15 — 3000 sub-images, 2378 ships. `darkvessel compare --config configs/ladder.yaml`
-reads the five journals in [`docs/runs/`](docs/runs/) and prints:
+Six runs of twelve epochs, one line different each, every one scored over the same held-out
+scenes 11 to 15 — 3000 sub-images, 2378 ships. Five were fixed on 2026-08-17 before any of them
+ran; the sixth was added on 2026-08-30 to test the hypothesis the other five left standing, and the
+table says so at its row. `darkvessel compare --config configs/ladder.yaml` reads the six journals
+in [`docs/runs/`](docs/runs/) and prints:
 
 | Rung | What changed | Best F1 | Against | Band | Gain | |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -539,8 +541,9 @@ reads the five journals in [`docs/runs/`](docs/runs/) and prints:
 | R2 | `anchor_sizes` to `[[4], [8], [16], [32], [64]]` | 0.788 | R1 | 0.010 | −0.048 | rejected |
 | R3 | single-channel stem | 0.836 | R1 | 0.010 | −0.000 | rejected |
 | R4 | `rpn_batch_size_per_image` 256 → 32 | 0.827 | R1 | 0.010 | −0.009 | rejected |
+| R5 | `rpn_fg_iou_thresh` 0.7 → 0.3 | 0.823 | R1 | 0.010 | −0.013 | rejected |
 
-**One change of five was kept, and it is the one that is not among the ticket's three
+**One change of six was kept, and it is the one that is not among the ticket's three
 adaptations.** Cosine decay bought +0.028 and, more usefully, cut the noise band from 0.026 to
 0.010 — the baseline reached the neighbourhood of its optimum by epoch 3 and bounced there for
 nine more, and R1 climbs instead: 0.828, 0.826, 0.833, 0.836 over its last four.
@@ -561,6 +564,11 @@ inside the noise. Each has its numbers and its mechanism in
   it had to beat, which makes it a draw rather than a harm. What it demonstrably did do is widen
   the band to 0.019, the noisiest run on the kept branch: sixteen positives and sixteen negatives
   per image is a noisier gradient than 43-odd positives out of 256.
+- **R5, the foreground IoU threshold.** −0.0128 against the same 0.0099 — outside the band, so a
+  loss rather than a draw, though a small one against its own band of 0.025. Added after the five
+  above had run, which is the thing the rule exists to make suspect; what makes it admissible is
+  that its hypothesis was written down on 2026-08-19, three days before the first rung trained, and
+  its value came from a measurement rather than from the five outcomes.
 
 Training losses are not comparable across rungs that move the anchors or the sampler, and both
 directions of that trap appear here: R2's final loss is 0.044 against R1's 0.117 on a detector
@@ -580,27 +588,38 @@ Against the 2026-08-14 baseline at the same threshold — precision 0.941, recal
 schedule trades precision for a good deal more recall: 279 more ships found, 246 more false
 detections. F1 0.836 against 0.807.
 
-**What is left standing.** Almost no ship reaches an IoU of 0.7 against any anchor, in either
-anchor set — which points at the RPN's foreground IoU threshold rather than at anchor geometry or
-sampler batch size. Two rungs have now failed in the region that hypothesis describes and neither
-tested it, because the five rungs were fixed before the census that produced it. It is the first
-thing a sixth rung should change, and the five rungs above deliberately did not — a change
-introduced after a ladder's results are known is measured against nothing. It is
-[issue #24](https://github.com/esamoun/dark-vessel-detection/issues/24).
+**What was left standing, and what happened to it.** Almost no ship reaches an IoU of 0.7 against
+any anchor, in either anchor set — which pointed at the RPN's foreground IoU threshold rather than
+at anchor geometry or sampler batch size. Two rungs had failed in the region that hypothesis
+describes and neither had tested it, because the five rungs were fixed before the census that
+produced it. [Issue #24](https://github.com/esamoun/dark-vessel-detection/issues/24) is the rung
+that did, and **the hypothesis does not hold.**
 
-That rung now exists as `configs/ladder/r5-fg-iou.yaml`, and its value was set from a measurement
-rather than from the five results above it — a threshold sweep added to
-`notebooks/anchor_census.py`, run on 2026-08-30, costing no GPU time. Over the same 3637 ships the
-median one's best overlap with any anchor is **0.207**, and dropping the foreground threshold from
-0.7 to **0.3** gives 1019 of them a genuine match instead of a rescued one while roughly doubling
-the positives the sampler draws, 43 per image to 96. 0.3 rather than lower because `Matcher`
-refuses a background threshold above the foreground one, so 0.3 is the last value one line can
-reach — and one line is this ladder's rule.
+Dropping the threshold to 0.3 gives 1019 more ships a genuine match and roughly doubles the
+positives the RPN samples, from 43 per image to 96 — and the detector gets *worse*, by 0.0128. Not
+where it was predicted to, either: precision is unchanged at 0.850, and the whole loss is recall.
+At the most permissive threshold reported, R5 finds 2203 of the 2378 held-out ships where R1 finds
+2275, so 72 ships leave its reach altogether rather than falling below an operating point.
 
-The table above gains a sixth row when that rung has been measured against R1 on this same split,
-and not before. Its prediction is already committed: not a draw, direction positive, with the
-mechanism that would make it wrong named beside it. See `docs/decisions.md`, 2026-08-29 and
-2026-08-30.
+The mechanism inverts the census's own reading. Under 0.7, a ship's positive anchors are the ones
+tied at *its own maximum* overlap, which are by construction the anchors centred on it; the rescue
+rule forces that whole tied set positive. An IoU floor of 0.3 admits anchors sitting off to one
+side as well, and the RPN learns a blunter answer. `allow_low_quality_matches` was not a pathology
+being worked around — it was selecting a better positive set than a threshold does, because a tied
+maximum is a centring criterion and a floor is not. Written up with its numbers in
+[`docs/failures.md`](docs/failures.md).
+
+The value came from a measurement rather than from the five results above it: a threshold sweep
+added to `notebooks/anchor_census.py`, run on 2026-08-30, costing no GPU time. Over the same 3637
+ships the median one's best overlap with any anchor is **0.207** — below the `256/1024 = 0.25` this
+repository had been quoting, which squares a length where the overlap is an area, but twice the
+0.10 the prediction beside it named. 0.3 rather than lower because `Matcher` refuses a background
+threshold above the foreground one, so 0.3 is the last value one line can reach, and one line is
+this ladder's rule.
+
+Both predictions this rung committed before its measurements went half right, and both are recorded
+as they landed. See [`docs/decisions.md`](docs/decisions.md), 2026-08-29 and 2026-08-30, and
+[`docs/failures.md`](docs/failures.md) for the verdict.
 
 ```bash
 darkvessel compare --config configs/ladder.yaml
