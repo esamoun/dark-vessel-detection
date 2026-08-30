@@ -25,6 +25,7 @@ being double-clicked, which is what "no backend" means when nobody is watching.
 import base64
 import hashlib
 import json
+import math
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -42,11 +43,13 @@ from darkvessel.viz.map import (
     GEOJSON_NAME,
     LEAFLET,
     LEAFLET_CHECKSUMS,
+    NOMINAL_FRAME,
     ORDER,
     PAGE_NAME,
     PUBLISHED,
     collection,
     map_request_from,
+    opening_view,
     page,
     summarise,
     write,
@@ -338,6 +341,41 @@ def test_a_title_carrying_the_template_syntax_is_not_expanded_into_the_page() ->
     assert "<h1>{{data}} {{legend}}</h1>" in rendered
 
 
+def test_the_view_the_map_opens_on_holds_every_detection() -> None:
+    """The property that matters, asserted on the numbers rather than on the browser: at the
+    centre and zoom this page ships, every detection is inside the frame it is laid out for.
+
+    It exists because the opposite shipped twice. `fitBounds` against a frame that is not what it
+    appears to be returns the *maximum* zoom instead of failing, and the published page then
+    showed street level over exactly the right coordinates with all 189 detections outside the
+    view — no error, no console output, and indistinguishable from a sea where nothing was found.
+    """
+    exported = collection(layer((MATCHED, DARK)))
+    (latitude, longitude), zoom = opening_view(exported)
+
+    width, height = NOMINAL_FRAME
+    scale = 256 * 2**zoom
+    for feature in exported["features"]:
+        east, north = feature["geometry"]["coordinates"]
+        assert abs(east - longitude) / 360.0 * scale <= width / 2
+        assert abs(_mercator(north) - _mercator(latitude)) * scale <= height / 2
+
+
+def _mercator(latitude: float) -> float:
+    radians = math.radians(latitude)
+    return 0.5 - math.log(math.tan(math.pi / 4 + radians / 2)) / (2 * math.pi)
+
+
+def test_the_map_opens_on_the_computed_view_before_it_measures_anything() -> None:
+    """The browser is allowed to improve the view and never to produce it. A frame too small to
+    be a frame is refused rather than fitted to, which is the shape the failure took twice."""
+    rendered = page(collection(layer((MATCHED, DARK))), title="Kattegat")
+    script = rendered.split("<script")[-1]
+
+    assert script.index("map.setView(") < script.index("map.fitBounds(")
+    assert "if (size.x < 200 || size.y < 200) { return; }" in script
+
+
 def test_the_map_measures_its_frame_again_before_it_fits_the_detections_into_it() -> None:
     """Leaflet caches its container's size at construction. Handed a height of zero — a layout
     that has not settled when the script runs — `fitBounds` returns the maximum zoom, and the map
@@ -351,11 +389,12 @@ def test_the_map_measures_its_frame_again_before_it_fits_the_detections_into_it(
     script = rendered.split("<script")[-1]
 
     assert script.index("map.invalidateSize()") < script.index("map.fitBounds(")
-    assert "window.addEventListener('load', show)" in script
-    # Measuring once more is not enough: on the published page the frame was still zero by the
-    # time `load` fired. The fit has to follow the frame, and stop once the reader takes hold.
+    # Measuring once more is not enough — that was the first attempt at this, and the published
+    # page still opened at street level. The refinement follows the frame instead, and stops as
+    # soon as the reader takes hold of the map rather than arguing with them.
+    assert "window.addEventListener('load', refine)" in script
     assert "ResizeObserver" in script
-    assert "if (!touched) { show(); }" in script
+    assert "if (touched || !markers.length) { return; }" in script
 
 
 def test_an_empty_collection_opens_on_water_rather_than_on_the_null_island() -> None:

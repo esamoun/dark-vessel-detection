@@ -155,28 +155,35 @@ const FALLBACK = "unsearched";
   // the frame can still be zero. What works is measuring again whenever the frame actually
   // changes size, which is also what makes the page survive a phone rotating and a desktop
   // window being dragged wider.
+  // The opening view is computed from the detections when this page is written, not derived here
+  // from a frame whose size the browser may not yet know. `fitBounds` against a frame that is not
+  // what it appears to be returns the *maximum* zoom rather than failing, and the page then shows
+  // street level over the right coordinates with every detection outside it — no error, no empty
+  // console, and indistinguishable from a run that found nothing. Two attempts to make the
+  // measurement reliable both looked correct and both shipped that page.
+  //
+  // So the map opens on the view that was worked out from the data, and the browser is only ever
+  // allowed to improve on it.
+  map.setView([57.624201, 11.146071], 12);
+
   let touched = false;
   map.on('zoomstart dragstart', function () { touched = true; });
 
-  function show() {
+  function refine() {
+    if (touched || !markers.length) { return; }
     map.invalidateSize();
-    if (!markers.length) {
-      map.setView([57.6, 11.15], 9);
-      return;
-    }
+    const size = map.getSize();
+    // A frame this small is not a frame; fitting to it is what produced the failure above.
+    if (size.x < 200 || size.y < 200) { return; }
     map.fitBounds(L.featureGroup(markers).getBounds(), {
       padding: [28, 28]
     });
   }
 
-  show();
-  window.addEventListener('load', show);
+  refine();
+  window.addEventListener('load', refine);
   if (window.ResizeObserver) {
-    // Only until the reader takes hold of the map. Re-fitting under someone who has just zoomed
-    // in on a detection would be the page arguing with them.
-    new ResizeObserver(function () {
-      if (!touched) { show(); }
-    }).observe(document.getElementById('map'));
+    new ResizeObserver(refine).observe(document.getElementById('map'));
   }
 
   document.querySelectorAll('.key input').forEach(function (box) {
