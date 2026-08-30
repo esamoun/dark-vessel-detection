@@ -22,11 +22,21 @@ from pyproj import CRS, Transformer
 from darkvessel.analysis.concentration import analysis_request_from, concentrate
 from darkvessel.analysis.concentration import write as write_analysis
 from darkvessel.config import load_config
-from darkvessel.context.gee_layers import LayerSources, coverage, earth_engine_layers
+from darkvessel.context.gee_layers import (
+    LayerSources,
+    coverage,
+    earth_engine_layers,
+    zone_coverage,
+)
 from darkvessel.context.gee_layers import attach as attach_context
+from darkvessel.context.zones import attach as attach_zones
+from darkvessel.context.zones import zones_request_from
 from darkvessel.data.ais import independent_groups, load_ais, slice_for, slices_for, write_ais
 from darkvessel.data.area import Bounds
 from darkvessel.data.dma import danish_maritime_authority
+from darkvessel.data.eez import LICENCE
+from darkvessel.data.eez import fetch as fetch_zones
+from darkvessel.data.eez import load as load_zones
 from darkvessel.data.gee_export import DateWindow, earth_engine, export_archive, export_scene
 from darkvessel.data.scene import Scene
 from darkvessel.data.structures import Known
@@ -196,6 +206,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     map_command.add_argument("--config", type=Path, required=True)
 
+    eez_command = commands.add_parser(
+        "eez", help="fetch the published EEZ boundaries over the study area (needs a network)"
+    )
+    eez_command.add_argument("--config", type=Path, required=True)
+
+    zones_command = commands.add_parser(
+        "zones",
+        help="put the zone each detection stands in on its row, from the fetched boundaries",
+    )
+    zones_command.add_argument("--config", type=Path, required=True)
+    zones_command.add_argument(
+        "--archive",
+        action="store_true",
+        help="zone the accumulated archive layer rather than the single run's output",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "synthesise":
@@ -234,6 +260,10 @@ def main(argv: list[str] | None = None) -> int:
         return _analyse(args.config)
     if args.command == "map":
         return _map(args.config)
+    if args.command == "eez":
+        return _eez(args.config)
+    if args.command == "zones":
+        return _zones(args.config, over_archive=args.archive)
     return _run(args.config)
 
 
@@ -1789,17 +1819,13 @@ def context_request_from(config: dict[str, Any], relative_to: Path) -> dict[str,
     someone had authenticated and waited is a fault the test suite should have caught. What can
     be checked here is checked here — a scale, a search radius, and a window that runs forwards.
 
-    `relative_to` is unused today and is in the signature anyway, because every other
-    `*_request_from` in this file resolves a path against the config and this one will the day an
-    EEZ layer is ingested from a file in the repository rather than named as a remote asset.
+    `relative_to` is unused, and is in the signature because every other `*_request_from` in this
+    file takes it. The path it was being kept for — an EEZ read from a file rather than named as
+    a remote asset — is resolved by `zones_request_from` instead, which is where that variable
+    now lives; see #35 and `context/zones.py`.
     """
     context = config["context"]
-    shore, depth, eez, effort = (
-        context["shore"],
-        context["depth"],
-        context["eez"],
-        context["effort"],
-    )
+    shore, depth, effort = (context["shore"], context["depth"], context["effort"])
     return {
         "sources": LayerSources(
             shore=str(shore["asset"]),
@@ -1808,8 +1834,6 @@ def context_request_from(config: dict[str, Any], relative_to: Path) -> dict[str,
             depth_band=str(depth["band"]),
             # Null is a configuration rather than an omission: it says this run has no such layer
             # and every row will read `unavailable`. See `LayerSources`.
-            eez=None if eez["asset"] is None else str(eez["asset"]),
-            eez_property=str(eez["property"]),
             effort=None if effort["asset"] is None else str(effort["asset"]),
             effort_bands=tuple(str(band) for band in effort["bands"]),
             effort_start=str(effort["start"]),
@@ -1938,4 +1962,65 @@ def _map(config_path: Path) -> int:
         print(line)
     for written in write_map(exported, out=request["out"], title=request["title"]):
         print(f"wrote {written}")
+    return 0
+
+
+def _eez(config_path: Path) -> int:
+    """Fetch the published EEZ boundaries over the study area, once.
+
+    The one command of this variable that needs a network, in the way `known` and `archive-ais`
+    do, and like them it writes a file that everything downstream reads instead. What it writes is
+    **not** kept in the repository: Marine Regions asks that its products not be made available
+    for download elsewhere, and that request is honoured rather than argued with — `data/` is
+    where this project already puts other people's bulk.
+
+    The licence and the attribution are printed here as well as written into the file, because
+    this is the moment somebody is looking.
+    """
+    config = load_config(config_path)
+    request = zones_request_from(config, config_path.parent)
+    # A margin, for the same reason the AIS filter has one: a detection at the very edge of the
+    # box sits on a boundary clipped exactly to that box, and whether it falls inside would be
+    # decided by the clip rather than by the sea.
+    area = Bounds(**config["area"]["bounds"]).grown_by(request["margin_m"])
+
+    boundaries = fetch_zones(area, source=request["source"], layer=request["layer"])
+    boundaries.write(request["reference"])
+
+    named = ", ".join(boundaries.names(request["field"])) or "none"
+    print(f"{len(boundaries)} zone(s) over the study area: {named} -> {request['reference']}")
+    print(f"  {LICENCE}")
+    return 0
+
+
+def _zones(config_path: Path, over_archive: bool = False) -> int:
+    """Put the zone each detection stands in on its row.
+
+    No network, no credentials and no Earth Engine: this is a spatial join against polygons on the
+    disk. It is a command of its own rather than part of `context` because the two need different
+    things of the world — `context` reduces three rasters in a credentialed round trip, and
+    re-running it to fill a column that depends on none of them would put an account between a
+    reader and an answer a point-in-polygon test gives in a second.
+
+    It writes only the zone column back. The three sampled variables are left exactly as found.
+    """
+    config = load_config(config_path)
+    relative_to = config_path.parent
+    request = zones_request_from(config, relative_to)
+    named = config["archive"]["detections"] if over_archive else config["run"]["output"]
+    output = (relative_to / named).resolve()
+
+    if not output.exists():
+        wrote = "archive-run" if over_archive else "run"
+        raise FileNotFoundError(
+            f"{output} does not exist; `darkvessel zones` names the water the detections of a run "
+            f"are standing in, so run `darkvessel {wrote} --config {config_path}` first"
+        )
+
+    detections = gpd.read_file(output, layer=DETECTIONS_LAYER)
+    zoned = attach_zones(detections, load_zones(request["reference"]), field=request["field"])
+    write_detections(zoned, output)
+
+    print(f"{len(zoned)} detection(s) zoned -> {output}")
+    print(f"  {zone_coverage(zoned)}")
     return 0

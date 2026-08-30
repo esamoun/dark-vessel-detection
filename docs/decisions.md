@@ -2596,3 +2596,67 @@ contacts is `tile.openstreetmap.org`, and that one cannot be removed because a b
 server by definition. Without it the page draws its detections on an empty ground, with the
 coordinates, the dates and the scenes still on it.
 `test_the_page_asks_for_no_host_but_the_one_serving_the_basemap` holds the boundary.
+
+
+## 2026-08-30 — The EEZ is a polygon, not a raster, and it never needed Earth Engine
+
+The `eez` column read `unavailable` on all 189 detections of the archive from 2026-08-27 until
+today. The reason recorded then is still true — Earth Engine's public catalogue carries no EEZ
+boundaries — and the conclusion drawn from it was wrong in a way worth naming, because it is the
+same shape of error twice: *the other three variables come from Earth Engine, so this one must
+too, and what it needs is for someone to ingest an asset.* The other three are rasters reduced at
+a point. This one is a point-in-polygon test. `context/gee_layers.py` had already written that
+down in passing — "the EEZ is a spatial join in a second because a polygon membership is not a
+reducer" — and the sentence sat there for three days beside a column of `unavailable`.
+
+So `darkvessel eez` fetches the boundaries from Marine Regions' WFS once, and `darkvessel zones`
+puts the answer on every row with no network, no credentials and no Earth Engine. The Earth Engine
+path for this variable is removed rather than left beside the new one: `LayerSources` no longer
+carries an EEZ asset, and a second way to fill one column would be a second place for the rules
+about `high seas` and `unavailable` to drift.
+
+**What it found.** 158 detections in Danish water and 31 in Swedish; the study box straddles the
+boundary, which is the line already visible on the web map. 19.6% dark [11.9%, 28.5%] against
+29.0% [9.5%, 48.5%]. The intervals overlap across almost their whole width and nothing is claimed
+from the difference — 31 detections is what that width is made of. It is reported anyway, because
+choosing which overlaps to show is how a page ends up with only the differences that looked good.
+
+**The boundaries are not committed, and that is the decision rather than an oversight.** Marine
+Regions publishes under CC-BY, which would permit a clipped copy of two polygons over a 17 km box.
+The licence file shipped with the geodatabase then asks users "not to make our products available
+for download elsewhere and to always refer to marineregions.org for the most up-to-date products
+and services". That is a courtesy and not a licence term, and it is honoured for that reason
+rather than in spite of it: the cost is one command after a clone, against a request from the
+people who drew the lines. `data/` is where this project already puts other people's bulk — the
+Sentinel-1 archive and 21 GB of Danish AIS are both fetched and both ignored by git — and the EEZ
+joins them. A fresh clone reads `unavailable`, which is the honest state and is what the word is
+for.
+
+**What the reference does not settle is quoted, not paraphrased.** From the same file: "VLIZ
+expresses no opinion about the legal state neither of any country, territory or area nor
+concerning its delimitation, frontier or borders. The data has no legal value whatsoever." That
+sentence is written onto every row of the fetched file, beside the source, the layer, the
+retrieval time, the licence and the citation, because the file is the only thing that will still
+be on somebody's disk in a year.
+
+**Two zones claiming one position are reported as two, not resolved to one.** Boundaries genuinely
+overlap; Marine Regions carries `Joint regime` polygons for exactly that. A rule that took the
+first, or the smallest, or the lower identifier would be this repository deciding a maritime
+boundary inside a sort order. It does not arise in this archive — measured, no detection stands in
+two zones — and the behaviour is written down and tested rather than left for the first run where
+it does.
+
+**Three things the service does that are cheaper to read than to rediscover.** Its bbox filter
+selects on bounding boxes, so a rectangle in the Kattegat returns the Russian and the Alaskan EEZ
+as well, their polygons wrapping the antimeridian; the intersection against real geometry is done
+on this side. WFS 1.1.0 is specified to take an EPSG:4326 bbox latitude first and this service
+takes it longitude first — asked the other way round it does not fail, it answers with the
+exclusive economic zone of Yemen, which is how that was found. And the shapefile spells its fields
+in capitals while the WFS answers in lower case, so the config's `SOVEREIGN1` is matched without
+regard to case; matched strictly, every detection would have come back as unnamed water.
+
+**Why the analysis grew a shared `Rate`.** The categorical variable now carries a rate and a
+scene-wise interval like every band does, and the comparison that decides whether two of them
+differ is one method on one class rather than two copies. The arithmetic of a share, and the rule
+for reading two shares against each other, do not change when the thing being sliced stops being a
+number and becomes the name of a water.

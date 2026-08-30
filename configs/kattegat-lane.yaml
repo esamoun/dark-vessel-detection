@@ -156,18 +156,33 @@ context:
   depth:
     asset: NOAA/NGDC/ETOPO1
     band: bedrock
-  # EEZ membership. **Null on purpose, and the one variable of the four that cannot be sampled
-  # from the public catalogue at all.** Marine Regions publishes the world's EEZ boundaries under
-  # CC-BY; Earth Engine does not carry them, so they have to be ingested once as a table asset
-  # and named here. Until that is done every detection reads `unavailable` in the `eez` column —
-  # which is the point of that word existing, and is a different statement from `high seas`.
+  # EEZ membership. **Not an Earth Engine asset, and #35 is why.** Earth Engine's public
+  # catalogue carries no EEZ boundaries — that part was and is true — but the conclusion drawn
+  # from it until 2026-08-30, that they would have to be ingested once as a table asset and named
+  # here, does not follow. A zone is a polygon and membership is a point-in-polygon test, which
+  # needs no catalogue and no credentials: `darkvessel eez` fetches the boundaries once and
+  # `darkvessel zones` puts the answer on every row, neither of them touching Earth Engine.
   #
-  # `property` is the field of that table the name is taken from; Marine Regions calls it
-  # SOVEREIGN1. It is stated here because a table whose columns are not this project's is not a
-  # table this project should be guessing at.
+  # The fetched file is **not** in the repository. Marine Regions publishes under CC-BY, which
+  # would permit a clipped copy, and then asks users "not to make our products available for
+  # download elsewhere and to always refer to marineregions.org for the most up-to-date products
+  # and services". That is a courtesy rather than a licence term, which is why it is worth
+  # honouring, so the boundaries land under data/ beside the scenes and the AIS archive. A fresh
+  # clone reads `unavailable` until `darkvessel eez` has run, which is the honest state of it and
+  # is exactly what that word is for.
   eez:
-    asset: null
+    source: https://geo.vliz.be/geoserver/MarineRegions/wfs
+    layer: MarineRegions:eez
+    # The field the name is taken from. SOVEREIGN1 gives "Denmark" and "Sweden"; GEONAME gives
+    # "Danish Exclusive Economic Zone". Stated here because a table whose columns are not this
+    # project's is not a table this project should be guessing at — and matched without regard to
+    # case, because the shapefile spells these in capitals and the WFS answers in lower case.
     property: SOVEREIGN1
+    # The same 5 km the AIS filter takes, and for the same kind of reason: a detection at the very
+    # edge of the box would sit on a boundary clipped to exactly that box, and whether it fell
+    # inside would be decided by the clip rather than by the sea.
+    margin_m: 5000
+    reference: ../data/eez/kattegat-lane.gpkg
   # Fishing effort. Global Fishing Watch's daily hours, summed over the window below — one day at
   # one point is almost always zero and says nothing about the water.
   #

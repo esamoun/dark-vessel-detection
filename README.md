@@ -53,7 +53,7 @@ The pipeline is built in four levels, each one shippable on its own.
 | **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.73 recall over a held-out split of 3000 sub-images, and the four changes that did not clear the noise are written up rather than removed |
 | **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene with the trained detector in it, since 2026-08-16 |
 | **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | **complete.** Runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching; detections are described by a representation learned without labels, and retrieval across ten weeks of acquisitions returns the same object 71% of the time against 0.02% at chance. Offshore structures are separated from vessels and excluded from the dark count without a single label: 65 fixed positions found by recurrence across 47 acquisitions, every one of them verified against published coordinates to 5.1 m, taking 80.5% of the detections a run over the wind farm would have had to explain |
-| **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | **complete.** The chain ran across all 50 acquisitions of the study area and 189 detections accumulated into one layer, 40 of them undeclared — 21.2%, and [13.6%, 29.4%] once the interval is resampled over acquisitions rather than over detections. Against depth and against recorded fishing effort every band's interval overlaps every other and nothing is claimed. Against distance to shore one band separates from all three others: the 770 m stripe carrying the declared lane, 61 detections per kilometre against 8.8 in the widest band, is 2.1% dark [0.0%, 6.5%] where the archive is 21.2%. EEZ boundaries are not in Earth Engine's public catalogue and read `unavailable` on all 189 rows until one is ingested |
+| **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | **complete.** The chain ran across all 50 acquisitions of the study area and 189 detections accumulated into one layer, 40 of them undeclared — 21.2%, and [13.6%, 29.4%] once the interval is resampled over acquisitions rather than over detections. Against depth and against recorded fishing effort every band's interval overlaps every other and nothing is claimed. Against distance to shore one band separates from all three others: the 770 m stripe carrying the declared lane, 61 detections per kilometre against 8.8 in the widest band, is 2.1% dark [0.0%, 6.5%] where the archive is 21.2%. Against the EEZ, 158 detections stand in Danish water and 31 in Swedish, 19.6% [11.9%, 28.5%] dark against 29.0% [9.5%, 48.5%] — the intervals overlap and nothing is claimed from the difference |
 
 The chain that carries these was built first, deliberately, with a deterministic stand-in where
 the detector would go; the stand-in is still there, behind the same parameter, and is what the
@@ -137,8 +137,8 @@ src/darkvessel/
               fixed structures the archive holds and verifying them
   fusion/     AIS interpolation to acquisition time, spatio-temporal matching, the
               register of fixed structures a run will not call dark vessels
-  context/    contextual variables sampled at each detection: distance to shore, water
-              depth, EEZ membership, fishing effort
+  context/    contextual variables at each detection: distance to shore, water depth and
+              fishing effort sampled from the catalogue, EEZ membership joined locally
   analysis/   the distribution of dark candidates against each of those variables, with
               intervals resampled over acquisitions rather than over detections
   viz/        the GeoJSON export and the static page it is drawn on
@@ -238,11 +238,14 @@ hours — and it resumes where it stopped:
 darkvessel archive-ais --config configs/kattegat-lane.yaml  # declarations, one day per download
 darkvessel archive-run --config configs/kattegat-lane.yaml  # the chain over all 50 acquisitions
 darkvessel context --config configs/kattegat-lane.yaml --archive  # the layers, in one round trip
+darkvessel eez     --config configs/kattegat-lane.yaml      # the published EEZ boundaries, once
+darkvessel zones   --config configs/kattegat-lane.yaml --archive  # whose water each one is in
 darkvessel analyse --config configs/kattegat-lane.yaml      # the distribution, and its intervals
 darkvessel map     --config configs/kattegat-lane.yaml      # the static page, and the GeoJSON
 ```
 
-`analyse` and `map` are the two of the five that need neither credentials nor a network:
+`zones`, `analyse` and `map` are the three of the seven that need neither credentials nor a
+network:
 everything they read is already on the row. `analyse` writes
 [`docs/runs/analysis-archive.json`](docs/runs/analysis-archive.json) and one figure per variable,
 so every number in the section below is re-derivable by anyone holding the GeoPackage; `map`
@@ -1091,7 +1094,9 @@ column says so rather than being absent.
 **The EEZ has not been sampled**, and the column says `unavailable` rather than being absent.
 Earth Engine's public catalogue carries no EEZ layer; Marine Regions publishes one under CC-BY and
 it has to be ingested once as an asset. The code path is exercised against a fake sampler. That
-criterion is met in code and not in data.
+criterion is met in code and not in data. *(It is answered on 2026-08-30, and not by
+ingesting an asset — the conclusion in that last sentence is the part that turned out to be
+wrong. See [Whose water](#whose-water--2026-08-30).)*
 
 **Sampling is not analysis.** This attaches the variables; it does not say where dark vessels
 concentrate. The dark detection above sits in the second-highest fishing-effort cell of the six,
@@ -1192,7 +1197,8 @@ since been made and what it found is [below](#where-they-concentrate--2026-08-29
 
 **The EEZ is still `unavailable`.** Nothing above changes that; it needs the Marine Regions
 boundaries ingested as an Earth Engine asset, and until then the column says so rather than
-guessing.
+guessing. *(Answered on 2026-08-30, without Earth Engine — see
+[Whose water](#whose-water--2026-08-30).)*
 
 **Fifty acquisitions of one box is not a sample of Danish waters.** They are ten weeks over one
 17 km rectangle chosen for its traffic. Whatever the distribution turns out to be, it is a
@@ -1345,11 +1351,10 @@ or because the lane is where the biggest and most detectable hulls are, is not s
 detections can separate. The useful form of it is the one stated above: the dark candidates are
 off the lane.
 
-**The EEZ column is still `unavailable` on all 189 rows,** so the criterion asking where the
-candidates sit relative to the EEZ is met in code and not in data. Marine Regions publishes the
-boundaries under CC-BY and Earth Engine does not carry them; the config names no asset and every
-row says so rather than guessing. This is unchanged since level 4's sampling stage and is the one
-acceptance criterion of #16 this run does not answer.
+**The EEZ column was `unavailable` on all 189 rows when this section was written,** and it is
+the one acceptance criterion of #16 that this run did not answer. It is answered below, on
+2026-08-30, and the answer changes nothing above it: the two zones' intervals overlap, so the
+distribution against distance to shore remains the only separation this archive supports.
 
 **No model was fitted and no p-value is reported.** Four bands, a rate in each, an interval around
 each rate, and a comparison that asks only whether two intervals overlap. Non-overlapping 95%
@@ -1403,6 +1408,69 @@ same red dot, and the page says so under the table rather than in a caveats file
 **Nothing on the page identifies a vessel.** The MMSI of a matched vessel stays in the GeoPackage.
 A matched detection is a ship that declared itself; naming it publicly adds nothing to the
 demonstration, and the dark candidates carry no identifier by definition.
+
+## Whose water — 2026-08-30
+
+The `eez` column read `unavailable` on all 189 detections. It was the one acceptance criterion of
+#16 met in code and not in data, and the reason recorded at the time was correct: Earth Engine's
+public catalogue carries no EEZ boundaries. The conclusion drawn from it was not. A zone is a
+polygon and membership is a point-in-polygon test — it needs no catalogue, no asset ingestion and
+no credentials, and `context/gee_layers.py` had already said as much in passing, that a polygon
+membership is not a reducer.
+
+```bash
+darkvessel eez   --config configs/kattegat-lane.yaml            # once, needs a network
+darkvessel zones --config configs/kattegat-lane.yaml --archive  # no network, no credentials
+```
+
+```
+2 zone(s) over the study area: Denmark, Sweden -> data/eez/kattegat-lane.gpkg
+  CC-BY 4.0 - https://creativecommons.org/licenses/by/4.0/
+189 detection(s) zoned -> outputs/kattegat-lane-archive.gpkg
+  EEZ: 189 in a named EEZ, 0 on the high seas, 0 unavailable
+```
+
+The study box straddles the Denmark–Sweden boundary, which is the line already visible on the web
+map, so the variable is real here rather than constant:
+
+```
+EEZ
+  Denmark          n=158  dark= 31   19.6%  [11.9%, 28.5%]
+  Sweden           n= 31  dark=  9   29.0%  [9.5%, 48.5%]
+  every interval overlaps every other; no concentration established
+```
+
+**The boundaries are not in this repository, deliberately.** Marine Regions publishes them under
+CC-BY, which would permit a clipped copy, and the licence file that ships with the geodatabase
+then asks users "not to make our products available for download elsewhere and to always refer to
+marineregions.org for the most up-to-date products and services". That is a courtesy rather than a
+licence term, which is why it is worth honouring rather than arguing with. So `darkvessel eez`
+writes into `data/`, where the Sentinel-1 archive and 21 GB of Danish AIS already live, ignored by
+git for their own reasons. A fresh clone reads `unavailable` until the command has run — the
+honest state, and the word exists for it.
+
+The provenance travels inside the fetched file rather than in a commit message: source, layer,
+retrieval time, licence, citation and the publisher's own terms are columns on every row, because
+the file is the only thing that will still be on somebody's disk in a year.
+
+### What is not claimed
+
+**The difference between the two zones is not a finding.** 19.6% against 29.0% looks like
+something and the intervals say it is not: [11.9%, 28.5%] and [9.5%, 48.5%] overlap across almost
+their whole width. Thirty-one detections in Swedish water is what that width is made of. The
+comparison is reported because refusing to report it would be choosing which overlaps to show.
+
+**A zone is not a claim about jurisdiction over a vessel.** Quoted from the licence that ships
+with the data rather than hedged in this project's words: "VLIZ expresses no opinion about the
+legal state neither of any country, territory or area nor concerning its delimitation, frontier or
+borders. The data has no legal value whatsoever." A detection carries which side of a published
+line it fell on, and nothing beyond that.
+
+**`high seas` and `unavailable` remain different words.** The first says a position is outside
+every zone; the second says this run could not answer. A fetch clipped to a rectangle adds a third
+case — a detection beyond what was fetched — and it belongs on the `unavailable` side. No
+detection in this archive is in either state, and the distinction is held by tests rather than by
+the fact that it currently never arises.
 
 ## Licence
 

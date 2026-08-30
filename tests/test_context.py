@@ -73,7 +73,7 @@ def context_config() -> dict:
         "context": {
             "shore": {"asset": "USDOS/LSIB_SIMPLE/2017", "search_radius_m": 200000},
             "depth": {"asset": "NOAA/NGDC/ETOPO1", "band": "bedrock"},
-            "eez": {"asset": None, "property": "SOVEREIGN1"},
+            "eez": {"property": "SOVEREIGN1", "reference": "../data/eez/kattegat-lane.gpkg"},
             "effort": {
                 "asset": "GFW/GFF/V1/fishing_hours",
                 "bands": ["trawlers", "purse_seines"],
@@ -248,10 +248,24 @@ def test_the_coverage_says_what_each_layer_answered_and_what_it_did_not() -> Non
 
 
 def test_a_source_named_null_is_a_layer_this_run_cannot_sample_rather_than_an_error() -> None:
-    """The EEZ boundaries are not in the public catalogue; see docs/decisions.md."""
+    """A null asset says this run has no such layer, and every row then reads `unavailable`
+    rather than carrying a zero nobody measured."""
+    config = context_config()
+    config["context"]["effort"]["asset"] = None
+
+    sources = context_request_from(config, Path("."))["sources"]
+
+    assert sources.effort is None
+    assert sources.shore == "USDOS/LSIB_SIMPLE/2017"
+
+
+def test_the_zones_are_not_asked_of_earth_engine_at_all() -> None:
+    """#35. A zone is a polygon and membership is a point-in-polygon test; it needs no catalogue,
+    so there is no EEZ source here to leave null. `context/zones.py` answers that column, and a
+    sampler that still carried one would be a second way to fill it."""
     sources = context_request_from(context_config(), Path("."))["sources"]
 
-    assert sources.eez is None
+    assert not hasattr(sources, "eez")
     assert sources.effort == "GFW/GFF/V1/fishing_hours"
 
 
