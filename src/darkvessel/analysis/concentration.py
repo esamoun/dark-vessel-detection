@@ -34,6 +34,7 @@ No network and no torch: this reads the GeoPackage the chain wrote and writes a 
 SVG, so the numbers in the README are re-derivable on a laptop in a few seconds.
 """
 
+import hashlib
 import json
 import math
 from dataclasses import dataclass
@@ -87,7 +88,7 @@ MEASURES = (
 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Rate:
     """A count of detections, how many were undeclared, and how firmly that share is known.
 
@@ -131,15 +132,15 @@ class Rate:
         return self.interval[1] < other.interval[0] or other.interval[1] < self.interval[0]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Band(Rate):
     """One slice of a variable's range, and the share of its detections that were undeclared."""
 
-    low: float = float("nan")
-    high: float = float("nan")
+    low: float
+    high: float
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Zone(Rate):
     """One named water, and the share of the detections standing in it that were undeclared.
 
@@ -148,7 +149,12 @@ class Zone(Rate):
     difference between two counts with no interval around either is not a finding.
     """
 
-    name: str = UNAVAILABLE
+    # No default, and `kw_only` is what allows that after an inherited field. A `Zone()` built
+    # without a name would otherwise default to `unavailable` — it would not fail, it would
+    # quietly claim to be the bucket of detections nobody could place, `Category.available` would
+    # go false, and the page would report a fetched archive as unfetched. That is the one
+    # conflation this variable exists to prevent.
+    name: str
 
 
 @dataclass(frozen=True)
@@ -257,14 +263,6 @@ class Category:
     zones: tuple[Zone, ...]
 
     @property
-    def counts(self) -> dict[str, int]:
-        return {zone.name: zone.total for zone in self.zones}
-
-    @property
-    def dark(self) -> dict[str, int]:
-        return {zone.name: zone.dark for zone in self.zones}
-
-    @property
     def available(self) -> bool:
         """False when every detection reads `unavailable`, which was the state until #35.
 
@@ -327,8 +325,6 @@ class Category:
             "label": self.label,
             "available": self.available,
             "comparable": self.comparable,
-            "counts": dict(sorted(self.counts.items())),
-            "dark": dict(sorted(self.dark.items())),
             "separations": [list(pair) for pair in self.separations],
             "zones": [
                 {
@@ -697,15 +693,32 @@ def _zones(
                 total=int((zones == name).sum()),
                 dark=int(dark[zones == name].sum()),
                 wilson=wilson(int(dark[zones == name].sum()), int((zones == name).sum())),
-                # Seeded by position in the sorted names, the convention `_profile` uses: adding
-                # a variable, or a zone, cannot move the numbers already published for the rest.
                 interval=interval_over(
-                    dark[zones == name], scenes[zones == name], draws=draws, seed=seed + position
+                    dark[zones == name],
+                    scenes[zones == name],
+                    draws=draws,
+                    seed=_seed_for(name, seed),
                 ),
             )
-            for position, name in enumerate(names)
+            for name in names
         ),
     )
+
+
+def _seed_for(name: str, seed: int) -> int:
+    """A bootstrap seed that belongs to the zone rather than to its place in a sorted list.
+
+    `_profile` seeds a band by its index, and that is stable: the third band of a variable stays
+    the third band whatever else the config grows. A zone's position is not stable. Sorted by
+    name, one new zone that sorts early — a "Belgium" — would shift the seed of every zone after
+    it and move intervals this project has already published, which is precisely what the
+    convention exists to prevent. Taking the offset from the name keeps the promise instead of
+    making it.
+
+    SHA-256 rather than `hash`, because `hash` on a string is salted per process and would hand
+    back a different interval on every run.
+    """
+    return seed + int.from_bytes(hashlib.sha256(name.encode()).digest()[:4], "big")
 
 
 def _sea(detections: gpd.GeoDataFrame, dark: np.ndarray, scenes: np.ndarray) -> Sea:

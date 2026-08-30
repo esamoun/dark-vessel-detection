@@ -53,7 +53,7 @@ The pipeline is built in four levels, each one shippable on its own.
 | **1 — Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.73 recall over a held-out split of 3000 sub-images, and the four changes that did not clear the noise are written up rather than removed |
 | **2 — Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene with the trained detector in it, since 2026-08-16 |
 | **3 — AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | **complete.** Runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching; detections are described by a representation learned without labels, and retrieval across ten weeks of acquisitions returns the same object 71% of the time against 0.02% at chance. Offshore structures are separated from vessels and excluded from the dark count without a single label: 65 fixed positions found by recurrence across 47 acquisitions, every one of them verified against published coordinates to 5.1 m, taking 80.5% of the detections a run over the wind farm would have had to explain |
-| **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | **complete.** The chain ran across all 50 acquisitions of the study area and 189 detections accumulated into one layer, 40 of them undeclared — 21.2%, and [13.6%, 29.4%] once the interval is resampled over acquisitions rather than over detections. Against depth and against recorded fishing effort every band's interval overlaps every other and nothing is claimed. Against distance to shore one band separates from all three others: the 770 m stripe carrying the declared lane, 61 detections per kilometre against 8.8 in the widest band, is 2.1% dark [0.0%, 6.5%] where the archive is 21.2%. Against the EEZ, 158 detections stand in Danish water and 31 in Swedish, 19.6% [11.9%, 28.5%] dark against 29.0% [9.5%, 48.5%] — the intervals overlap and nothing is claimed from the difference |
+| **4 — Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | **complete.** The chain ran across all 50 acquisitions of the study area and 189 detections accumulated into one layer, 40 of them undeclared — 21.2%, and [13.6%, 29.4%] once the interval is resampled over acquisitions rather than over detections. Against depth and against recorded fishing effort every band's interval overlaps every other and nothing is claimed. Against distance to shore one band separates from all three others: the 770 m stripe carrying the declared lane, 61 detections per kilometre against 8.8 in the widest band, is 2.1% dark [0.0%, 6.5%] where the archive is 21.2%. Against the EEZ, 158 detections stand in Danish water and 31 in Swedish, 19.6% [11.5%, 28.1%] dark against 29.0% [10.0%, 48.6%] — the intervals overlap and nothing is claimed from the difference |
 
 The chain that carries these was built first, deliberately, with a deterministic stand-in where
 the detector would go; the stand-in is still there, behind the same parameter, and is what the
@@ -109,7 +109,8 @@ geospatial data engineering, not deep learning, and is described as such.
 | Sentinel-1 GRD | SAR imagery | Copernicus Data Space / Earth Engine `COPERNICUS/S1_GRD` |
 | Danish Maritime Authority AIS | Declared vessel positions | open daily archives, `aisdata.ais.dk` |
 | LS-SSDD-v1.0 | Detector training | 15 large Sentinel-1 scenes, VV, cut into 9000 labelled sub-images |
-| Earth Engine catalogue | Bathymetry, EEZ, coastline, fishing effort | Google Earth Engine |
+| Earth Engine catalogue | Bathymetry, coastline, fishing effort | Google Earth Engine |
+| Marine Regions (VLIZ) | EEZ boundaries | Maritime Boundaries Geodatabase v12, CC-BY, fetched per run and not redistributed |
 
 Study area: **Danish waters** — dense and varied traffic, excellent Sentinel-1 revisit as a
 Copernicus priority zone, and freely available raw AIS.
@@ -1084,10 +1085,12 @@ which is an answer. `unavailable` means the layer did not give one. The tests ho
 distinction on the way in and again after a round trip through the file, because the criterion is
 about the written output and a driver is where a NaN would be lost.
 
-The EEZ reads `unavailable` in the run above, and that is the honest state of the shipped config:
-Marine Regions publishes the world's EEZ boundaries under CC-BY, Earth Engine's public catalogue
-does not carry them, and they have to be ingested once as an asset and named in the config. The
-column says so rather than being absent.
+The EEZ reads `unavailable` in the run above, and that was the honest state of the shipped
+config on this date: Marine Regions publishes the world's EEZ boundaries under CC-BY and Earth
+Engine's public catalogue does not carry them. The column says so rather than being absent.
+*(The next sentence used to read "and they have to be ingested once as an asset and named in the
+config", which is the part that turned out not to follow — see
+[Whose water](#whose-water--2026-08-30).)*
 
 ### What is not claimed
 
@@ -1435,8 +1438,8 @@ map, so the variable is real here rather than constant:
 
 ```
 EEZ
-  Denmark          n=158  dark= 31   19.6%  [11.9%, 28.5%]
-  Sweden           n= 31  dark=  9   29.0%  [9.5%, 48.5%]
+  Denmark          n=158  dark= 31   19.6%  [11.5%, 28.1%]
+  Sweden           n= 31  dark=  9   29.0%  [10.0%, 48.6%]
   every interval overlaps every other; no concentration established
 ```
 
@@ -1456,7 +1459,7 @@ the file is the only thing that will still be on somebody's disk in a year.
 ### What is not claimed
 
 **The difference between the two zones is not a finding.** 19.6% against 29.0% looks like
-something and the intervals say it is not: [11.9%, 28.5%] and [9.5%, 48.5%] overlap across almost
+something and the intervals say it is not: [11.5%, 28.1%] and [10.0%, 48.6%] overlap across almost
 their whole width. Thirty-one detections in Swedish water is what that width is made of. The
 comparison is reported because refusing to report it would be choosing which overlaps to show.
 

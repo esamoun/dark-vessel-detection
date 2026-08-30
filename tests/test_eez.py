@@ -34,7 +34,7 @@ from darkvessel.context.gee_layers import EEZ, HIGH_SEAS, UNAVAILABLE
 from darkvessel.context.zones import CLAIMED_BY, attach, zones_request_from
 from darkvessel.data import eez as source
 from darkvessel.data.area import Bounds
-from darkvessel.data.eez import LICENCE, Zones, fetch, load
+from darkvessel.data.eez import LICENCE, PROVENANCE, Zones, fetch, load
 
 WORKING_CRS = "EPSG:25832"
 
@@ -104,6 +104,7 @@ def boundaries(*zones: tuple[str, Polygon], covers: Bounds = BOX) -> Zones:
             crs="EPSG:4326",
         ),
         covers=covers,
+        provenance=dict.fromkeys(PROVENANCE, "fixture"),
     )
 
 
@@ -172,6 +173,21 @@ class TestFetchingThem:
 
         assert read_back.names("sovereign1") == ["Denmark", "Sweden"]
         assert read_back.covers.as_rectangle() == pytest.approx(BOX.as_rectangle(), abs=1e-9)
+
+    def test_a_fetch_that_found_no_zone_still_says_where_it_came_from(
+        self, served, tmp_path: Path
+    ) -> None:
+        """The file most in need of explaining itself is the one with nothing in it. Read off the
+        first row, its provenance would be blank exactly then, because there is no first row."""
+        served(answer(("Yemen", ELSEWHERE)))
+        path = tmp_path / "eez.gpkg"
+
+        fetch(BOX).write(path)
+        read_back = load(path)
+
+        assert len(read_back) == 0
+        assert read_back.provenance["licence"] == LICENCE
+        assert "no legal value whatsoever" in read_back.provenance["terms"]
 
     def test_a_reference_that_was_never_fetched_says_how_to_fetch_it(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError, match="darkvessel eez"):
