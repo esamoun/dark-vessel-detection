@@ -1611,9 +1611,9 @@ beside a bright patch no detection stands on, so a swap changes which row is the
 ## 2026-08-26 — The archive is fifty acquisitions of one rectangle, cut at its own operating point
 
 **Decision.** The representation is fitted on 348 crops from 49 acquisitions of the Kattegat box
-(fifty were fetched and one held no detection at all),
-between 2026-06-01 and 2026-08-10, ascending and descending both, cut from detections the trained
-detector returns at a score of 0.05 rather than the 0.90 the chain publishes at.
+(fifty were fetched and one held no detection at all), between 2026-06-01 and 2026-08-10,
+ascending and descending both, cut from detections the trained detector returns at a score of
+0.05 rather than the 0.90 the chain publishes at.
 
 **Why many acquisitions.** One acquisition of this rectangle holds six vessels. Six objects is not
 an archive and a representation fitted on it has learned six objects; the question this level
