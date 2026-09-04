@@ -219,6 +219,17 @@ that maps them.
 - [`docs/decisions.md`](docs/decisions.md): why each choice was made
 - [`docs/failures.md`](docs/failures.md): what was tried and did not work
 
+## How this was built
+
+I used Claude Code throughout, as an assistant. It wrote a share of the code and much of the
+prose, under review.
+
+What it did not do is decide. The study area, the choice to train a detector rather than
+threshold the imagery, the ablation ladder and the decision to reject R5, the tolerance the
+matching runs at, and the decision to publish unmatched detections as candidates rather than as
+findings, are mine. [`docs/decisions.md`](docs/decisions.md) is the record of that reasoning, and
+it is the honest place to judge whether I understand what is here.
+
 ## Setup
 
 ```bash
