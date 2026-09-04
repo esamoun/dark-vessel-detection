@@ -45,7 +45,7 @@
 <body>
 <div class="wrap">
   <h1>Dark vessel candidates — northern Kattegat</h1>
-  <p class="lede"><strong>189</strong> detections over <strong>49 acquisitions</strong> of Sentinel-1, 2026-06-01 to 2026-08-09. <strong>149</strong> matched a position declared over AIS within <strong>200 m</strong> of where the radar drew them; <strong>40</strong> did not.</p>
+  <p class="lede"><strong>189</strong> detections, carried by <strong>49 acquisitions</strong> of Sentinel-1, 2026-06-01 to 2026-08-09. <strong>149</strong> matched a position declared over AIS within <strong>200 m</strong> of where the radar drew them; <strong>40</strong> did not.</p>
   <div class="legend"><label class="key"><input type="checkbox" data-status="matched" checked><span class="dot" style="background:#1f6feb"></span>Matched a declared position <span class="count">149</span></label><label class="key"><input type="checkbox" data-status="dark" checked><span class="dot" style="background:#e5534b"></span>Dark candidate <span class="count">40</span></label></div>
   <div id="map"></div>
   <h2>Every detection</h2>
@@ -116,7 +116,7 @@ const FALLBACK = "unsearched";
     // SVG renderer writes for a shape it considers outside the frame — and stayed that way after
     // the view arrived. 188 of 189 detections were invisible on a map that was otherwise correct,
     // at the right place and the right scale, with a clean console.
-    map.setView([57.624201, 11.146071], 12);
+    map.setView([57.624201, 11.146071], 11);
 
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(map);
 
@@ -198,7 +198,7 @@ const FALLBACK = "unsearched";
       // A frame this small is not a frame; fitting to it is what produced the failure above.
       if (size.x < 200 || size.y < 200) { return; }
       map.fitBounds(L.featureGroup(markers).getBounds(), {
-        padding: [28, 28]
+        padding: [130, 130]
       });
     }
 
