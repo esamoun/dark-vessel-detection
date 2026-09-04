@@ -1,6 +1,6 @@
-# Evaluation — what the detector finds, what it does not, and what has never been asked of it
+# Evaluation — what the detector finds and where it breaks
 
-**2026-08-26. R1, epoch 12** — the configuration the ladder of issue #11 kept, and the weights
+**2026-08-26. R1, epoch 12**: the configuration the ladder of issue #11 kept, and the weights
 `configs/kattegat-lane.yaml` actually loads. Scored over the whole of LS-SSDD's held-out split:
 scenes 11 to 15, 3000 sub-images, 2378 ships, empty tiles included.
 
@@ -24,7 +24,7 @@ Three decisions decide what a precision on this page means, and all three make i
 number than an object-detection benchmark would report. They are stated first for that reason.
 
 **A detection is credited by distance, not by overlap.** A detection lands on a ship if its centre
-falls within **200 m** of the ship's centre — the same tolerance the AIS fusion downstream applies
+falls within **200 m** of the ship's centre: the same tolerance the AIS fusion downstream applies
 to a declared position, read into pixels through the 10 m resolution. Overlap is the wrong
 instrument here: a 60 m vessel is six pixels, so a box two pixels out already fails at half IoU,
 and the score would be measuring a box no stage of this chain ever uses. The reasoning is in
@@ -32,7 +32,7 @@ and the score would be measuring a box no stage of this chain ever uses. The rea
 
 **One ship can be found once.** Detections claim ships in order of confidence and a claimed ship
 is gone, so a detector that returns one hull four times is credited with one hit and charged three
-false alarms — which is what those four would be to anyone sent out to look at them.
+false alarms, which is what those four would be to anyone sent out to look at them.
 
 **The split is drawn by scene.** LS-SSDD's own published split, scenes 01–10 against 11–15, so
 two cuts of one acquisition never straddle it. The training side was cut down to 2246 tiles to fit a
@@ -56,10 +56,10 @@ Six points, because six thresholds are what the run scored. It is a coarse curve
 whole of one: nothing between 0.75 and 0.90 has been measured, and the chain operates in exactly
 that gap's upper end.
 
-**The interval beside each figure is where it went over the run's last four epochs** — epochs that
+**The interval beside each figure is where it went over the run's last four epochs**: epochs that
 differ from one another by nothing except where the run was stopped. It is the real range and not
 a symmetric error bar: the final epoch usually sits at one end of it. At the threshold the chain
-runs, recall is 0.726 and the last four epochs covered 0.656 to 0.736 — 0.656 at epoch 9, 0.736
+runs, recall is 0.726 and the last four epochs covered 0.656 to 0.736: 0.656 at epoch 9, 0.736
 at epoch 11, 0.726 at the epoch that was kept. The same config, the same seed and the same data
 report a recall eight points apart depending on which epoch the session happened to end on.
 
@@ -70,10 +70,10 @@ cosine decay, the one change the ladder kept, cut that wander from 0.026 to 0.01
 best-F1 statistic, and did not remove it. **Nothing here is stable to three decimal places, and no
 figure on this page should be quoted to three.**
 
-## Where the chain sits, and what it pays
+## Where the chain sits on the curve
 
 `configs/kattegat-lane.yaml` runs at **0.90**, which is not where F1 is best. F1 peaks at 0.75, at
-0.838; the chain gives up 0.016 of it to buy precision from 0.851 to 0.946 — 246 fewer false
+0.838; the chain gives up 0.016 of it to buy precision from 0.851 to 0.946: 246 fewer false
 alarms for 238 fewer ships found. That is a deliberate asymmetry and the reason is downstream
 rather than statistical: every detection this chain fails to match against AIS is published as a
 dark vessel, which is an accusation someone may be sent out on. A miss costs a ship nobody looked
@@ -86,7 +86,7 @@ curve: across the last four epochs precision moved by 0.029 and recall by 0.080.
 
 What it buys on the scene rather than on the split is sharper than the table suggests. Over the
 Kattegat frame, at this same 0.90, the weights of 2026-08-14 return **four** of the six declared
-hulls — they score the 274 m vessel at 0.850 and the 24 m one at 0.862, both under the bar. These
+hulls: they score the 274 m vessel at 0.850 and the 24 m one at 0.862, both under the bar. These
 weights return all six, the lowest at 0.927. Same threshold, same scene, two more ships.
 
 ## What the misses are made of
@@ -101,7 +101,7 @@ detection.**
 
 Two honest deductions from that number before anything is built on it.
 
-- Some of those 542 are luck. At 0.05 the detector raises 25299 false alarms over 3000 tiles —
+- Some of those 542 are luck. At 0.05 the detector raises 25299 false alarms over 3000 tiles:
   8.4 per tile, 0.132 per km², against a tolerance disc of 0.126 km². Of order **eleven** of the
   651 would have a spurious detection land within tolerance by chance alone. Eleven, not 542.
 - "The threshold throws them away" is not the same as "lowering the threshold would recover them".
@@ -111,7 +111,7 @@ Two honest deductions from that number before anything is built on it.
 What this points at is **score calibration** rather than detection capacity. That was written on
 2026-08-26 as the second independent line of evidence pointing at the region
 [issue #24](https://github.com/esamoun/dark-vessel-detection/issues/24) describes, the first being
-the anchor census — and issue #24 has since been run and has **refuted** the reading. Lowering the
+the anchor census, and issue #24 has since been run and has **refuted** the reading. Lowering the
 RPN's foreground threshold to 0.3 did not sharpen the calibration; it left precision at 0.75
 unchanged at 0.850 and cost recall. The observation above stands; the explanation attached to it
 in this paragraph does not. See the entry of 2026-08-30 in `docs/failures.md`, and failure mode 1
@@ -127,12 +127,12 @@ ship-bearing training tiles and their 3637 ships, ninety percent of ships never 
 0.7 foreground IoU threshold against *any* stock anchor. They become positives only because
 `allow_low_quality_matches` guarantees every box its best anchor, and when a 16 px ship sits
 inside a 32 px anchor the overlap is `256/1024 = 0.25` for every anchor containing it,
-identically, so they tie at the maximum and the rescue rule forces all of them positive at once —
+identically, so they tie at the maximum and the rescue rule forces all of them positive at once:
 one tile produced 3098 that way. *Evidence: the census of 2026-08-19, `docs/decisions.md`.*
 
 **This was written as the standing explanation for the weak, badly separated confidences the
 section above measures, and it is no longer one.** It was called untested on 2026-08-26, two rungs
-having failed in the region it describes without changing the threshold itself — R2's anchor
+having failed in the region it describes without changing the threshold itself: R2's anchor
 geometry, −0.048, and R4's sampler batch, −0.009. Issue #24 tested it on 2026-08-30 and the
 hypothesis did not survive: R5 took the foreground threshold to 0.3, giving 1019 more ships a
 genuine match and doubling the positives the RPN samples, and scored **0.823 against R1's 0.836**.
@@ -140,7 +140,7 @@ Precision at 0.75 was unchanged; the whole loss was recall, and 72 of the 2378 h
 the detector's reach altogether.
 
 The mechanism runs the other way from the one this paragraph implies. The tied set the rescue rule
-forces positive is, by construction, the anchors *centred* on the ship — at level 0's stride of 4,
+forces positive is, by construction, the anchors *centred* on the ship: at level 0's stride of 4,
 some twenty-five of them, each within half a ship's length. An IoU floor of 0.3 admits anchors
 sitting off to one side as well, and the RPN learns a blunter answer. A tied maximum is a centring
 criterion and a floor is not. So the count above is a true description of how these anchors match,
@@ -158,8 +158,8 @@ calibration rather than its detections; the loss curve says nothing about it, an
 only because the held-out split is scored every epoch.
 
 **3. One hull reported many times.** The bright-pixel stand-in reported a 274 m vessel as **eight
-detections** — the cross of sidelobes around a large ship is bright enough to threshold as
-separate targets — and 16 detections over the Kattegat scene resolved to 6 objects. The trained
+detections** (the cross of sidelobes around a large ship is bright enough to threshold as
+separate targets), and 16 detections over the Kattegat scene resolved to 6 objects. The trained
 detector reported the same six hulls exactly six times. *Evidence: the scene checked by eye on
 2026-08-14 and the swap of 2026-08-16, both in the README.* Under the counting rule above, every
 duplicate is a false alarm, so this failure mode is already priced into the false-alarm column;
@@ -174,7 +174,7 @@ became 5. This is a fusion failure rather than a detector failure, and it is in 
 because it is the largest single source of false dark vessels this project has found.
 
 **5. Low-confidence noise, at a scale the statistic does not see.** 25299 false alarms at 0.05
-against 99 at 0.90. All three rejected RPN rungs cut it — R2 to 9883, R4 to 14887, R5 to 11397 —
+against 99 at 0.90. All three rejected RPN rungs cut it (R2 to 9883, R4 to 14887, R5 to 11397),
 and none moved the statistic, which is decided at 0.75. Three observations of one shape now, rather
 than two: every change to the RPN's positive/negative bookkeeping suppresses low-confidence
 detections and none of them reaches the operating point. *Evidence: `docs/failures.md`, 2026-08-23,
@@ -187,34 +187,34 @@ its scores, not its proposals, are what separate.
 
 The list is long, and its length is the point.
 
-- **One acquisition — for the numbers *in this report*.** Every scene-level number below comes from
+- **One acquisition: for the numbers *in this report*.** Every scene-level number below comes from
   a single Sentinel-1 IW GRD frame over the northern Kattegat, on one date, in one sea state, and
   causes 3 and 4 are single observations on it. That was the whole project's limit when this was
   written on 2026-08-26 and it is no longer: `darkvessel archive-run` has since carried the chain
   over **50 acquisitions** of the study area between 1 June and 9 August 2026, 49 of which held a
   detection, and `docs/runs/analysis-archive.json` is what came back. What has not happened is this
-  report being redone against them — so the limit is now that its failure modes are evidenced on one
+  report being redone against them, so the limit is now that its failure modes are evidenced on one
   frame while fifty are sitting in the repository, which is a smaller and more embarrassing limit
   than the one this bullet used to state. Sea state, season and repeat pass are no longer untouched;
   they are untouched *here*.
 - **VV only, at both ends.** LS-SSDD is VV throughout and the Kattegat export is VV because Earth
   Engine's 48 MiB limit forced a choice between area and polarisation. Dual-polarisation is
-  untested because there is no data for it — `docs/failures.md`, 2026-08-17.
+  untested because there is no data for it: `docs/failures.md`, 2026-08-17.
 - **No land in the frame, ever.** The study area is open water by construction. Nothing in this
   chain masks land, and no coastline has been put in front of it.
 - **Fixed structures are excluded only where an archive has seen them.** Offshore turbines are
   bright point scatterers that a ship detector returns happily, and since 2026-08-27 the chain
   will not call one a dark vessel: `data/reference/fixed-structures.csv` holds 65 positions the
   Anholt archive carried a detection at in 20+ acquisitions, every one verified against published
-  coordinates to 5.1 m at the median. The limit is what builds that file. Only an archive can —
-  one acquisition cannot tell a mast from a ship that happens to be there — so a structure in
+  coordinates to 5.1 m at the median. The limit is what builds that file. Only an archive can
+  (one acquisition cannot tell a mast from a ship that happens to be there), so a structure in
   water this project has not watched for ten weeks is still reported as a dark candidate. The
   study area itself has none, published or found, which is why the exclusion changes nothing over
   the lane and everything over the farm.
 - **Calm water only.** High wind roughens the sea surface and raises the clutter floor. No scene
   in a high sea state has been run, and the behaviour is not extrapolable from these numbers.
 - **Sparse traffic only.** Six vessels in the frame. Nothing has been run over a port approach,
-  an anchorage, or a convoy where hulls are within a tolerance disc of one another — and the
+  an anchorage, or a convoy where hulls are within a tolerance disc of one another, and the
   counting rule, one ship claimed once in confidence order, is exactly the rule most likely to
   behave differently there.
 - **A fixed incidence angle.** The azimuth correction assumes **38.5°**, the middle of an IW
@@ -228,7 +228,7 @@ The list is long, and its length is the point.
 - **Truthful AIS.** A vessel that spoofs its identity or position while transmitting is matched
   and reported as declared. This chain detects silence, not lies.
 - **More than one execution of the shipped weights, on the scene.** R1 has now been run over the
-  Kattegat frame — six detections, six hulls, five matched and one dark, the same six vessels the
+  Kattegat frame: six detections, six hulls, five matched and one dark, the same six vessels the
   2026-08-14 detector found and every score higher. But the scene-level numbers in causes 3 and 4
   below were established with that older detector, and only the totals have been repeated under
   these weights. See `docs/decisions.md`, 2026-08-26.
@@ -237,18 +237,18 @@ The list is long, and its length is the point.
 
 Every failure mode above is evidenced by a count, a mechanism or a named vessel. **None is
 evidenced by a picture of a tile the detector got wrong**, and no analysis here relates a miss to a
-property of the ship that was missed — its length, its heading, its distance to another ship, the
+property of the ship that was missed: its length, its heading, its distance to another ship, the
 scene it came from.
 
 That is not an oversight in the writing; it is what this machine can reach. R1's weights are here
-now, but **LS-SSDD is not** — the split these numbers describe is 3000 sub-images on Kaggle. Without
+now, but **LS-SSDD is not**: the split these numbers describe is 3000 sub-images on Kaggle. Without
 it there is no tile to crop and no box to measure against, so the 651 misses cannot be broken down
 by anything, and the weights being local does not help: what is missing is the data, not the model.
 
 One session on a rented GPU closes it, and the shape of it is known:
 
 1. Score the held-out split once with R1 at a fine grid of thresholds rather than six, so the
-   curve between 0.75 and 0.90 — where the chain lives — stops being an interpolation.
+   curve between 0.75 and 0.90 (where the chain lives) stops being an interpolation.
 2. For each held-out ship, record the score of the best detection within tolerance, and join that
    against the ship's box size and scene. The 542/109 split above becomes a distribution instead
    of two numbers.
