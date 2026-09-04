@@ -125,20 +125,16 @@ the layer cannot tell them apart unless the radius is in the row.
 
 ---
 
-## 2026-08-13 — torch and Earth Engine are extras, not dependencies
+## 2026-08-13 — torch and Earth Engine move to optional extras
 
-**Decision.** The package's required dependencies are the chain's: numpy, rasterio, geopandas
-and friends. `torch`/`torchvision` move to a `detector` extra and `earthengine-api` to a `gee`
-extra.
-
-**Why.** The acceptance condition for the chain is that it runs with no weights, GPU or network.
-A hard dependency on torch contradicts that at install time: a reader cloning the repository to
-see the pipeline work would pull two gigabytes of CUDA wheels to run a threshold on bright
-pixels. It also matters locally — the development machine has 8 GB and limited disk.
+Required dependencies are the chain's: numpy, rasterio, geopandas and friends.
+`torch`/`torchvision` go to a `detector` extra, `earthengine-api` to a `gee` extra. The chain has
+to run with no weights, GPU or network, and a hard torch dependency breaks that at install time —
+two gigabytes of CUDA wheels to run a threshold on bright pixels.
 
 ---
 
-## 2026-08-13 — A scene outside the working CRS is refused, not reprojected
+## 2026-08-13 — Scenes outside the working CRS are refused
 
 **Decision.** The run declares its working CRS in the config. If the scene is not in it, the
 command fails with an error naming both CRSs.
@@ -154,15 +150,16 @@ the detector sees. That is a decision about the run, and it belongs to whoever c
 
 ---
 
-## 2026-08-13 — CI installs with pip, and runs the same two make targets as a laptop
+## 2026-08-13 — CI: pip install, make lint, make test
 
 **Decision.** GitHub Actions runs `make lint` and `make test` on every push and pull request, as
 two separate jobs, installing with `pip install -e ".[dev]"` rather than building the conda
 environment in `environment.yml`.
 
-**Why the same make targets.** If CI runs a different command from the one in the README, there
-are two definitions of "the tests pass" and they drift apart quietly. The Makefile is the single
-definition; CI is one more caller of it.
+CI calls the same Makefile targets as the README, so there is one definition of "the tests pass"
+rather than two that drift apart quietly. Lint and tests are separate jobs because in one job a
+formatting slip stops the tests running at all, and a red badge then says nothing about whether
+the code works.
 
 **Why pip and not conda.** `environment.yml` exists for a specific local problem — GDAL and the
 geospatial stack are painful to build on macOS. On Linux the same libraries are wheels and
@@ -171,10 +168,6 @@ makes CI verify the claim the README actually makes to a reader: that a clean ma
 gets a working chain. The chain runs with no weights, no GPU and no network, which is what makes
 this possible at all — a run needing Earth Engine credentials or a checkpoint could not be a
 required check on a public repository.
-
-**Why lint and tests are separate jobs.** In one job the lint step runs first and a formatting
-slip stops the tests from running at all, so a red badge says nothing about whether the code
-works. Separately, the checks list names which of the two broke.
 
 **Why the tests run on two Python versions.** `requires-python` claims 3.11 and `environment.yml`
 pins it, but the development machine runs 3.13. Testing only one of them leaves the other an
@@ -190,7 +183,7 @@ depend on the interpreter.
 
 ---
 
-## 2026-08-13 — Cross-tile duplicates are prevented by ownership, not removed by proximity
+## 2026-08-13 — Cross-tile duplicates: one owning tile per target
 
 **Decision.** The scene is partitioned into cores, one per tile, and a tile reports only the
 detections standing in its own core. There is no merge step, no distance threshold and no
@@ -245,7 +238,7 @@ fixture's boundary target.
 
 ---
 
-## 2026-08-13 — A real scene arrives clipped, in one response, and its georeferencing is never recomputed
+## 2026-08-13 — Scene fetch: clipped server-side, in one response
 
 **Decision.** `darkvessel export` asks Earth Engine for one acquisition, already clipped to the
 area of interest and reprojected into the working CRS, and takes back a single GeoTIFF. The file
@@ -291,39 +284,31 @@ is the most confident wrong answer this chain is capable of producing: a GeoPack
 "dark vessels" over the Kattegat, opening in QGIS looking exactly like a finding. "Dark" is a
 claim about what was searched, and with no AIS supplied nothing was.
 
-**The distinction that matters.** An empty AIS slice is not the same as no AIS slice. An empty
-slice is a search that ran and returned nothing, and its detections are honestly dark. `None` is
-no search at all. The config spells the absence out as `ais: null` rather than allowing it by
-omission, so a run cannot arrive here by forgetting a key.
+An empty AIS slice is not the same as no AIS slice: an empty slice is a search that ran and
+returned nothing, so its detections are honestly dark. The config spells the absence out as
+`ais: null` rather than allowing it by omission, so a run cannot arrive here by forgetting a key.
 
 ---
 
-## 2026-08-13 — The synthetic scene is placed at sea, not at a round number
+## 2026-08-13 — Synthetic scene moved to open water
 
 **Decision.** The synthetic fixture moves from (500000, 6150000) to (639000, 6282000) in
 EPSG:25832 — from farmland near Vejen to open water in the Kattegat, inside the area
 `configs/anholt.yaml` fetches a real acquisition over.
 
-**What was wrong with the old origin.** Nothing, arithmetically. 500000 is the central meridian
-of UTM zone 32N and 6150000 is a round northing; both were placeholders, and every detection
-landed exactly where the transform said. But the transform said mainland Jutland. Dragged onto a
-basemap in QGIS — the first thing anyone does with the output, and an acceptance criterion of the
-real-scene ticket — the demonstration showed four vessels in a field.
+The old origin was arithmetically fine — 500000 is the central meridian of UTM zone 32N, 6150000
+a round northing, and every detection landed exactly where the transform said. But the transform
+said mainland Jutland, so the shipped demo dragged onto a basemap in QGIS showed four vessels in
+a field. A reader cannot tell a placeholder origin from the georeferencing fault the tests exist
+to rule out, and a fixture that cannot be distinguished from the bug it disproves is worth moving.
 
-**Why it matters more than it looks.** The claim this repository makes is that the output opens
-in QGIS and lands where it should. A reader checking that claim against the shipped demo would
-have found it false, and would have had no way to tell a placeholder origin from a georeferencing
-fault — which is precisely the failure the georeferencing tests exist to rule out. A fixture that
-cannot be distinguished from the bug it is meant to disprove is worth moving.
-
-**How it was moved.** By a uniform shift, applied to the fixture and to every hand-derived
-literal in the seam test at once. The tests assert ground coordinates worked out from the
-transform rather than recomputed by the code, so an inconsistent shift fails them; passing after
-the move is what says the shift was uniform.
+Moved by a uniform shift applied to the fixture and to every hand-derived literal in the seam
+test at once. The tests assert ground coordinates worked out from the transform rather than
+recomputed by the code, so an inconsistent shift fails them.
 
 ---
 
-## 2026-08-13 — A product's nodata is a hole, and a hole is not a target
+## 2026-08-13 — Nodata is masked before thresholding
 
 **Decision.** `Scene.from_geotiff` turns anything the file declares as nodata into NaN before the
 image reaches a detector.
@@ -354,7 +339,7 @@ The scheme held; the input broke the condition it is documented to require.
 
 ---
 
-## 2026-08-13 — Vessels are placed at the acquisition instant, and never extrapolated past their track
+## 2026-08-13 — Vessels placed at the acquisition instant
 
 **Supersedes** *Matching is against the nearest report in time, and that is wrong on purpose*.
 
@@ -422,7 +407,7 @@ chain that interpolates from one that does not.
 
 ---
 
-## 2026-08-13 — A day of Danish AIS is streamed and filtered, never stored
+## 2026-08-13 — Danish AIS is streamed, not stored
 
 **Decision.** `darkvessel ais` inflates the daily archive off the network a chunk at a time,
 filters each chunk to the study area and the window, and discards it. Nothing is written to disk
@@ -460,7 +445,7 @@ a named constant rather than a string in a function.
 
 ---
 
-## 2026-08-13 — What cleaning removes from raw AIS, and why the two errors are not symmetric
+## 2026-08-13 — AIS cleaning rules
 
 **Decision.** Five rules, applied in that order, each counting what it removed: reports that are
 not a vessel, reports without a nine-digit identifier, exact duplicates, two positions for one
@@ -691,7 +676,7 @@ have to move together on the day cross-polarised backscatter is wanted.
 
 ---
 
-## 2026-08-14 — The held-out split is drawn by scene, and only the training side is ever cut down
+## 2026-08-14 — Held-out split drawn by scene
 
 **Decision.** LS-SSDD's own split: sub-images cut from scenes 01–10 train, 11–15 are held out.
 The training side keeps every tile carrying a ship plus one empty tile per ship-bearing tile; the
@@ -793,7 +778,7 @@ ticket's work, and it is written down here so that it is a task rather than a di
 
 ---
 
-## 2026-08-14 — The first training run keeps the stock anchors, and that is the baseline
+## 2026-08-14 — First training run: stock anchors
 
 **Decision.** The shipped training config uses torchvision's own anchor sizes — 32 px upwards —
 even though they are the wrong range for this data. Adapting them is the next detector ticket's
@@ -939,7 +924,7 @@ material.
 
 ---
 
-## 2026-08-16 — Where the trained weights live, and what names them
+## 2026-08-16 — Weights: path, provenance, digest
 
 **Decision.** `models/epoch-012.pt`, outside git. `.gitignore` already ignores `*.pt`, so no new
 rule was needed. The repository carries the path, the provenance and the digest, not 330 MB.
@@ -962,7 +947,7 @@ disagrees.
 
 ---
 
-## 2026-08-16 — The declaration is moved into the radar's frame, not the tolerance widened
+## 2026-08-16 — Declarations moved into the radar's frame
 
 **Decision.** Before matching, each declared position is displaced along the satellite's ground
 track by `fusion/azimuth.py`, using the velocity the AIS track already gives. The match tolerance
@@ -1591,7 +1576,7 @@ belongs to the other detector.
 
 ---
 
-## 2026-08-26 — The embedding stage is optional, and the chain has to be unchanged by it
+## 2026-08-26 — The embedding stage is optional
 
 **Decision.** `pipeline.run` takes an `embedder` alongside the detector, defaulting to None. With
 one, each detection's crop is described and the vector travels in the layer, one column per
@@ -1651,7 +1636,7 @@ how every check at this level counts, recorded below.
 
 ---
 
-## 2026-08-26 — Speckle is the augmentation radar allows, and the looks are measured per scene
+## 2026-08-26 — Speckle augmentation, looks measured per scene
 
 **Decision.** A contrastive view is one of the eight symmetries of the square, a translation of up
 to eight pixels, and a multiplicative perturbation drawn from a Gamma distribution of 4.1 looks —
@@ -2292,7 +2277,7 @@ reader told there were too few acquisitions would go and fetch more.
 Each is held by a test in `TestWhatCouldNotBeMeasured`, and each guard was watched failing on the
 revert before it was kept.
 
-## 2026-08-29 — The interval has an interval, and the page states what resolution to read it at
+## 2026-08-29 — Bootstrap precision: 4000 draws against one printed decimal
 
 Found by re-reading the previous entry against a measurement, which is the order it should have
 happened in. The config's comment beside `draws` claimed the bootstrap percentiles were "stable to
@@ -2331,7 +2316,7 @@ would pass on a bootstrap that had stopped clustering at all.
 
 ---
 
-## 2026-08-29 — The RPN's foreground IoU threshold is a build parameter, and the sixth rung is set from a sweep rather than from a worked example
+## 2026-08-29 — RPN foreground IoU threshold, set from a sweep
 
 **Decision.** `rpn_fg_iou_thresh` and `rpn_bg_iou_thresh` are build parameters of
 `detector_model`, recorded in the block every checkpoint carries and checked when one is loaded.
@@ -2400,7 +2385,7 @@ regime, and silence read as torchvision's own — and by the sweep's arithmetic 
 
 ---
 
-## 2026-08-30 — The threshold sweep, and rung 5 set at 0.3 because the rule says one line
+## 2026-08-30 — Rung 5: foreground IoU at 0.3
 
 **Decision.** `configs/ladder/r5-fg-iou.yaml` runs `rpn_fg_iou_thresh: 0.3`, moving one key and
 leaving `rpn_bg_iou_thresh` at torchvision's 0.3. Fixed here, from the sweep below, **before the
@@ -2502,7 +2487,7 @@ mechanism runs the other way: `allow_low_quality_matches` was selecting a *bette
 than a lowered threshold does, because a tied maximum is a centring criterion and an IoU floor is
 not. `docs/failures.md`, 2026-08-30, with the numbers.
 
-## 2026-08-30 — The map is two files, and the basemap is the one with nothing in front of it
+## 2026-08-30 — The map is two files
 
 Issue #8 asks for a static page showing the detections over a basemap, matched in one colour and
 dark candidates in another, and it says why it is built now rather than at the end: once the map
