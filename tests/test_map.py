@@ -40,6 +40,7 @@ from darkvessel.fusion.match import DARK, MATCHED, UNSEARCHED
 from darkvessel.viz.map import (
     COLOURS,
     EMPTY_VIEW,
+    FIT_PADDING,
     GEOJSON_NAME,
     LEAFLET,
     LEAFLET_CHECKSUMS,
@@ -519,3 +520,40 @@ def test_a_config_with_only_a_single_scene_run_maps_that() -> None:
 def test_a_config_naming_no_layer_at_all_is_refused_before_anything_is_written() -> None:
     with pytest.raises(ValueError, match="nothing to map"):
         map_request_from({"map": {"out": "../docs/map"}}, Path(__file__).resolve().parent)
+
+
+def test_the_fit_pulls_back_far_enough_for_the_coast_to_enter_the_frame() -> None:
+    """Fitted tight, the Kattegat box holds no coastline and the page opens on dots over an
+    empty blue rectangle.
+
+    The detections span 11.00 to 11.29 degrees east. The nearest shore is 21.3 km from the
+    westernmost of them, which at this latitude puts the Danish coast at 10.65 degrees east or
+    nearer. `FIT_PADDING` has to be wide enough that Leaflet drops a zoom level and brings that
+    coast into view; at the 28 px this started at, the fit chooses zoom 11 and the visible
+    longitudes run 10.78 to 11.51, so the coast falls outside and a reader cannot place the
+    water. Nothing else in the suite notices, because a map of the open sea renders perfectly
+    and says nothing.
+    """
+    west, east = 11.003, 11.289
+    south, north = 57.551, 57.697
+    coast = 10.65
+    viewport = (1060, 620)
+
+    def mercator(lat: float) -> float:
+        return math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))
+
+    width, height = viewport
+    available = (width - 2 * FIT_PADDING, height - 2 * FIT_PADDING)
+    zoom = math.floor(
+        min(
+            math.log2(available[0] / 256 * 360 / (east - west)),
+            math.log2(available[1] / 256 * 2 * math.pi / (mercator(north) - mercator(south))),
+        )
+    )
+    visible = width / 256 * 360 / 2**zoom
+    westmost = (west + east) / 2 - visible / 2
+
+    assert westmost < coast, (
+        f"the fit opens at {westmost:.2f} degrees east, which leaves the coast at {coast} "
+        f"outside the frame; FIT_PADDING is {FIT_PADDING} px and is too tight"
+    )

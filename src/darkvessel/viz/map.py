@@ -174,9 +174,13 @@ MAX_ZOOM = 19
 # georeferencing fault rather than as a run that found nothing.
 EMPTY_VIEW = ((57.6, 11.15), 9)
 
-# Room around the fitted bounds, in pixels, so a detection on the edge of the box does not sit
-# half under the frame.
-FIT_PADDING = 28
+# Room around the fitted bounds, in pixels. Wide enough that a detection on the edge of the box
+# does not sit half under the frame, and wide enough that the fit falls a zoom level short of the
+# detections themselves. The second is what matters on open water: fitted tight, the Kattegat box
+# holds no coastline at all, and the page opens on a field of dots over an empty blue rectangle
+# that a reader cannot place. Pulling back brings Denmark and Sweden into the frame, which is what
+# makes the picture read as a map.
+FIT_PADDING = 130
 
 # How the statuses are named to a reader who has not read `fusion/match.py`.
 LABELS = {
@@ -517,7 +521,7 @@ def _lede(summary: Summary) -> str:
         else ""
     )
     sentences = [
-        f"<strong>{summary.detections}</strong> detections over "
+        f"<strong>{summary.detections}</strong> detections, carried by "
         f"<strong>{_acquisitions(summary.acquisitions)}</strong> of Sentinel-1{span}."
     ]
     if summary.tolerances:
