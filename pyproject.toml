@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "darkvessel"
-version = "0.1.0"
+version = "1.0.0"
 description = "Detecting undeclared vessels by fusing Sentinel-1 SAR with AIS over Danish waters"
 readme = "README.md"
 requires-python = ">=3.11"
