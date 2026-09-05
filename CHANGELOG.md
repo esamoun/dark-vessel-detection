@@ -65,7 +65,7 @@ true:
 - **Augmentations move pixels and never change them.** Flips and quarter turns, the eight
   symmetries of the square. Amplitude on radar *is* the measurement, so a contrast jitter does not
   produce a second look at the same ship: it produces a ship made of a different material. The
-  test for this asserts the property rather than the list: the sorted pixel values of a tile come
+  test for this asserts the property, not the list: the sorted pixel values of a tile come
   back identical after any augmentation the code is allowed to apply.
 - **A detection is scored against the tolerance the fusion will apply to it**, 200 m, in metres,
   read into pixels through the resolution, rather than by box overlap. At 10 m a 60 m vessel is
@@ -77,7 +77,7 @@ true:
   direction for every ship, visible nowhere. An index of 0 cannot occur in a set counting from
   one and an index equal to the width cannot occur in one counting from zero, so the boxes settle
   it themselves. Where they cannot (a subset too small to contain either) the load refuses
-  rather than defaulting.
+  instead of defaulting.
 
 The architecture is a stock Faster R-CNN with a two-class head, and its anchors are torchvision's
 own. The smallest is 32 px, a 320 m vessel at 10 m, longer than nearly everything in the training
@@ -160,16 +160,16 @@ inside the noise. Each has its numbers and its mechanism in
 - **R3, the single-channel stem.** 0.83556 against R1's 0.83557. The folded stem agrees with the
   three-copy repeat inside the tile at initialisation and differs only over a three-pixel border,
   so a near-null was expected; it arrived nearer to null than anyone would have bet. The three
-  copies were not costing anything, and that is a measured answer rather than an assumed one.
+  copies were not costing anything, and that is a measured answer, not an assumed one.
 - **R4, the RPN sampler.** −0.0087 against a band of 0.0099: the change is smaller than the noise
-  it had to beat, which makes it a draw rather than a harm. What it demonstrably did do is widen
+  it had to beat, which makes it a draw, not a harm. What it demonstrably did do is widen
   the band to 0.019, the noisiest run on the kept branch: sixteen positives and sixteen negatives
   per image is a noisier gradient than 43-odd positives out of 256.
 - **R5, the foreground IoU threshold.** −0.0128 against the same 0.0099, outside the band, so a
   loss rather than a draw, though a small one against its own band of 0.025. Added after the five
   above had run, which is the thing the rule exists to make suspect; what makes it admissible is
   that its hypothesis was written down on 2026-08-19, three days before the first rung trained, and
-  its value came from a measurement rather than from the five outcomes.
+  its value came from a measurement, not from the five outcomes.
 
 Training losses are not comparable across rungs that move the anchors or the sampler, and both
 directions of that trap appear here: R2's final loss is 0.044 against R1's 0.117 on a detector
