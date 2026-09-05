@@ -420,7 +420,7 @@ rung's statistic is decided at 0.75 or 0.90, where R2 loses.
 **A caveat recorded rather than argued away.** R2 is still climbing at epoch 12 (0.770, 0.785,
 0.788 over its last three), and its band of 0.0173 is nearly twice R1's, both consistent with a
 configuration that has not converged in the twelve epochs it was given. Twelve is part of the
-comparison rather than an accident of it, and the gap is 0.058 rather than a thousandth, so this
+comparison rather than an accident of it, and the gap is 0.058, not a thousandth, so this
 does not put the verdict in doubt. It does mean the rejection is of *these anchors under this
 schedule*, which is the only thing any rung of this ladder ever measures.
 
