@@ -1,7 +1,7 @@
 # Related work
 
 Dark vessel detection is an established problem with an active literature and operational
-commercial services. This file records what exists, what was reused, and what was built here —
+commercial services. This file records what exists, what was reused, and what was built here,
 so that the boundary between the two is never in doubt.
 
 Populate as sources are actually read. An unread citation is worse than no citation.
@@ -28,6 +28,6 @@ Earth. Its published split is scenes 01–10 for training and 11–15 for test.
 
 **Relationship to this project: reused.** It is the training set for the detector, used with its
 own split so that results here can be put beside the paper's baselines. Read as far as its
-construction, its split and its layout — enough to use it correctly and to say why it was chosen
+construction, its split and its layout: enough to use it correctly and to say why it was chosen
 over HRSID, SSDD and xView3-SAR; not yet its baseline results, which are worth reading once this
 project has numbers of its own to compare.

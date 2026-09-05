@@ -1917,7 +1917,7 @@ registered structure may sit from a published one and still be called the same s
 is load-bearing for nothing: the matches it accepts are 5.1 m apart at the median and 15.8 m at
 the worst, and the one position it rejects is 602 m out.
 
-### What it was verified against, and what that reference is worth
+### What the register was checked against
 
 **OpenStreetMap, through the Overpass API**, fetched by `darkvessel known` into
 `data/reference/*-structures.csv` and kept in the repository so nothing else needs a network. It
@@ -1939,7 +1939,7 @@ reported the single most persistent non-mast object in the archive (37 acquisiti
 the nearest turbine) as this method's one false alarm. It is `Transformerplatform Anholt
 Havmøllepark`, and it is a fixed structure by every argument that makes a mast one.
 
-### What the clustering says, and why it is reported rather than acted on
+### What the clustering says
 
 Eight spherical k-means clusters over the 16-dimensional embeddings, seed 20260827. The embedding
 **does** carry the distinction: ranked by similarity to the centre of the crops recurrence is sure
@@ -2199,7 +2199,7 @@ evidence that acquisitions and not rows were drawn.
 Wilson rather than the normal approximation for the row-wise figure, because the bands here run to
 one dark detection in 47 and a symmetric interval prints a negative probability there.
 
-### Bands are quartiles of the population, and the population is every detection
+### Bands are quartiles of all 189 detections
 
 Cut on the dark subset, the bands follow wherever the dark detections happen to sit and the rate
 per band tends to flat by construction: the analysis would then have been incapable of finding
@@ -2226,7 +2226,7 @@ band and counted as unsampled, never folded in as a zero. Zero metres from shore
 aground and zero fishing hours is a real fact about water, so a filled-in zero would be
 indistinguishable from a finding.
 
-### No model is fitted, and the comparison is interval overlap
+### No model is fitted: the comparison is interval overlap
 
 There is no regression of dark rate on depth and no p-value on this page. 189 detections over ten
 weeks of one rectangle support four bands, a rate in each, and the question of whether two
@@ -2234,7 +2234,7 @@ intervals overlap. That bar is stricter than a two-sample test at 5%, which is t
 err in for a page that will be read as a result, and it is why the visible slope in the depth
 estimates, 27.3% deepest against 9.3% shallowest, is reported as nothing found.
 
-### What the run produced, and the confound it cleared
+### What the run produced
 
 189 detections over 49 of the 50 acquisitions, 40 dark, 21.2% [13.6%, 29.4%]. One band separates
 from all three others and it is the declared lane. Depth and recorded fishing effort separate
