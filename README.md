@@ -193,7 +193,8 @@ configs/      pipeline configuration
 data/reference/  published structure coordinates, and the register built from the archive
 notebooks/    exploration and Kaggle/Colab training entry points
 tests/        unit tests for the geometry-critical paths
-docs/         decision log, failure log, the rest of the commands, and the published page
+docs/         decision log, failure log, the design written before issues #10 and #11 were
+              built, the training runbook, the rest of the commands, and the published page
 ```
 
 ## Related work

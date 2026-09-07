@@ -117,7 +117,7 @@ def test_a_journal_is_written_by_the_same_rule_the_weights_are(tmp_path: Path) -
 
 def test_a_journal_says_which_run_produced_it(tmp_path: Path) -> None:
     """Five rungs of a ladder are five metrics files, and a file that does not name its run
-    compares to nothing. See docs/superpowers/specs/2026-08-17-small-target-adaptation-design.md."""
+    compares to nothing. See docs/design/small-target-adaptation.md."""
     journal = Journal(tmp_path / "run" / "metrics.json")
     journal.describe({"schedule": {"learning_rate": 0.005, "lr_schedule": "cosine"}})
     journal.record({"epoch": 1, "training_loss": 0.2})
