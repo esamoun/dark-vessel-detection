@@ -21,6 +21,14 @@ from pyproj import CRS, Transformer
 
 from darkvessel.analysis.concentration import analysis_request_from, concentrate
 from darkvessel.analysis.concentration import write as write_analysis
+from darkvessel.analysis.failures import (
+    Acquisition,
+    Failures,
+    counterfactual,
+    duplication,
+    failures_request_from,
+)
+from darkvessel.analysis.failures import write as write_failures
 from darkvessel.config import load_config
 from darkvessel.context.gee_layers import (
     LayerSources,
@@ -200,6 +208,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     analyse_command.add_argument("--config", type=Path, required=True)
 
+    failures_command = commands.add_parser(
+        "failures",
+        help="the report's two single-frame failure modes, measured over the whole archive",
+    )
+    failures_command.add_argument("--config", type=Path, required=True)
+
     map_command = commands.add_parser(
         "map",
         help="write the static page and the GeoJSON behind it, from a layer already produced",
@@ -258,6 +272,8 @@ def main(argv: list[str] | None = None) -> int:
         return _context(args.config, over_archive=args.archive)
     if args.command == "analyse":
         return _analyse(args.config)
+    if args.command == "failures":
+        return _failures(args.config)
     if args.command == "map":
         return _map(args.config)
     if args.command == "eez":
@@ -1923,6 +1939,67 @@ def _analyse(config_path: Path) -> int:
         result, report_path=request["report"], figures=request["figures"]
     ):
         print(f"wrote {written}")
+    return 0
+
+
+def _failures(config_path: Path) -> int:
+    """The two failure modes `docs/evaluation.md` had evidenced on one frame, over 49 of them.
+
+    The report says of itself that its failure modes rest on a single acquisition while fifty are
+    sitting in the repository. This is the command that answers it, and the answer is a
+    counterfactual: the matching stage is run twice over every archive scene, once with the orbit
+    geometry the chain uses and once with none, so that what the azimuth correction is worth is a
+    measured difference rather than a description. The corrected pass has to return the layer that
+    is already on disk before the other column means anything, and `reproduces_published` in the
+    journal is that check.
+
+    No network, no torch, no credentials. Detections come off the accumulated layer, the moment and
+    the pass direction off the products, the declarations off the slices `archive-ais` wrote — and
+    the pass direction is read from the product rather than taken from the config for the reason
+    `geometry_from` gives: a config that could name it would let a run correct every vessel the
+    wrong way.
+    """
+    config = load_config(config_path)
+    request = failures_request_from(config, config_path.parent)
+    fusion = fusion_settings_from(config)
+
+    if not request["detections"].exists():
+        raise FileNotFoundError(
+            f"{request['detections']} does not exist; this measurement re-matches the detections "
+            f"of the whole archive, so run `darkvessel archive-run --config {config_path}` first"
+        )
+
+    detections = gpd.read_file(request["detections"], layer=DETECTIONS_LAYER)
+    acquisitions = []
+    for path in sorted(request["scenes"].glob("*.tif")):
+        rows = detections[detections["scene"] == path.stem]
+        if rows.empty:
+            continue
+        scene = Scene.from_geotiff(path)
+        _check_working_crs(scene.crs, config["area"]["crs"])
+        acquisitions.append(
+            Acquisition(
+                scene=path.stem,
+                acquired_at=scene.acquired_at,
+                detections=rows.reset_index(drop=True),
+                ais=load_ais(request["ais"] / f"{path.stem}.csv", crs=scene.crs),
+                geometry=geometry_from(config, scene.orbit_pass),
+            )
+        )
+
+    if not acquisitions:
+        raise FileNotFoundError(
+            f"none of the products in {request['scenes']} carries a detection in "
+            f"{request['detections']}; the layer and the scene directory describe different runs"
+        )
+
+    result = Failures(
+        correction=counterfactual(acquisitions, **fusion),
+        duplication=duplication(detections),
+    )
+    for line in result.lines():
+        print(line)
+    print(f"wrote {write_failures(result, report_path=request['report'])}")
     return 0
 
 

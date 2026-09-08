@@ -258,6 +258,14 @@ analysis:
   report: ../docs/runs/analysis-archive.json
   figures: ../docs/figures
 
+# What `darkvessel failures --config configs/kattegat-lane.yaml` writes. Two of the five failure
+# modes in docs/evaluation.md were single observations on the scene above, and the report says so
+# about itself; this is where they are measured over every acquisition instead. The counterfactual
+# it runs — the matching stage with the correction above switched off — needs no new setting,
+# because a second knob would let this measure something other than the run that was published.
+failures:
+  report: ../docs/runs/failures-archive.json
+
 run:
   scene: ../data/real/kattegat-lane.tif
   # Written by `darkvessel ais`, from the archive for the day of the acquisition above. Run that
