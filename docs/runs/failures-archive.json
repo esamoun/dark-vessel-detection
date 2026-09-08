@@ -1,0 +1,31 @@
+{
+  "duplication": {
+    "scenes": 49,
+    "detections": 189,
+    "scenes_with_pairs": 45,
+    "candidate_duplicates": 0,
+    "declarations_matched_twice": 0,
+    "closest_pair_m": 711.7926794488867,
+    "median_closest_pair_m": 3289.22217066545,
+    "longest_hull_m": 366.0
+  },
+  "correction": {
+    "detections": 189,
+    "scenes": 49,
+    "matched": 149,
+    "matched_uncorrected": 60,
+    "recovered": 89,
+    "lost": 0,
+    "matched_either_way": 60,
+    "dark_either_way": 40,
+    "dark": 40,
+    "dark_uncorrected": 129,
+    "rate": 0.21164021164021163,
+    "rate_uncorrected": 0.6825396825396826,
+    "reproduces_published": true,
+    "scenes_with_recovery": 38,
+    "vessels_recovered": 82,
+    "shift_median_m": 300.36318767799474,
+    "shift_max_m": 651.2869942999823
+  }
+}
