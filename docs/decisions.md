@@ -2719,3 +2719,71 @@ the one above and it is not defended, only dated.
 belongs beside that code, which is where the next one will go; and a handler growing past roughly a
 hundred lines is a command with logic in it, which is the actual failure mode this file is watched
 for. Neither has happened yet, and `_archive_run` at 94 is the closest.
+
+## 2026-09-09 — The azimuth correction is worth 89 of 149 matches, and the way to know that is to switch it off
+
+`docs/evaluation.md` said of itself, in the bullet listing what has never been tested, that its
+failure modes were evidenced on one frame while fifty acquisitions were sitting in the repository.
+That sentence has been there since 2026-08-26. It is now false, and this is what made it false.
+
+**Two of the five failure modes were single observations; three were not.** Causes 1, 2 and 5 are
+properties of the detector measured over the LS-SSDD held-out split, and re-running the Kattegat
+archive says nothing about them. Causes 3 and 4 — one hull reported many times, and a moving ship
+not being where it declared itself — were observations on the scene of 2026-08-09, and both are
+answerable from data already on disk. So the scope of this entry is exactly those two, which is
+also exactly the scope the report's own bullet admitted to.
+
+**Cause 4 is answered by a counterfactual, not by a description.** "The correction matters" is not
+a measurement. `fusion/match.py` already carried the switch — given no orbit geometry it applies no
+correction, which is how the synthetic scene runs — so `darkvessel failures` runs the matching stage
+twice over every acquisition, on the same declarations, the same 200 m tolerance and the same
+interpolation window, and compares the two verdicts row by row. **149 of 189 detections match with
+the correction and 60 without: 89 recovered, none lost, 82 distinct vessels over 38 of the 49
+acquisitions, displaced 300 m at the median and 651 m at most.** The dark rate this project
+publishes would be 68.3% rather than 21.2%.
+
+**Re-running `classify` rather than recomputing distances is the part that is not obvious.** The
+layer already carries `azimuth_shift_m` and `match_distance_m` on every matched row, so subtracting
+one from the other looks like the cheap way to get this answer. It is the wrong answer. Assignment
+is confidence-ordered and one-to-one: without the correction a declaration can be claimed by a
+different detection, and a row-wise arithmetic on the published layer cannot see that. It happens
+not to occur here — `lost` is 0 and the corrected verdict is a strict superset — but that is a
+measurement this run made, not a property anyone knew beforehand, and it is held by a test for that
+reason.
+
+**The counterfactual is checked against what was published before it is believed.** The corrected
+pass has to return the layer on disk, the same status and the same MMSI on all 189 rows, and it
+does. Without that check the "without" column would be the output of a second, unverified
+implementation of the run, which is worth nothing; with it, the two columns are known to differ by
+one thing. `reproduces_published` is in the journal rather than only in an assertion because a
+reader of the JSON needs to see it too.
+
+**Cause 3 needed no re-run, and the answer is a clean negative.** A hull reported twice cannot be
+further from itself than it is long. Over 49 acquisitions the closest two detections of one
+acquisition ever come is 712 m, at a median of 3289 m, against a longest estimated hull of 366 m —
+so no pair anywhere in the archive is close enough to be one object, and no declaration was claimed
+by two detections. The failure mode belonged to the bright-pixel stand-in, which reported a 274 m
+vessel eight times; the trained detector does not have it, and that is now measured over 49 frames
+instead of checked by eye on one.
+
+**Decision.** A command, a committed journal, and a test that pins the prose to it — not a script.
+`darkvessel failures --config configs/kattegat-lane.yaml` takes eight seconds, needs no network, no
+credentials and no torch, and writes `docs/runs/failures-archive.json`. Eighteen of that file's
+numbers are asserted against `docs/evaluation.md` and three against the README by
+`tests/test_failures_over_the_archive.py`, and the pinning was checked the way this file's rule
+says to check a guard: each of the eighteen was perturbed in the journal in turn, and each of the
+eighteen goes red on its own.
+
+**Cost.** 363 lines of module, 77 of command and config and 431 of test, for two paragraphs of
+prose and one table row. And the command cannot run in CI: it reads 1.8 GB of products and 4.7 MB of
+AIS slices that are not in the repository, so what CI holds is the committed journal against the
+committed prose, and the journal against a re-run is the author's job. That is the same arrangement as `analysis-archive.json` and
+has the same hole in it — a change to `classify` that moved these numbers would not go red until
+someone re-ran the command. The alternative, a fixture archive committed to the repository, would
+be a second archive to keep honest.
+
+**What would change it.** The report's remaining limits are not payable this way. Causes 1, 2 and 5
+need LS-SSDD, which is 3000 sub-images on Kaggle and one GPU session. And what these 49 acquisitions
+establish about the correction is established for one 17 km rectangle, one latitude and one pair of
+pass directions; a second study area is what would generalise it, and the same command would measure
+it with no change.

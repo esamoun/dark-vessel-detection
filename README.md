@@ -48,7 +48,7 @@ The pipeline is built in four levels, each one shippable on its own.
 | --- | --- | --- |
 | **1. Detector** | Supervised CNN detector trained on labelled SAR scenes; honest precision/recall and failure analysis | trained, then measured a rung at a time: R1 gives 0.95 precision at 0.73 recall over a held-out split of 3000 sub-images, and the four changes that did not clear the noise are written up rather than removed |
 | **2. Full-scene chain** | Inference over an entire Sentinel-1 scene: overlapping tiles, cross-tile deduplication, georeferenced GeoPackage output | runs on a real scene with the trained detector in it, since 2026-08-16 |
-| **3. AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | **complete.** Runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching. Offshore structures are excluded from the dark count without a single label: 65 fixed positions found by recurrence across 47 acquisitions, each verified against published coordinates to 5.1 m |
+| **3. AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | **complete.** Runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching — worth **89 of the archive's 149 matches**, measured by re-running all 49 acquisitions with the correction switched off ([`docs/evaluation.md`](docs/evaluation.md)). Offshore structures are excluded from the dark count without a single label: 65 fixed positions found by recurrence across 47 acquisitions, each verified against published coordinates to 5.1 m |
 | **4. Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | **complete.** 189 detections over 50 acquisitions, 40 of them undeclared: 21.2%, and [13.6%, 29.4%] once the interval is resampled over acquisitions rather than over detections. Of the four contextual variables one separates and three do not, [below](#what-the-archive-shows) |
 
 The chain that carries these was built first, deliberately, with a deterministic stand-in where
@@ -187,7 +187,8 @@ src/darkvessel/
   context/    contextual variables at each detection: distance to shore, water depth and
               fishing effort sampled from the catalogue, EEZ membership joined locally
   analysis/   the distribution of dark candidates against each of those variables, with
-              intervals resampled over acquisitions rather than over detections
+              intervals resampled over acquisitions rather than over detections; and the
+              archive-wide measurement of the two failure modes the report once had on one frame
   viz/        the GeoJSON export and the static page it is drawn on
 configs/      pipeline configuration
 data/reference/  published structure coordinates, and the register built from the archive
