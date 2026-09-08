@@ -345,7 +345,7 @@ def _mercator(latitude: float) -> float:
     return 0.5 - math.log(math.tan(math.pi / 4 + radians / 2)) / (2 * math.pi)
 
 
-def page(exported: dict[str, Any], *, title: str) -> str:
+def page(exported: dict[str, Any], *, title: str, source: dict[str, str] | None = None) -> str:
     """One self-contained HTML file: the collection, a basemap, a legend and a table.
 
     The table is not decoration. Everything the ticket asks the page to show — the acquisition
@@ -362,6 +362,7 @@ def page(exported: dict[str, Any], *, title: str) -> str:
         {
             "title": html.escape(title),
             "lede": _lede(summary),
+            "source": _source(source),
             "legend": _legend(summary),
             "rows": _rows(exported),
             "leaflet": LEAFLET.name,
@@ -381,7 +382,9 @@ def page(exported: dict[str, Any], *, title: str) -> str:
     )
 
 
-def write(exported: dict[str, Any], *, out: Path, title: str) -> list[Path]:
+def write(
+    exported: dict[str, Any], *, out: Path, title: str, source: dict[str, str] | None = None
+) -> list[Path]:
     """The GeoJSON and the page beside it, returned in the order they were written.
 
     Takes the collection rather than the layer, which is the shape `concentration.write` has and
@@ -394,7 +397,7 @@ def write(exported: dict[str, Any], *, out: Path, title: str) -> list[Path]:
     geojson_path.write_text(json.dumps(exported, indent=2) + "\n")
 
     page_path = out / PAGE_NAME
-    page_path.write_text(page(exported, title=title))
+    page_path.write_text(page(exported, title=title, source=source))
 
     return [geojson_path, page_path, _leaflet_beside(page_path)]
 
@@ -458,7 +461,33 @@ def map_request_from(config: dict[str, Any], relative_to: Path) -> dict[str, Any
         "detections": (relative_to / str(named)).resolve(),
         "out": (relative_to / str(settings["out"])).resolve(),
         "title": str(settings.get("title", config.get("area", {}).get("name", "Detections"))),
+        "source": _source_in(settings),
     }
+
+
+def _source_in(settings: dict[str, Any]) -> dict[str, str]:
+    """`map.source`, checked before it is written into a page that goes on the open web.
+
+    The scheme is asserted rather than assumed: this value ends up inside an `href` on a published
+    page, and `javascript:` in an anchor is a script the page did not write. Escaping handles the
+    text of a link and does nothing about where it points, so the two guards are separate.
+    """
+    source = settings.get("source") or {}
+    if not isinstance(source, dict):
+        raise ValueError(
+            "map.source has to be a mapping of `url` and `by`, so that a page can credit one "
+            f"without claiming the other; got {type(source).__name__}"
+        )
+
+    url = str(source.get("url", "")).strip()
+    if url and not url.startswith(SOURCE_SCHEMES):
+        raise ValueError(
+            f"map.source.url is {url!r}, which is not an http(s) address; the page publishes it "
+            "as a link a stranger clicks, and anything else there is a scheme masquerading as one"
+        )
+
+    by = str(source.get("by", "")).strip()
+    return {key: value for key, value in (("url", url), ("by", by)) if value}
 
 
 def _scalar(value: Any, places: int | None = None) -> Any:
@@ -536,6 +565,50 @@ def _lede(summary: Summary) -> str:
             "for their acquisition, which is a different statement from finding none."
         )
     return " ".join(sentences)
+
+
+SOURCE_SCHEMES = ("https://", "http://")
+
+
+def _source(source: dict[str, str] | None) -> str:
+    """Where the page came from and who made it, or nothing at all.
+
+    A published page is read by people who arrived at a URL and have no other context: the map
+    shows 189 detections over the Kattegat and, without this, says nothing about what produced
+    them or where the method can be read. That is a dead end at the one moment a reader wants to
+    follow it.
+
+    Rendered only from what a config supplies. The generator does not know whose repository it is
+    being run in and will not guess — the same argument `map_request_from` makes about `map.out`,
+    which is the other value that would be an invention if it were defaulted.
+    """
+    if not source:
+        return ""
+
+    url, by = source.get("url", ""), source.get("by", "")
+    parts = []
+    if by:
+        parts.append(f"Built by {html.escape(by)}")
+    if url:
+        parts.append(
+            f'source and method at <a href="{html.escape(url, quote=True)}">'
+            f"{html.escape(_bare(url))}</a>"
+        )
+    if not parts:
+        return ""
+    return f'<footer class="note">{" &mdash; ".join(parts)}.</footer>'
+
+
+def _bare(url: str) -> str:
+    """The URL without its scheme, which is what a reader is shown.
+
+    `github.com/user/project` rather than `https://github.com/user/project`: the scheme is for
+    the browser and the rest is the part that tells a reader where they are being sent.
+    """
+    for scheme in SOURCE_SCHEMES:
+        if url.startswith(scheme):
+            return url[len(scheme) :].rstrip("/")
+    return url
 
 
 def _legend(summary: Summary) -> str:
@@ -621,7 +694,10 @@ _TEMPLATE = """<!doctype html>
   .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 20px 64px; }
   h1 { font-size: 26px; margin: 0 0 8px; letter-spacing: -0.01em; }
   p.lede { margin: 0 0 20px; max-width: 76ch; color: var(--ink); }
-  p.note { margin: 16px 0 0; max-width: 76ch; color: var(--muted); font-size: 13.5px; }
+  p.note, footer.note { margin: 16px 0 0; max-width: 76ch; color: var(--muted);
+                       font-size: 13.5px; }
+  footer.note { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--line);
+                max-width: none; }
   .legend { display: flex; flex-wrap: wrap; gap: 18px; margin: 0 0 12px; }
   .key { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; cursor: pointer; }
   .key .count { color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -676,6 +752,7 @@ _TEMPLATE = """<!doctype html>
   page is a file: no backend, no scheduled job, nothing to wake up. The detections are embedded
   in it and also sit beside it as
   <a href="detections.geojson">detections.geojson</a>, which QGIS opens directly.</p>
+  {{source}}
 </div>
 <script src="{{leaflet}}/leaflet.js"></script>
 <script>
