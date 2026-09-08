@@ -73,7 +73,7 @@ figure on this page should be quoted to three.**
 ## Where the chain sits on the curve
 
 `configs/kattegat-lane.yaml` runs at **0.90**, which is not where F1 is best. F1 peaks at 0.75, at
-0.838; the chain gives up 0.016 of it to buy precision from 0.851 to 0.946: 246 fewer false
+0.838; the chain gives up 0.017 of it to buy precision from 0.851 to 0.946: 246 fewer false
 alarms for 238 fewer ships found. That is a deliberate asymmetry and the reason is downstream
 rather than statistical: every detection this chain fails to match against AIS is published as a
 dark vessel, which is an accusation someone may be sent out on. A miss costs a ship nobody looked
