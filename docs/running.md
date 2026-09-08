@@ -162,6 +162,16 @@ a 600 m radius in which to find an explanation. Predicting the shift from each v
 declared course and speed is a level of its own, and it now has its measurements.
 [`docs/failures.md`](failures.md) has the full account.
 
+**What happened next, 2026-08-17.** The level was built. `fusion/azimuth.py` displaces each
+declared position along the satellite's ground track before matching, and on this same scene the
+matches go from 2 to 5 of the 6 hulls in frame. The tolerance stayed at 200 m, which is the whole
+point of moving the declaration rather than widening the radius. What the correction approximates
+is stated where it is made: the incidence angle is declared at the middle of the swath rather than
+read off the product, and it is a fifth of the correction. The reasoning, the sixth vessel no
+incidence angle in the swath recovers, and what the export still owes are in
+[`docs/decisions.md`](decisions.md) under 2026-08-16. The measurements above stay as they were
+recorded: the correction is only readable against them.
+
 What earlier real runs caught is in [`docs/failures.md`](failures.md), one entry each: the
 chain read the product's nodata fill as the brightest targets in the scene; the export's size
 guard was sized from an assumed dtype and then, on a second reading, from a ceiling nobody had
