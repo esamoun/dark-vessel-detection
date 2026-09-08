@@ -201,8 +201,8 @@ docs/         decision log, failure log, the design written before issues #10 an
 
 This is a known and actively worked problem, not an invented one. The task is the subject of a
 public detection challenge on Sentinel-1 with AIS-derived labels, of an established research
-literature on SAR ship detection, and of operational commercial services. Prior art is listed
-in [`docs/related-work.md`](docs/related-work.md) as it accumulates.
+literature on SAR ship detection, and of operational commercial services. What was read, what
+was reused and what was rejected is in [`docs/related-work.md`](docs/related-work.md).
 
 What is specific here is the instance rather than the task: this study area, an AIS ingestion and
 interpolation pipeline built from raw national archives, the contextual analysis layer, and
