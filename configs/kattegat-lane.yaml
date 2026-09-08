@@ -222,6 +222,12 @@ context:
 map:
   title: Dark vessel candidates — northern Kattegat
   out: ../docs/map
+  # Who made the page and where the method is written. Here rather than in the generator because
+  # the generator does not know whose repository it is running in, and a page that names 189 dark
+  # vessel candidates with no way back to how they were found is a claim a reader cannot check.
+  source:
+    by: Eithan Samoun
+    url: https://github.com/esamoun/dark-vessel-detection
 
 # What `darkvessel analyse` reads the accumulated layer with, and where it writes the answer.
 # The last stage of the chain and the only one whose output is prose, which is why its settings

@@ -495,6 +495,60 @@ def test_the_published_site_sends_its_root_to_the_map_the_config_writes() -> Non
     assert f'content="0; url={target}/"' in root
 
 
+def test_the_published_page_says_who_made_it_and_where_the_method_is() -> None:
+    """The page's URL is the one that gets handed to somebody, and it is often the only one.
+
+    A reader who arrives at it sees 189 detections over the Kattegat and, with nothing else on the
+    page, has no way to reach the code that produced them or the name of whoever stands behind the
+    claim. This asserts the published file rather than the generator: the footer existing in
+    `_source` and `docs/map/` not having been regenerated since would leave the site exactly as
+    silent as before, and that is the failure this guards, not the rendering.
+    """
+    config = yaml.safe_load(SHIPPED_CONFIG.read_text())
+    source = map_request_from(config, SHIPPED_CONFIG.parent)["source"]
+    out = Path(__file__).resolve().parents[1] / "docs" / "map"
+    published = (out / PAGE_NAME).read_text()
+
+    assert {"url", "by"} <= source.keys(), "the shipped config names no map.source"
+    assert f'href="{source["url"]}"' in published
+    assert source["by"] in published
+
+
+def test_a_config_that_names_no_source_publishes_no_footer() -> None:
+    """The generator is not this repository's. Somebody else's run of it credits nobody, rather
+    than crediting the author of the code they are running."""
+    rendered = page(collection(layer((MATCHED,))), title="Kattegat")
+
+    assert "<footer" not in rendered
+    assert "Built by" not in rendered
+
+
+def test_a_source_url_that_is_not_a_web_address_is_refused() -> None:
+    """`javascript:` inside an `href` is a script the page did not write, and escaping the text of
+    a link says nothing about where it points."""
+    settings = {
+        "run": {"output": "../outputs/detections.gpkg"},
+        "map": {"out": "../docs/map", "source": {"url": "javascript:alert(1)"}},
+    }
+
+    with pytest.raises(ValueError, match="not an http"):
+        map_request_from(settings, Path(__file__).resolve().parent / "configs")
+
+
+def test_the_footer_shows_the_address_without_its_scheme() -> None:
+    """What the anchor points at and what a reader is shown are different strings: the scheme is
+    for the browser."""
+    rendered = page(
+        collection(layer((MATCHED,))),
+        title="Kattegat",
+        source={"by": "A Name", "url": "https://github.com/user/project"},
+    )
+
+    assert 'href="https://github.com/user/project"' in rendered
+    assert ">github.com/user/project</a>" in rendered
+    assert "Built by A Name" in rendered
+
+
 def test_the_shipped_config_maps_the_archive_rather_than_the_single_scene() -> None:
     """49 acquisitions and 189 detections against one acquisition and six. The single-scene run
     is what `configs/pipeline.yaml` has and the archive is what this box is for."""

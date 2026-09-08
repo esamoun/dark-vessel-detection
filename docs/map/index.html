@@ -13,7 +13,10 @@
   .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 20px 64px; }
   h1 { font-size: 26px; margin: 0 0 8px; letter-spacing: -0.01em; }
   p.lede { margin: 0 0 20px; max-width: 76ch; color: var(--ink); }
-  p.note { margin: 16px 0 0; max-width: 76ch; color: var(--muted); font-size: 13.5px; }
+  p.note, footer.note { margin: 16px 0 0; max-width: 76ch; color: var(--muted);
+                       font-size: 13.5px; }
+  footer.note { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--line);
+                max-width: none; }
   .legend { display: flex; flex-wrap: wrap; gap: 18px; margin: 0 0 12px; }
   .key { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; cursor: pointer; }
   .key .count { color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -68,6 +71,7 @@
   page is a file: no backend, no scheduled job, nothing to wake up. The detections are embedded
   in it and also sit beside it as
   <a href="detections.geojson">detections.geojson</a>, which QGIS opens directly.</p>
+  <footer class="note">Built by Eithan Samoun &mdash; source and method at <a href="https://github.com/esamoun/dark-vessel-detection">github.com/esamoun/dark-vessel-detection</a>.</footer>
 </div>
 <script src="leaflet-1.9.4/leaflet.js"></script>
 <script>

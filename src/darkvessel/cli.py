@@ -1954,7 +1954,9 @@ def _map(config_path: Path) -> int:
 
     for line in summarise(exported).lines():
         print(line)
-    for written in write_map(exported, out=request["out"], title=request["title"]):
+    for written in write_map(
+        exported, out=request["out"], title=request["title"], source=request["source"]
+    ):
         print(f"wrote {written}")
     return 0
 
