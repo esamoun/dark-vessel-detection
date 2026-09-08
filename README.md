@@ -98,7 +98,7 @@ Two deep learning components sit inside this:
 ![Precision against recall for R1 over the held-out split, six thresholds from 0.05 to 0.90](docs/figures/precision-recall-r1.svg)
 
 *The detector, measured rather than asserted. Six points, because six thresholds are what the run
-scored. The chain runs at the last of them, 0.90: 0.946 precision at 0.726 recall, giving up 0.016
+scored. The chain runs at the last of them, 0.90: 0.946 precision at 0.726 recall, giving up 0.017
 of F1 against the peak at 0.75 to buy 246 fewer false alarms. What the 651 misses are made of, and
 the ten conditions this has never been tested under, are in
 [`docs/evaluation.md`](docs/evaluation.md).*
@@ -253,8 +253,9 @@ darkvessel run --config configs/pipeline.yaml
 
 ```
 5 detections in EPSG:25832 -> outputs/detections.gpkg
-  4 matched, 1 dark at a tolerance of 200 m
+  4 matched, 1 dark at a tolerance of 200 m, against 5 declared positions
   of those matches, 1 on a position interpolated to the acquisition and 3 on a report taken as it stands
+  no detection stood at a registered fixed structure
 ```
 
 One of those five is a vessel under way, 900 m west of its target three minutes before the

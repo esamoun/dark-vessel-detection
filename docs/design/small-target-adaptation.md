@@ -313,16 +313,16 @@ swap ticket and holds here for a stronger reason: this ticket's whole output is 
 
 ## Who runs what
 
-**Agent, on the laptop, before any Kaggle session.** Every code change above, the rung configs,
-the tests, the census script, and the `decisions.md` entry fixing the keep/drop rule. That entry
-is committed before the first run.
+**The assistant, on the laptop, before any Kaggle session.** Every code change above, the rung
+configs, the tests, the census script, and the `decisions.md` entry fixing the keep/drop rule.
+That entry is committed before the first run.
 
-**Human, on Kaggle.** The census in a CPU session, then the five runs in order, bringing each
+**Me, on Kaggle.** The census in a CPU session, then the five runs in order, bringing each
 `metrics.json` back into the repository under `docs/runs/`.
 
-**Agent, after each run.** `darkvessel compare --config configs/ladder.yaml`, the rule applied,
-and the entry written — a keep into `decisions.md`, a rejection into `failures.md` with its
-numbers.
+**The assistant, after each run.** `darkvessel compare --config configs/ladder.yaml`, the rule
+applied, and the entry written — a keep into `decisions.md`, a rejection into `failures.md` with
+its numbers.
 
 ## Out of scope
 
