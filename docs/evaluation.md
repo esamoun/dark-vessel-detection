@@ -122,8 +122,11 @@ below.
 
 ## Failure modes, by cause
 
-Each one names what it is evidenced by, because two of these are measured over the held-out split
-and three are single observations on one scene.
+Each one names what it is evidenced by. Three are measured over the held-out split. The other two
+were single observations on the Kattegat scene, and since 2026-09-09 they are measured over all 49
+acquisitions the archive holds a detection in: `darkvessel failures --config
+configs/kattegat-lane.yaml` writes [`docs/runs/failures-archive.json`](runs/failures-archive.json),
+and the numbers below marked *over the archive* are read out of it.
 
 **1. Ships are matched by a rescue rule rather than by fitting anchors.** Over the 1123
 ship-bearing training tiles and their 3637 ships, ninety percent of ships never reach the RPN's
@@ -168,6 +171,15 @@ detector reported the same six hulls exactly six times. *Evidence: the scene che
 duplicate is a false alarm, so this failure mode is already priced into the false-alarm column;
 what the scene shows is that the trained detector does not have it.
 
+*Over the archive:* what one scene showed by eye, 49 of them measure, and the measurement is a
+separation. A hull reported twice cannot be further from itself than it is long, so what settles it
+is how close two detections of one acquisition ever come, against the longest hull the archive
+estimates. **45 acquisitions carry two detections or more; the closest pair anywhere in them is
+712 m apart, 3289 m at the median; and the longest hull estimated anywhere in the archive is
+366 m.** No pair is close enough to be one object, and no declaration was claimed by two
+detections. The gap between 712 m and 366 m is not a near miss — it is the width of the shipping
+lane. This failure mode belonged to the stand-in.
+
 **4. A moving ship is not where it declared itself.** Four of the six declared vessels in the
 Kattegat scene were imaged **341–632 m** from their AIS positions, almost purely north–south,
 because a target's along-track velocity displaces it in azimuth. Before the correction the chain
@@ -175,6 +187,30 @@ called four declared, transponder-on vessels dark. *Evidence: `docs/failures.md`
 Fixed by moving the declaration to where the radar would have drawn it before matching: 2 matched
 became 5. This is a fusion failure rather than a detector failure, and it is in this report
 because it is the largest single source of false dark vessels this project has found.
+
+*Over the archive:* the claim in that last sentence was made on six vessels, and being the largest
+of the five it is the one worth testing properly — as a counterfactual rather than as a description.
+`fusion/match.py` already carries the switch: given no orbit geometry it applies no correction. So
+the matching stage is run twice over every acquisition, on the same declarations, the same 200 m
+tolerance and the same interpolation window, and the two verdicts are compared row by row. Nothing
+else differs between the two columns.
+
+**149 of the archive's 189 detections match a declaration. Without the correction, 60.** The
+difference is not a shuffle: **89 detections are recovered, none is lost, 60 match either way and 40
+are dark either way**, so the corrected verdict is a strict superset of the uncorrected one. The 89
+are **82 distinct vessels over 38 of the 49 acquisitions**, displaced **300 m at the median and
+651 m at most** — a spread that brackets the 341–632 m measured on the single scene rather than
+contradicting it. Put as the number this project publishes: the dark rate would be **68.3% instead
+of 21.2%**, and roughly seven in ten of those 129 candidates would be ships with their transponders
+on.
+
+The counterfactual is checked before it is believed. The corrected pass has to return the layer that
+is already on disk — the same status and the same MMSI on all 189 rows — and it does, which is what
+makes the other column a measurement of the correction rather than of a second, unverified
+implementation of the run. `reproduces_published` in the journal is that check, and
+`tests/test_failures_over_the_archive.py` holds it. So the sentence above stands, and it now has a
+number under it: **89 of 149 matches exist only because the declaration was moved into the radar's
+frame** before anything was compared.
 
 **5. Low-confidence noise, at a scale the statistic does not see.** 25299 false alarms at 0.05
 against 99 at 0.90. All three rejected RPN rungs cut it (R2 to 9883, R4 to 14887, R5 to 11397),
@@ -190,16 +226,20 @@ its scores, not its proposals, are what separate.
 
 The list is long, and its length is the point.
 
-- **One acquisition: for the numbers *in this report*.** Every scene-level number below comes from
-  a single Sentinel-1 IW GRD frame over the northern Kattegat, on one date, in one sea state, and
-  causes 3 and 4 are single observations on it. That was the whole project's limit when this was
-  written on 2026-08-26 and it is no longer: `darkvessel archive-run` has since carried the chain
-  over **50 acquisitions** of the study area between 1 June and 9 August 2026, 49 of which held a
-  detection, and `docs/runs/analysis-archive.json` is what came back. What has not happened is this
-  report being redone against them, so the limit is now that its failure modes are evidenced on one
-  frame while fifty are sitting in the repository, which is a smaller and more embarrassing limit
-  than the one this bullet used to state. Sea state, season and repeat pass are no longer untouched;
-  they are untouched *here*.
+- **One rectangle, and — for three of the five failure modes — one split.** This bullet has been
+  narrowed twice and this is where it now stands. Written on 2026-08-26 it said that every
+  scene-level number in the report came from a single Sentinel-1 IW GRD frame, and that causes 3 and
+  4 were single observations on it. `darkvessel archive-run` then carried the chain over **50
+  acquisitions** of the study area between 1 June and 9 August 2026, 49 of which held a detection,
+  which made the limit "fifty are sitting in the repository and this report has not been redone
+  against them" — a smaller and more embarrassing limit than the first. On 2026-09-09 that was done:
+  causes 3 and 4 are now measured over all 49, sea state, season and repeat pass among them. What
+  is left is real and is not going away by re-running anything here. Causes 1, 2 and 5, the curve
+  and every number in the table are properties of the detector measured on the LS-SSDD held-out
+  split, which is one dataset of Chinese coastal water; the archive-wide numbers are 49 acquisitions
+  of **one 17 km rectangle** in the Kattegat, so what they establish about the azimuth correction is
+  established for one lane, one latitude and one pair of pass directions. And the single frame of
+  2026-08-09 is still the only scene anyone has looked at by eye.
 - **VV only, at both ends.** LS-SSDD is VV throughout and the Kattegat export is VV because Earth
   Engine's 48 MiB limit forced a choice between area and polarisation. Dual-polarisation is
   untested because there is no data for it: `docs/failures.md`, 2026-08-17.

@@ -42,15 +42,19 @@ darkvessel context --config configs/kattegat-lane.yaml --archive  # the layers, 
 darkvessel eez     --config configs/kattegat-lane.yaml      # the published EEZ boundaries, once
 darkvessel zones   --config configs/kattegat-lane.yaml --archive  # whose water each one is in
 darkvessel analyse --config configs/kattegat-lane.yaml      # the distribution, and its intervals
+darkvessel failures --config configs/kattegat-lane.yaml     # the report's failure modes, over 49
 darkvessel map     --config configs/kattegat-lane.yaml      # the static page, and the GeoJSON
 ```
 
-`zones`, `analyse` and `map` are the three of the seven that need neither credentials nor a
-network:
-everything they read is already on the row. `analyse` writes
-[`docs/runs/analysis-archive.json`](runs/analysis-archive.json) and one figure per variable,
-so every number in the section below is re-derivable by anyone holding the GeoPackage; `map`
-writes the page in [`docs/map/`](map/), described at the foot of this file.
+`zones`, `analyse`, `failures` and `map` are the four of the eight that need neither credentials
+nor a network: everything they read is already on the row, or in the products the archive holds.
+`analyse` writes [`docs/runs/analysis-archive.json`](runs/analysis-archive.json) and one figure per
+variable, so every number in the section below is re-derivable by anyone holding the GeoPackage;
+`failures` writes [`docs/runs/failures-archive.json`](runs/failures-archive.json), which is where
+the two archive-wide failure modes in [`docs/evaluation.md`](evaluation.md) come from — it re-runs
+the matching stage twice over every acquisition, once with the azimuth correction and once without,
+and takes about eight seconds; `map` writes the page in [`docs/map/`](map/), described at the foot
+of this file.
 
 ```
 4676 crops from 96 scene(s): 318 distinct positions, 65 of them standing in 20+ acquisitions

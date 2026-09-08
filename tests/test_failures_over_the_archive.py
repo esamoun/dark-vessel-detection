@@ -1,12 +1,26 @@
 """The two failure modes `docs/evaluation.md` stopped evidencing on one frame.
 
-The measurement itself, on frames written here rather than on the archive: a counterfactual whose
-recovered count is wrong is worse than no counterfactual, because it is a number a reader has no
-way to check. So the cases below build acquisitions where the answer is known by construction — a
-vessel steaming across the track, a vessel running along it, a detection with nothing declared near
-it — and hold what the module reports about them.
+Two jobs, and they are different in kind.
+
+The first is the measurement itself, on frames written here rather than on the archive: a
+counterfactual whose recovered count is wrong is worse than no counterfactual, because it is a
+number a reader has no way to check. So the cases below build acquisitions where the answer is
+known by construction — a vessel steaming across the track, a vessel running along it, a
+detection with nothing declared near it — and hold what the module reports about them.
+
+The second is the prose. `docs/evaluation.md` now quotes eighteen numbers out of
+`docs/runs/failures-archive.json`, and prose drifts: a journal is re-run, a document goes on saying
+what used to be true, and no test goes red. The same argument this repository already makes about
+the report's table applies to a paragraph typed after reading a JSON, so every one of those numbers
+is held against the committed journal. What is *not* pinned is anything the report argues in
+words — that is the author's, and a test that pinned it would pin an opinion.
+
+The one number in the journal that is not a measurement of the water is `reproduces_published`.
+It says the corrected pass returned the layer that is on disk, and it is asserted here rather than
+read for a reason: false, and every other figure in the entry is a figure about some other run.
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -25,6 +39,7 @@ from darkvessel.fusion.azimuth import DESCENDING, Geometry
 from darkvessel.fusion.match import DARK, MATCHED
 
 ROOT = Path(__file__).resolve().parents[1]
+REPORT = ROOT / "docs" / "evaluation.md"
 JOURNAL = ROOT / "docs" / "runs" / "failures-archive.json"
 
 WORKING_CRS = "EPSG:25832"
@@ -300,3 +315,117 @@ def test_the_shipped_config_names_the_journal_the_report_quotes() -> None:
 
     assert request["report"] == JOURNAL
     assert request["detections"].name == "kattegat-lane-archive.gpkg"
+
+
+# --- the prose, held against the journal -------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def journal() -> dict:
+    return json.loads(JOURNAL.read_text())
+
+
+@pytest.fixture(scope="module")
+def prose() -> str:
+    """The report with its line wrapping collapsed.
+
+    A sentence is pinned to a journal, not to the column it happens to be wrapped at, and a test
+    that broke when a paragraph was rewrapped would be a test nobody keeps.
+    """
+    return " ".join(REPORT.read_text().split())
+
+
+def test_the_corrected_pass_reproduced_the_published_layer(journal: dict) -> None:
+    """The claim the whole counterfactual rests on, asserted rather than quoted.
+
+    Every other number in the entry describes the difference between two passes of the matching
+    stage. If the first of those passes did not return the layer this project published, the
+    difference is between two runs nobody has seen.
+    """
+    assert journal["correction"]["reproduces_published"] is True
+
+
+def test_the_counterfactual_is_a_strict_superset(journal: dict) -> None:
+    """`lost` is zero, so the report may say the corrected verdict adds and never takes away.
+
+    Not a law: the assignment is confidence-ordered and one-to-one, so moving the declarations
+    could hand one to a different detection. It is a measurement, which is why it is held here — a
+    run that lost a match would make the sentence in the report false.
+    """
+    correction = journal["correction"]
+    assert correction["lost"] == 0
+    assert correction["matched"] == correction["matched_either_way"] + correction["recovered"]
+    assert (
+        correction["detections"]
+        == correction["matched_either_way"]
+        + correction["recovered"]
+        + correction["dark_either_way"]
+    )
+
+
+def test_the_archive_holds_no_duplicate_of_any_hull(journal: dict) -> None:
+    """The negative the report states in words, held as the two numbers it is made of."""
+    dup = journal["duplication"]
+    assert dup["candidate_duplicates"] == 0
+    assert dup["declarations_matched_twice"] == 0
+    assert dup["closest_pair_m"] > dup["longest_hull_m"]
+
+
+def test_the_reports_correction_numbers_are_the_journals(journal: dict, prose: str) -> None:
+    c = journal["correction"]
+    assert (
+        f"**{c['matched']} of the archive's {c['detections']} detections match a declaration. "
+        f"Without the correction, {c['matched_uncorrected']}.**" in prose
+    )
+    assert (
+        f"**{c['recovered']} detections are recovered, none is lost, "
+        f"{c['matched_either_way']} match either way and {c['dark_either_way']} "
+        f"are dark either way**" in prose
+    )
+    assert (
+        f"**{c['vessels_recovered']} distinct vessels over {c['scenes_with_recovery']} of the "
+        f"{c['scenes']} acquisitions**" in prose
+    )
+    assert (
+        f"**{c['shift_median_m']:.0f} m at the median and {c['shift_max_m']:.0f} m at most**"
+        in prose
+    )
+    assert f"**{c['rate_uncorrected']:.1%} instead of {c['rate']:.1%}**" in prose
+    assert f"those {c['dark_uncorrected']} candidates" in prose
+    assert (
+        f"**{c['recovered']} of {c['matched']} matches exist only because the declaration was "
+        f"moved into the radar's frame**" in prose
+    )
+
+
+def test_the_reports_duplication_numbers_are_the_journals(journal: dict, prose: str) -> None:
+    dup = journal["duplication"]
+    assert (
+        f"**{dup['scenes_with_pairs']} acquisitions carry two detections or more; the closest "
+        f"pair anywhere in them is {dup['closest_pair_m']:.0f} m apart, "
+        f"{dup['median_closest_pair_m']:.0f} m at the median; and the longest hull estimated "
+        f"anywhere in the archive is {dup['longest_hull_m']:.0f} m.**" in prose
+    )
+    assert (
+        f"The gap between {dup['closest_pair_m']:.0f} m and {dup['longest_hull_m']:.0f} m is not "
+        f"a near miss" in prose
+    )
+
+
+def test_the_report_names_the_journal_and_the_command_that_writes_it(prose: str) -> None:
+    assert "runs/failures-archive.json" in prose
+    assert "darkvessel failures --config configs/kattegat-lane.yaml" in prose
+
+
+def test_the_readme_quotes_the_journal_too(journal: dict) -> None:
+    """The one number of this measurement that reaches the front page, held to the same file.
+
+    Level 3's row says the correction is worth something, and a row that said so in words would be
+    the kind of claim this project does not make. Pinned here rather than in a README test of its
+    own, because what it must not drift from is this journal.
+    """
+    c = journal["correction"]
+    readme = " ".join((ROOT / "README.md").read_text().split())
+
+    assert f"**{c['recovered']} of the archive's {c['matched']} matches**" in readme
+    assert f"re-running all {c['scenes']} acquisitions with the correction switched off" in readme
