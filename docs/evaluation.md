@@ -73,12 +73,15 @@ figure on this page should be quoted to three.**
 ## Where the chain sits on the curve
 
 `configs/kattegat-lane.yaml` runs at **0.90**, which is not where F1 is best. F1 peaks at 0.75, at
-0.838; the chain gives up 0.017 of it to buy precision from 0.851 to 0.946: 246 fewer false
-alarms for 238 fewer ships found. That is a deliberate asymmetry and the reason is downstream
-rather than statistical: every detection this chain fails to match against AIS is published as a
-dark vessel, which is an accusation someone may be sent out on. A miss costs a ship nobody looked
-at. A false alarm costs an inspection and a claim about a named vessel. The reasoning, and the
-numbers the choice was made on, are in `docs/decisions.md` under 2026-08-16 and 2026-08-25.
+0.84 against 0.82 where the chain runs — under two points, against the 0.010 of epoch-to-epoch
+wander the section above measures on the same statistic. The gap is real and it is not much larger
+than the noise, which is the first reason the choice is not made on it. What is exact is the
+counts, and they buy precision from 0.85 to 0.95: 246 fewer false alarms for 238 fewer ships found.
+That is a deliberate asymmetry and the reason is downstream rather than statistical: every
+detection this chain fails to match against AIS is published as a dark vessel, which is an
+accusation someone may be sent out on. A miss costs a ship nobody looked at. A false alarm costs an
+inspection and a claim about a named vessel. The reasoning, and the numbers the choice was made on,
+are in `docs/decisions.md` under 2026-08-16 and 2026-08-25.
 
 The cost of that choice is stated here rather than left implicit: **at 0.90 the detector misses
 27.4% of the ships in the split**, and the operating point is also the least stable one on the

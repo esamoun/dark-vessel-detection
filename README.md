@@ -98,9 +98,9 @@ Two deep learning components sit inside this:
 ![Precision against recall for R1 over the held-out split, six thresholds from 0.05 to 0.90](docs/figures/precision-recall-r1.svg)
 
 *The detector, measured rather than asserted. Six points, because six thresholds are what the run
-scored. The chain runs at the last of them, 0.90: 0.946 precision at 0.726 recall, giving up 0.017
-of F1 against the peak at 0.75 to buy 246 fewer false alarms. What the 651 misses are made of, and
-the ten conditions this has never been tested under, are in
+scored. The chain runs at the last of them, 0.90: 0.95 precision at 0.73 recall, giving up under
+two points of F1 against the peak at 0.75 to buy 246 fewer false alarms. What the 651 misses are
+made of, and the ten conditions this has never been tested under, are in
 [`docs/evaluation.md`](docs/evaluation.md).*
 
 ![Six query crops and their four nearest neighbours in the embedding space, with cosine similarities](docs/figures/retrieval-archive.svg)
@@ -153,7 +153,7 @@ the ten conditions it has never been asked to work under.
 | --- | --- | --- |
 | Sentinel-1 GRD | SAR imagery | Copernicus Data Space / Earth Engine `COPERNICUS/S1_GRD` |
 | Danish Maritime Authority AIS | Declared vessel positions | open daily archives, `aisdata.ais.dk` |
-| LS-SSDD-v1.0 | Detector training | 15 large Sentinel-1 scenes, VV, cut into 9000 labelled sub-images |
+| [LS-SSDD-v1.0](https://doi.org/10.3390/rs12182997) | Detector training | 15 large Sentinel-1 scenes, VV, cut into 9000 labelled sub-images |
 | Earth Engine catalogue | Bathymetry, coastline, fishing effort | Google Earth Engine |
 | Marine Regions (VLIZ) | EEZ boundaries | Maritime Boundaries Geodatabase v12, CC-BY, fetched per run and not redistributed |
 
