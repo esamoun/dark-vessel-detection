@@ -2663,3 +2663,59 @@ scene-wise interval like every band does, and the comparison that decides whethe
 differ is one method on one class rather than two copies. The arithmetic of a share, and the rule
 for reading two shares against each other, do not change when the thing being sliced stops being a
 number and becomes the name of a water.
+
+## 2026-09-08 — The CLI is one file of 2042 lines, and where it splits is a date rather than a rule
+
+`src/darkvessel/cli.py` declares 21 subcommands in one file. It is the first thing a reader
+notices about this package and the easiest thing to read as neglect, so what is in it is measured
+here rather than left to be assumed either way.
+
+**What the file is made of.** 2042 lines against 10,040 in the rest of the package: 17% of the
+source for the whole surface a user touches. 54 functions. The longest is `main` at 178 lines and
+every one of them is the argparse block — 21 parsers declared in sequence, a table written in
+Python rather than a function with branches in it. The longest command handler is `_archive_run`
+at 94 lines, then `_retrieve` at 84 and `_crops` at 78, and the rest sit well below. There is no
+thousand-line command in here and nowhere for one to hide. The file imports 40 modules of the
+package across 54 import lines, which is the shape a wiring layer has: wide and shallow, and the
+depth somewhere else.
+
+**The seam that keeps the handlers thin is `*_request_from`.** A command is a config path in, a
+request built from it, one call into the package, and printing. The builder is a separate function
+on purpose: it reads a config and refuses a bad one without a network, a credential or a GPU, so a
+mistyped key in `configs/kattegat-lane.yaml` surfaces in a test run instead of surfacing to someone
+who had already authenticated and waited. That argument is `export_request_from`'s and it is the
+one the 2026-08-27 entry above reuses for `context_request_from`. Seven of the eleven builders in
+this file are imported directly by the tests, and `docs/training-runbook.md` imports
+`training_request_from` the same way, so the seam is exercised as an interface rather than only
+through the entry point.
+
+**Where the file is not wiring, named rather than glossed over.** Three functions compute instead
+of delegating. `_span` projects a rectangle's four corners and takes the widest extent — a
+geometry rule with a real reason behind it (a box in degrees is not a box in metres, and on this
+archive the difference is a turbine) and no reason to be in the CLI. `_exclusion_over` and
+`_clustering_over` aggregate what `darkvessel structures` prints. Those three are the honest answer
+to whether this is only wiring: mostly, and not entirely.
+
+**Where a builder lives is a date.** Eleven of the fourteen are in this file, and three —
+`analysis_request_from`, `zones_request_from`, `map_request_from` — are beside the code they feed.
+The split looks like a design and is not one. Every builder written between 2026-08-13 and
+2026-08-28 went into `cli.py`; every builder written from 2026-08-29 on went into its own module,
+and nobody went back for the eleven. Nothing else distinguishes them: none of the three has a
+caller inside its own module either, so `cli.py` is still the only thing that calls all fourteen.
+The placement changes where a reader looks and changes nothing that runs.
+
+**Decision.** The eleven stay. Moving them is 339 lines across eleven modules and a changed import
+path in thirteen test files, for no behavioural difference — and this repository's rule is that a
+change is worth making when a test fails on reverting it. No test can fail on reverting this one,
+which is a fair description of its value. Against that, the eleven docstrings argue with each other
+in place ("separate from the command for the same reason as `export_request_from`"), and that
+argument is readable in one file in a way it would not be scattered across eleven.
+
+**Cost.** A reader who counts lines before reading them will judge this file badly, and they will
+be counting a 178-line argparse table and eleven config parsers. The split's real inconsistency is
+the one above and it is not defended, only dated.
+
+**What would change it.** A builder needed by the package itself rather than only by its command
+belongs beside that code, which is where the next one will go; and a handler growing past roughly a
+hundred lines is a command with logic in it, which is the actual failure mode this file is watched
+for. Neither has happened yet, and `_archive_run` at 94 is the closest.
