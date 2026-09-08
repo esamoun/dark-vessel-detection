@@ -197,6 +197,10 @@ docs/         decision log, failure log, the design written before issues #10 an
               built, the training runbook, the rest of the commands, and the published page
 ```
 
+`cli.py` is one file for every subcommand and it is the longest file here. What is in it is
+measured — and the one thing about its shape that the measurement does not justify is named — in
+[`docs/decisions.md`](docs/decisions.md).
+
 ## Related work
 
 This is a known and actively worked problem, not an invented one. The task is the subject of a
