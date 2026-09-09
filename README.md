@@ -1,6 +1,6 @@
 # Dark Vessel Detection
 
-**Detecting undeclared vessels by fusing Sentinel-1 SAR imagery with AIS records over Danish waters.**
+**Detecting undeclared vessels with deep learning on Sentinel-1 SAR, fused with AIS over Danish waters.**
 
 [![CI](https://github.com/esamoun/dark-vessel-detection/actions/workflows/ci.yml/badge.svg)](https://github.com/esamoun/dark-vessel-detection/actions/workflows/ci.yml)
 
@@ -51,18 +51,23 @@ The pipeline is built in four levels, each one shippable on its own.
 | **3. AIS fusion** | AIS positions interpolated to acquisition time, spatio-temporal matching, unmatched detections flagged as dark | **complete.** Runs on real Danish archives over a measured study area, with the azimuth shift of a moving ship compensated before matching — worth **89 of the archive's 149 matches**, measured by re-running all 49 acquisitions with the correction switched off ([`docs/evaluation.md`](docs/evaluation.md)). Offshore structures are excluded from the dark count without a single label: 65 fixed positions found by recurrence across 47 acquisitions, each verified against published coordinates to 5.1 m |
 | **4. Spatial analysis** | Where dark vessels concentrate: distance to shore, bathymetry, EEZ boundaries, fishing effort | **complete.** 189 detections over 50 acquisitions, 40 of them undeclared: 21.2%, and [13.6%, 29.4%] once the interval is resampled over acquisitions rather than over detections. Of the four contextual variables one separates and three do not, [below](#what-the-archive-shows) |
 
-The chain that carries these was built first, deliberately, with a deterministic stand-in where
-the detector would go; the stand-in is still there, behind the same parameter, and is what the
-tests and the synthetic run use. What runs today: scene in, detector injected at the pipeline
-boundary, the scene cut into overlapping tiles and the targets they see reconciled into one list,
-pixel coordinates converted to ground coordinates, each declared vessel interpolated along its
-track to the moment of acquisition and the detections matched against those positions within a
-stated tolerance, GeoPackage out. Both ends of that are real now: a Sentinel-1 acquisition fetched
-clipped from Earth Engine, and a day of the Danish AIS archive streamed, filtered and cleaned
-with every removal counted, and the detector between them is the trained one. Detections standing
-at a known fixed structure are taken out of the dark count and say so in the layer. What keeps a
-dark result from being a finding about the sea is now one thing rather than three: it has run over
-one study area.
+**What runs today.** A scene goes in, the trained detector is injected at the pipeline boundary,
+the scene is cut into overlapping tiles and the targets they see reconciled into one list, pixel
+coordinates converted to ground coordinates, each declared vessel interpolated along its track to
+the moment of acquisition and the detections matched against those positions within a stated
+tolerance, GeoPackage out. Detections standing at a known fixed structure are taken out of the
+dark count and say so in the layer.
+
+**Both ends of that are real.** A Sentinel-1 acquisition fetched clipped from Earth Engine, a day
+of the Danish AIS archive streamed, filtered and cleaned with every removal counted, and the
+detector between them is the trained one.
+
+**What is still a stand-in.** The chain was built first, deliberately, with a deterministic
+stand-in where the detector would go. It is still there, behind the same parameter, and it is what
+the tests and the synthetic run use.
+
+What keeps a dark result from being a finding about the sea is now one thing rather than three: it
+has run over one study area.
 
 A vessel moves between its last AIS report and the instant the radar images it: at 12 knots, some
 370 m a minute, which is more than the match tolerance. Comparing a detection against a report
