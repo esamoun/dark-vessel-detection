@@ -4,6 +4,58 @@ Why each choice was made, dated, with the reasoning that produced it. Append; do
 history. When a decision turns out to be wrong, add a new entry that supersedes the old one
 rather than editing it.
 
+## How to read this log
+
+Each entry is dated by the day the decision was taken, and was committed that same day. That is
+why the first three days, 12 to 14 August, hold 28 of the 60 entries: building the chain end to
+end forced a small decision at every seam (tiling, nodata, projection, CI, what "dark" means when
+no AIS was supplied), and each one was written down as it was made. The other 32 are spread over
+the four weeks that followed.
+
+The decisions and the measurements are mine. The prose was drafted with Claude Code from the
+working session and reviewed, as the README says under
+[How this was built](../README.md#how-this-was-built). The fair test of that is to ask me about
+any entry.
+
+## Start here: six decisions
+
+Sixty entries is more than anyone should have to read. These are the six the results depend on.
+
+1. **"Dark" is a claim about what was searched.**
+   [2026-08-13](#2026-08-13--a-run-with-nothing-to-match-against-reports-unsearched-not-dark).
+   A run with no AIS behind it returns `unsearched`, never `dark`. Otherwise the most confident
+   wrong answer this chain can give is a layer of a thousand "dark vessels" that looks exactly
+   like a finding.
+2. **The study area was moved on evidence.**
+   [2026-08-14](#2026-08-14--the-study-area-is-measured-and-it-moves-onto-the-shipping-lane).
+   The first box, off Anholt, had no declared vessel at all in 19 of 30 acquisitions. Its
+   replacement was chosen by ranking every rectangle of that size in the Kattegat over one day of
+   Danish AIS (29.7 million reports), counting vessels of 100 m or more under way.
+3. **Correct the physics, not the tolerance.**
+   [2026-08-16](#2026-08-16--declarations-moved-into-the-radars-frame). A moving ship is
+   displaced along the satellite track in a SAR image. Instead of widening the 200 m tolerance,
+   which would explain away genuinely dark vessels, each declared position is moved into the
+   radar's frame. Switched off over the archive
+   ([2026-09-09](#2026-09-09--the-azimuth-correction-is-worth-89-of-149-matches-and-the-way-to-know-that-is-to-switch-it-off)),
+   the correction turns out to account for 89 of 149 matches: without it the published dark
+   rate would be 68.3% instead of 21.2%.
+4. **What counts as an improvement was fixed before training.**
+   [2026-08-17](#2026-08-17--what-counts-as-a-rung-helping-decided-before-anything-ran). A
+   change to the detector is kept only if its F1 gain exceeds the previous rung's own
+   epoch-to-epoch noise. The rule rejected rung 5
+   ([2026-08-30](#2026-08-30--rung-5-foreground-iou-at-03)), a loss of 0.0128 against a band of
+   0.0099, although I had predicted it would help.
+5. **Wind turbines are excluded by where they stand.**
+   [2026-08-27](#2026-08-27--fixed-structures-are-excluded-on-where-they-stand-not-on-what-they-look-like).
+   65 positions detected in 20 or more acquisitions, each checked against coordinates published
+   by someone else. They account for 782 of the 972 detections published at 0.90. Clustering in
+   the embedding space separates them too, but the exclusion does not rely on it.
+6. **Intervals are resampled by acquisition, not by detection.**
+   [2026-08-29](#2026-08-29--the-analysis-reports-a-rate-and-every-interval-is-resampled-over-acquisitions).
+   189 detections come from 49 acquisitions and are not independent. Resampling whole scenes
+   gives 21.2% [13.6%, 29.4%], about a third wider than the textbook interval, which is enough
+   to change most of the band-to-band comparisons.
+
 ---
 
 ## 2026-08-12 — Study area: Danish waters
