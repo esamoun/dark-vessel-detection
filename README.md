@@ -4,6 +4,9 @@
 
 [![CI](https://github.com/esamoun/dark-vessel-detection/actions/workflows/ci.yml/badge.svg)](https://github.com/esamoun/dark-vessel-detection/actions/workflows/ci.yml)
 
+**Status: complete.** v1.0.0, released 2026-09-04. Not under active development; issues are
+still read.
+
 [![189 detections over the northern Kattegat, 40 of them undeclared](docs/figures/map-kattegat.png)](https://esamoun.github.io/dark-vessel-detection/)
 
 **[See the detections on a live map](https://esamoun.github.io/dark-vessel-detection/).** The chain
